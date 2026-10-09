@@ -111,9 +111,9 @@ public static class FhirJson
         }
         foreach (JsonPropertyInfo property in typeInfo.Properties)
         {
-            if (property.PropertyType == typeof(string))
+            if (property.PropertyType == typeof(string) || property.IsExtensionData)
             {
-                continue;
+                continue;   // text, or the "other properties" of a FHIR model (written by the serializer as they are)
             }
             bool isList = typeof(ICollection).IsAssignableFrom(property.PropertyType);
             bool isJson = typeof(JsonNode).IsAssignableFrom(property.PropertyType);

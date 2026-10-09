@@ -24,7 +24,7 @@ public class DtrFormRequest
     [MinLength(1, ErrorMessage = "orderIds must contain at least one order id.")]
     public List<string> OrderIds { get; set; } = new();
 
-    /// <summary>Insurance to use. Empty = the order's insurance, else the patient's first active coverage.</summary>
+    /// <summary>Insurance to use. Empty = the order's insurance, else the patient's only active insurance. Required when the patient has several active insurances and the order names none.</summary>
     /// <example>cov-1</example>
     public string? CoverageId { get; set; }
 

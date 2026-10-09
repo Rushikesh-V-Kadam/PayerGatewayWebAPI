@@ -17,6 +17,7 @@
 --     Store the text exactly as received and return it exactly as stored (do not re-format it).
 --   * TIMESTAMP columns hold UTC. The API sends / returns them as ISO-8601 with Z, e.g. "2026-10-07T18:36:17Z".
 --   * NUMBER(1) columns are booleans: 1 = true, 0 = false. The API sends / returns JSON true / false.
+--     (When reading, the gateway also understands 1 / 0 and "Y" / "N", but true / false is the agreed format.)
 --   * Id columns (PATIENT_ID, ORDER_ID, COVERAGE_ID, ORGANIZATION_ID ...) hold the same ids the EHR sends to the
 --     gateway. Change their length, or add foreign keys to your own tables, as you see fit.
 --   * You may add your own columns (audit columns, foreign keys). The gateway ignores properties it does not know.
@@ -29,14 +30,21 @@
 -- One row per connected payer. The gateway only READS this table (GET payers) and keeps the list for a few minutes.
 -- To onboard a payer: insert a row. Nothing changes in the gateway.
 -- PAYER_NAME is the value the EHR sends as "payerName" in every gateway request (upper / lower case does not matter).
+--
+-- ONLY TWO COLUMNS MUST BE FILLED: PAYER_NAME and BASE_URL. Every other column is optional: when it is empty the
+-- gateway uses the default written next to the column. A row with only those two values is a working payer.
+--
+-- The payer's own id and the member id are NOT columns of this table. They belong to the patient's insurance in
+-- the EHR (payer id and member id of the insurance) and reach the gateway through the FHIR API (Coverage).
+-- (Earlier versions of this script had PAYER_IDENTIFIER, MEMBER_ID_SYSTEM and PAYER_ID_SYSTEM here; they are
+-- removed - see 03_alter_pa_payer_drop_id_columns.sql for a database that was created with them.)
 CREATE TABLE PA_PAYER (
-    PAYER_NAME               VARCHAR2(64)   NOT NULL,
-    DISPLAY_NAME             VARCHAR2(200),                         -- friendly name for messages and logs
+    PAYER_NAME               VARCHAR2(64)   NOT NULL,               -- REQUIRED
+    DISPLAY_NAME             VARCHAR2(200),                         -- friendly name for messages and logs; empty = PAYER_NAME is shown
     ENABLED                  NUMBER(1)      DEFAULT 1 NOT NULL,     -- 0 = configured but switched off
-    PAYER_IDENTIFIER         VARCHAR2(64),                          -- the payer's own id, sent in PAS and CDex
-    BASE_URL                 VARCHAR2(500)  NOT NULL,               -- e.g. https://api.payer.com
-    CDS_SERVICES_PATH        VARCHAR2(200)  DEFAULT 'cds-services', -- CRD:  {BASE_URL}/{CDS_SERVICES_PATH}
-    FHIR_PATH                VARCHAR2(200)  DEFAULT 'fhir',         -- DTR / PAS / CDex:  {BASE_URL}/{FHIR_PATH}
+    BASE_URL                 VARCHAR2(500)  NOT NULL,               -- REQUIRED. A complete http / https address, e.g. https://api.payer.com
+    CDS_SERVICES_PATH        VARCHAR2(200)  DEFAULT 'cds-services', -- CRD:  {BASE_URL}/{CDS_SERVICES_PATH}.  '/' = no extra path
+    FHIR_PATH                VARCHAR2(200)  DEFAULT 'fhir',         -- DTR / PAS / CDex:  {BASE_URL}/{FHIR_PATH}.  '/' = no extra path
     AUTH_TYPE                VARCHAR2(20)   DEFAULT 'none' NOT NULL,-- auth layer only: none | client-secret | smart-backend
     AUTH_TOKEN_URL           VARCHAR2(500),                         -- auth layer only: the payer's OAuth token URL
     AUTH_CLIENT_ID           VARCHAR2(200),                         -- auth layer only
@@ -45,10 +53,8 @@ CREATE TABLE PA_PAYER (
     SIGN_CDS_HOOKS_REQUESTS  NUMBER(1)      DEFAULT 1 NOT NULL,     -- auth layer only: 1 = sign each CDS Hooks call
     USE_SUBSCRIPTIONS        NUMBER(1)      DEFAULT 1 NOT NULL,     -- 1 = ask the payer to notify us about decisions
     NOTIFICATION_SECRET      VARCHAR2(200),                         -- auth layer only: secret the payer sends on notifications. SENSITIVE
-    MEMBER_ID_SYSTEM         VARCHAR2(500),                         -- identifier system the payer expects for member ids
-    PAYER_ID_SYSTEM          VARCHAR2(500),                         -- identifier system the payer expects for its payer id
-    CRD_TIMEOUT_SECONDS      NUMBER(4),                             -- empty = gateway default (5)
-    TIMEOUT_SECONDS          NUMBER(4),                             -- empty = gateway default (30)
+    CRD_TIMEOUT_SECONDS      NUMBER(4),                             -- empty or 0 = gateway default (5)
+    TIMEOUT_SECONDS          NUMBER(4),                             -- empty or 0 = gateway default (30)
     -- FHIR release and DTR (questionnaire) settings
     FHIR_VERSION             VARCHAR2(5)    DEFAULT 'R4' NOT NULL,  -- R4 | R5: release the payer works in
     DTR_MODE                 VARCHAR2(10)   DEFAULT 'Forms' NOT NULL, -- Forms = EHR shows the questions | SmartApp = payer's own SMART DTR app
@@ -68,14 +74,16 @@ CREATE UNIQUE INDEX UX_PA_PAYER_NAME ON PA_PAYER (UPPER(PAYER_NAME));
 -- authentication layer added outside the gateway; the gateway does not read them. AUTH_CLIENT_SECRET and
 -- NOTIFICATION_SECRET are credentials: limit who can select this table, and consider encrypting the two columns.
 
+-- Example: the smallest row that works (everything else uses the defaults)
+-- INSERT INTO PA_PAYER (PAYER_NAME, BASE_URL) VALUES ('AcmeHealth', 'https://api.acmehealth.example');
+
 -- Example: a payer with its own SMART DTR app
--- INSERT INTO PA_PAYER (PAYER_NAME, DISPLAY_NAME, PAYER_IDENTIFIER, BASE_URL, FHIR_VERSION, DTR_MODE)
--- VALUES ('AcmeHealth', 'Acme Health Plan', 'ACME01', 'https://api.acmehealth.example', 'R4', 'SmartApp');
+-- INSERT INTO PA_PAYER (PAYER_NAME, DISPLAY_NAME, BASE_URL, FHIR_VERSION, DTR_MODE)
+-- VALUES ('AcmeHealth', 'Acme Health Plan', 'https://api.acmehealth.example', 'R4', 'SmartApp');
 
 -- Example: the local mock payer used for testing
--- INSERT INTO PA_PAYER (PAYER_NAME, DISPLAY_NAME, PAYER_IDENTIFIER, BASE_URL, AUTH_TYPE, MEMBER_ID_SYSTEM, PAYER_ID_SYSTEM)
--- VALUES ('MockPayer', 'Mock Da Vinci Payer', 'PAYER001', 'http://localhost:5080', 'none',
---         'http://example.org/member-ids', 'http://example.org/payer-ids');
+-- INSERT INTO PA_PAYER (PAYER_NAME, DISPLAY_NAME, BASE_URL, AUTH_TYPE)
+-- VALUES ('MockPayer', 'Mock Da Vinci Payer', 'http://localhost:5080', 'none');
 
 -- ------------------------------------------------------------------ STEP 1: CRD (order-sign)
 -- One row per order-sign event: the answer the gateway returned (a repeated eventId gets the same answer,
@@ -172,7 +180,7 @@ CREATE TABLE PA_PRIOR_AUTH (
     PAYER_NAME            VARCHAR2(64)  NOT NULL,
     PATIENT_ID            VARCHAR2(64)  NOT NULL,
     COVERAGE_ID           VARCHAR2(64)  NOT NULL,
-    MEMBER_ID             VARCHAR2(64),
+    MEMBER_ID             VARCHAR2(64),                -- member id of the patient's insurance, as sent to the payer
     ORGANIZATION_ID       VARCHAR2(64)  NOT NULL,
     ORGANIZATION_NPI      VARCHAR2(20),
     PRACTITIONER_ID       VARCHAR2(64),
@@ -187,7 +195,7 @@ CREATE TABLE PA_PRIOR_AUTH (
     LAST_REQUEST_BUNDLE   CLOB,                       -- last FHIR Bundle sent to the payer (can be several MB: documents are inside)
     LAST_RESPONSE_BUNDLE  CLOB,                       -- last FHIR Bundle received from the payer
     SUBMITTED_AT          TIMESTAMP     NOT NULL,     -- UTC
-    UPDATED_AT            TIMESTAMP     NOT NULL,     -- UTC
+    UPDATED_AT            TIMESTAMP     NOT NULL,     -- UTC. Changes only when something changed (a repeated inquiry with the same answer is not saved)
     CONSTRAINT PK_PA_PRIOR_AUTH PRIMARY KEY (REQUEST_ID),
     CONSTRAINT CK_PA_PRIOR_AUTH_DECISION CHECK (DECISION_JSON IS JSON)
 );
@@ -216,7 +224,7 @@ CREATE TABLE PA_CDEX_TASK (
     STATUS           VARCHAR2(20),                    -- requested | in-progress | completed | cancelled ...
     DUE_DATE         VARCHAR2(30),                    -- date text as the payer sent it, e.g. 2026-10-21
     TASK_JSON        CLOB           NOT NULL,         -- the FHIR Task as received
-    RECEIVED_AT      TIMESTAMP      NOT NULL,         -- UTC
+    RECEIVED_AT      TIMESTAMP      NOT NULL,         -- UTC. Changes only when the payer changed the Task
     CONSTRAINT PK_PA_CDEX_TASK PRIMARY KEY (PAYER_NAME, TASK_ID),
     CONSTRAINT CK_PA_CDEX_TASK_JSON CHECK (TASK_JSON IS JSON)
 );

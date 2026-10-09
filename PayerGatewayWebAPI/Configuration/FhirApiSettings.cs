@@ -6,7 +6,12 @@ public class FhirApiSettings
     /// <summary>Name of the appsettings section.</summary>
     public const string SectionName = "FhirApi";
 
-    /// <summary>FHIR base URL, e.g. http://localhost:5100/fhir/r4. Also sent to payers as fhirServer.</summary>
+    /// <summary>
+    /// FHIR base URL, e.g. http://localhost:5100/fhir/r4. Also sent to payers as fhirServer, so payers must be able
+    /// to reach it.
+    /// TODO: the default is the local test address. Set FhirApi:BaseUrl (and BaseUrlR5) in appsettings.json to the
+    /// public address of the FHIR API in each environment.
+    /// </summary>
     public string BaseUrl { get; set; } = "http://localhost:5100/fhir/r4";
 
     /// <summary>
@@ -16,7 +21,11 @@ public class FhirApiSettings
     /// </summary>
     public string? BaseUrlR5 { get; set; }
 
-    /// <summary>Root URL for the /internal endpoints, e.g. http://localhost:5100.</summary>
+    /// <summary>
+    /// Root URL for the /internal endpoints, e.g. http://localhost:5100.
+    /// TODO: the default is the local test address. Set FhirApi:InternalBaseUrl in appsettings.json to the internal
+    /// address of the FHIR API in each environment.
+    /// </summary>
     public string InternalBaseUrl { get; set; } = "http://localhost:5100";
 
     /// <summary>Timeout of each call, in seconds.</summary>

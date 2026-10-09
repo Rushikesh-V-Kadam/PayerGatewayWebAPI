@@ -24,9 +24,14 @@ public class PriorAuthLine
     /// <example>A4</example>
     public string? X12ActionCode { get; set; }
 
+    /// <summary>Units asked for on this line.</summary>
     public decimal? RequestedQuantity { get; set; }
+    /// <summary>Units the payer approved, when it said so.</summary>
     public decimal? ApprovedQuantity { get; set; }
+    /// <summary>The payer's reason or note for this line.</summary>
     public string? Reason { get; set; }
+    /// <summary>First day the line is authorized (yyyy-MM-dd).</summary>
     public string? ValidFrom { get; set; }
+    /// <summary>Last day the line is authorized (yyyy-MM-dd).</summary>
     public string? ValidTo { get; set; }
 }

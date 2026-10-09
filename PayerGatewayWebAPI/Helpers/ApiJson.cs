@@ -8,8 +8,19 @@ namespace PayerGatewayWebAPI.Helpers;
 /// </summary>
 public static class ApiJson
 {
-    /// <summary>Web defaults (camelCase, case-insensitive reading).</summary>
-    public static readonly JsonSerializerOptions Options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+    /// <summary>
+    /// Web defaults (camelCase names, names read without regard to case, numbers also read from text such as "30"),
+    /// plus true / false also read from 1 / 0 and "Y" / "N" (FlexibleBooleanConverter).
+    /// </summary>
+    public static readonly JsonSerializerOptions Options = CreateOptions();
+
+    /// <summary>Builds the options once.</summary>
+    private static JsonSerializerOptions CreateOptions()
+    {
+        JsonSerializerOptions options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new FlexibleBooleanConverter());
+        return options;
+    }
 
     /// <summary>Object -> JSON text.</summary>
     public static string Write<T>(T value)

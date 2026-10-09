@@ -7,19 +7,29 @@ namespace PayerGatewayWebAPI.Models.Storage;
 /// </summary>
 public class PriorAuthRow
 {
+    /// <summary>Column REQUEST_ID (key).</summary>
     public string RequestId { get; set; } = string.Empty;
+    /// <summary>Column PAYER_NAME.</summary>
     public string PayerName { get; set; } = string.Empty;
+    /// <summary>Column PATIENT_ID.</summary>
     public string PatientId { get; set; } = string.Empty;
+    /// <summary>Column COVERAGE_ID.</summary>
     public string CoverageId { get; set; } = string.Empty;
+    /// <summary>Column MEMBER_ID.</summary>
     public string? MemberId { get; set; }
+    /// <summary>Column ORGANIZATION_ID.</summary>
     public string OrganizationId { get; set; } = string.Empty;
+    /// <summary>Column ORGANIZATION_NPI.</summary>
     public string? OrganizationNpi { get; set; }
+    /// <summary>Column PRACTITIONER_ID.</summary>
     public string? PractitionerId { get; set; }
+    /// <summary>Column PRACTITIONER_NPI.</summary>
     public string? PractitionerNpi { get; set; }
     /// <summary>routine | urgent</summary>
     public string Priority { get; set; } = "routine";
     /// <summary>approved | partially-approved | denied | pended | not-required | cancelled | contact-payer | error</summary>
     public string Status { get; set; } = string.Empty;
+    /// <summary>Column AUTHORIZATION_NUMBER: filled when the payer approved.</summary>
     public string? AuthorizationNumber { get; set; }
     /// <summary>1 = first submission, +1 for every update / cancel.</summary>
     public int VersionNo { get; set; }
@@ -33,6 +43,8 @@ public class PriorAuthRow
     public string? LastRequestBundle { get; set; }
     /// <summary>Last Bundle received from the payer (FHIR JSON).</summary>
     public string? LastResponseBundle { get; set; }
+    /// <summary>Column SUBMITTED_AT (UTC).</summary>
     public DateTime SubmittedAt { get; set; }
+    /// <summary>Column UPDATED_AT (UTC).</summary>
     public DateTime UpdatedAt { get; set; }
 }

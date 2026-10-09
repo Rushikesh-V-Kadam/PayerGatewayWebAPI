@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using PayerGatewayWebAPI.Clients;
@@ -25,6 +26,13 @@ namespace PayerGatewayWebAPI.Services.Pas;
 ///   inquire : POST {payer}/Claim/$inquire to get the latest decision of a pended request
 ///   notification : the payer says something changed -> inquire the payer's open requests
 /// A pended request can also get a payer information request (Task) -> STEP 4, CdexService.
+///
+/// The payer can refuse a request in two ways, and both are handled the same (422, nothing saved, the EHR corrects
+/// the data and sends the same requestId again): an HTTP 4xx with an OperationOutcome, or an HTTP 200 with a
+/// ClaimResponse that says outcome "error" and has no line decision (ClaimResponse.error, e.g. "member not found").
+///
+/// Once the payer has accepted a request, the result is saved even when the EHR has stopped waiting for the answer
+/// (the save does not use the caller's cancellation), so an accepted request is never lost.
 ///
 /// Every decision is saved in table PA_PRIOR_AUTH in the EHR database (through the EHR data API). The EHR reads it
 /// from that table, so the gateway does not send a second copy ("write-back") to the EHR.
@@ -67,8 +75,10 @@ public class PasService
         PayerSettings payer = await _payers.GetRequiredAsync(request.PayerName, 400, ct);
         List<string> orderIds = TextHelper.Distinct(request.OrderIds);
 
+        // A request id can be submitted again only when the earlier request is cancelled, or has status "error"
+        // (a row from an earlier gateway version, which saved requests the payer had refused; they are not saved now).
         PriorAuthRecord? existing = await _repository.GetAsync(request.RequestId, ct);
-        if (!isUpdate && existing != null && existing.Status != DecisionStatus.Cancelled)
+        if (!isUpdate && existing != null && existing.Status != DecisionStatus.Cancelled && existing.Status != DecisionStatus.Error)
         {
             throw new ApiException(409, "Request " + request.RequestId + " was already submitted. Use PUT /api/v1/pas/requests/" + request.RequestId + " to change it.");
         }
@@ -101,6 +111,7 @@ public class PasService
 
         List<JsonObject> orders = await _fhir.ReadOrdersAsync(orderIds, ct);
         OrderHelper.CheckOrders(orderIds, orders, request.PatientId);
+        CheckOrdersHaveCode(orders);
 
         string? coverageId = request.CoverageId;
         if (string.IsNullOrWhiteSpace(coverageId) && existing != null)
@@ -112,6 +123,12 @@ public class PasService
         if (coverage == null || coverage.Id == null)
         {
             throw new ApiException(422, "Patient " + request.PatientId + " has no active insurance for this request.");
+        }
+        if (string.IsNullOrWhiteSpace(coverage.MemberId()))
+        {
+            // the payer finds the member by this id; without it no payer can process the request
+            throw new ApiException(422, "Insurance " + coverage.Id + " of patient " + request.PatientId
+                + " has no member id (Coverage.subscriberId, or a Coverage.identifier of type MB). Add the member id to the insurance in the EHR.");
         }
 
         JsonObject? organization = await _fhir.ReadAsync("Organization", request.RequestingOrganizationId, ct);
@@ -131,9 +148,14 @@ public class PasService
             practitionerId = OrderHelper.RequesterOfOrders(orders);
         }
         JsonObject? practitioner = null;
+        string? practitionerNpi = null;
         if (!string.IsNullOrWhiteSpace(practitionerId))
         {
             practitioner = await _fhir.ReadAsync("Practitioner", practitionerId, ct);
+            if (practitioner != null)
+            {
+                practitionerNpi = ReadNpi(practitioner);
+            }
         }
 
         JsonObject? referring = null;
@@ -166,6 +188,7 @@ public class PasService
         if (removedIds.Count > 0)
         {
             removedOrders = await _fhir.ReadOrdersAsync(removedIds, ct);
+            CheckOrdersHaveCode(removedOrders);
         }
 
         List<string> allLineOrderIds = new List<string>(orderIds);
@@ -209,6 +232,7 @@ public class PasService
             int status = result.StatusCode >= 400 && result.StatusCode < 500 ? 422 : 502;
             throw new ApiException(status, string.Join("; ", rejected.Errors), rejected);
         }
+        ThrowIfRefused(claimResponse, request.RequestId, payer.PayerName, request.PatientId, orderIds);
 
         // ---- 5. accepted: save the new state
         PriorAuthRecord record;
@@ -229,13 +253,14 @@ public class PasService
         record.OrganizationId = request.RequestingOrganizationId;
         record.OrganizationNpi = organizationNpi;
         record.PractitionerId = practitionerId;
-        record.PractitionerNpi = practitioner == null ? null : ReadNpi(practitioner);
+        record.PractitionerNpi = practitionerNpi;
         record.Priority = request.Priority;
         record.Version = version;
         record.OrderIds = orderIds;
         record.LineNumbers = lineNumbers;
-        await ApplyResponseAsync(record, bundle, result, claimResponse, ct);
+        await ApplyResponseAsync(record, bundle, result, claimResponse, false);
 
+        // never fails the request: a subscription problem is only logged (see PasSubscriptionService)
         await _subscriptions.EnsureSubscribedAsync(payer, organizationNpi, ct);
         return record.Decision;
     }
@@ -268,6 +293,7 @@ public class PasService
         {
             throw new ApiException(422, "The patient, insurance, organization or orders of this request can no longer be read.");
         }
+        CheckOrdersHaveCode(orders);
 
         PasBuildInput input = new PasBuildInput();
         input.RequestId = record.RequestId;
@@ -291,9 +317,11 @@ public class PasService
             int status = result.StatusCode >= 400 && result.StatusCode < 500 ? 422 : 502;
             throw new ApiException(status, string.Join("; ", rejected.Errors), rejected);
         }
+        // the payer refused the cancellation: the request stays as it was (nothing is saved)
+        ThrowIfRefused(claimResponse, record.RequestId, payer.PayerName, record.PatientId, record.OrderIds);
 
         record.Version = record.Version + 1;
-        await ApplyResponseAsync(record, bundle, result, claimResponse, ct);
+        await ApplyResponseAsync(record, bundle, result, claimResponse, true);
         return record.Decision;
     }
 
@@ -307,13 +335,21 @@ public class PasService
     }
 
     /// <summary>
-    /// Asks the payer for the latest decision (Claim/$inquire) and saves it.
+    /// Asks the payer for the latest decision (Claim/$inquire). The decision is saved only when it is different
+    /// from the stored one. When the payer cannot answer the inquiry (HTTP error, or a ClaimResponse that only
+    /// carries errors), the stored decision stays as it is and the caller gets 502: a failed question is not a decision.
     /// </summary>
     public async Task<PriorAuthDecision> InquireAsync(string requestId, CancellationToken ct)
     {
         PriorAuthRecord record = await GetRecordAsync(requestId, ct);
         if (record.LastRequestBundleJson == null)
         {
+            return record.Decision;
+        }
+        if (record.Status == DecisionStatus.Cancelled)
+        {
+            // A cancelled request is finished: the payer is not asked again and nothing can reopen it.
+            // (The same request id can be submitted again with POST /api/v1/pas/requests.)
             return record.Decision;
         }
         PayerSettings payer = await GetPayerAsync(record, ct);
@@ -329,19 +365,49 @@ public class PasService
         {
             return record.Decision;   // the payer has nothing newer
         }
+        if (PasDecisionReader.IsRefusal(claimResponse))
+        {
+            // The payer could not answer the question (e.g. it does not find the request). That says nothing about
+            // the request itself, so the stored decision is not replaced by "error" and the request stays open.
+            throw new ApiException(502, "Inquiry failed at " + payer.GetDisplayName() + ": the payer returned errors instead of a decision.",
+                PasDecisionReader.ErrorMessages(claimResponse));
+        }
+        if (claimResponse.Item.Count == 0)
+        {
+            // The answer has no line decision at all, so it says nothing new about the lines. The stored decision
+            // (which may already be approved or denied) is kept; it is never replaced by an empty "pended" one.
+            return record.Decision;
+        }
 
         PriorAuthDecision before = record.Decision;
         Claim claim = ReadClaim(record.LastRequestBundleJson);
-        record.Decision = PasDecisionReader.Read(claimResponse, claim, record, _workflow);
-        record.Status = record.Decision.OverallStatus;
-        record.AuthorizationNumber = record.Decision.AuthorizationNumber;
-        record.LastResponseBundleJson = result.Body == null ? null : result.Body.ToJsonString();
-        await _repository.SaveAsync(record, ct);
+        PriorAuthDecision latest = PasDecisionReader.Read(claimResponse, claim, record, _workflow);
 
-        if (HasChanged(before, record.Decision))
+        // The same overall result as before: keep the time it was first decided (an inquiry must not move it)
+        if (before.DecidedAt != null && before.OverallStatus == latest.OverallStatus)
         {
-            _logger.LogInformation("Request {RequestId}: decision is now {Status}", requestId, record.Decision.OverallStatus);
+            latest.DecidedAt = before.DecidedAt;
         }
+
+        // Nothing new from the payer: do not save. A pended request is inquired every few minutes; saving each time
+        // would change UPDATED_AT of PA_PRIOR_AUTH although nothing changed (the EHR may look for changed rows by
+        // that column) and would write the large Bundles again for nothing.
+        if (ApiJson.Write(before) == ApiJson.Write(latest))
+        {
+            return record.Decision;
+        }
+
+        record.Decision = latest;
+        record.Status = latest.OverallStatus;
+        record.AuthorizationNumber = latest.AuthorizationNumber;
+        if (result.Body != null)
+        {
+            record.LastResponseBundleJson = result.Body.ToJsonString();
+        }
+        // saved even when the caller has stopped waiting: the new decision must not be lost
+        await _repository.SaveAsync(record, CancellationToken.None);
+
+        _logger.LogInformation("Request {RequestId}: decision is now {Status}", requestId, latest.OverallStatus);
         return record.Decision;
     }
 
@@ -354,7 +420,16 @@ public class PasService
         PayerSettings payer = await _payers.GetRequiredAsync(payerName, 404, ct);
 
         NotificationResult outcome = new NotificationResult();
-        string type = NotificationType(body);
+        string type;
+        try
+        {
+            type = NotificationType(body);
+        }
+        catch (JsonException ex)
+        {
+            // the sender's mistake, so 400 (a payer must not keep re-sending the same body)
+            throw new ApiException(400, "The notification is not a valid FHIR Bundle: " + ex.Message);
+        }
         if (type == "handshake" || type == "heartbeat")
         {
             outcome.Status = type;
@@ -364,60 +439,183 @@ public class PasService
         List<PriorAuthRecord> open = await _repository.GetOpenAsync(payer.PayerName, ct);
         foreach (PriorAuthRecord request in open)
         {
-            try
-            {
-                await InquireAsync(request.RequestId, ct);
-            }
-            catch (ApiException ex)
-            {
-                _logger.LogWarning(ex, "Inquiry of {RequestId} failed", request.RequestId);
-            }
-            catch (PayerException ex)
-            {
-                _logger.LogWarning(ex, "Inquiry of {RequestId} failed", request.RequestId);
-            }
+            await TryInquireAsync(request.RequestId, ct);
         }
         outcome.Status = open.Count + " open request(s) checked";
         outcome.Count = open.Count;
         return outcome;
     }
 
+    /// <summary>
+    /// Runs InquireAsync and returns the decision, or null when the inquiry failed. A failure (the payer, the FHIR API
+    /// or the EHR data API did not work, or stored data could not be read) is written to the log and not passed on.
+    /// Used where the inquiry is an extra step that must not fail the main work: after a payer notification (the
+    /// other open requests must still be checked) and after attachments were sent.
+    /// </summary>
+    public async Task<PriorAuthDecision?> TryInquireAsync(string requestId, CancellationToken ct)
+    {
+        try
+        {
+            return await InquireAsync(requestId, ct);
+        }
+        catch (ApiException ex)
+        {
+            _logger.LogWarning(ex, "Inquiry of {RequestId} failed", requestId);
+        }
+        catch (PayerException ex)
+        {
+            _logger.LogWarning(ex, "Inquiry of {RequestId} failed: payer", requestId);
+        }
+        catch (FhirApiException ex)
+        {
+            _logger.LogWarning(ex, "Inquiry of {RequestId} failed: FHIR API", requestId);
+        }
+        catch (EhrException ex)
+        {
+            _logger.LogWarning(ex, "Inquiry of {RequestId} failed: EHR data API", requestId);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Inquiry of {RequestId} failed: data could not be read", requestId);
+        }
+        return null;
+    }
+
     // ================================================================== helpers
+
+    /// <summary>
+    /// Stops with 422 when the payer answered HTTP 200 but did not take the request: the ClaimResponse says "error"
+    /// and has no line decision. The payer's error texts are returned to the EHR and nothing is saved, exactly as for
+    /// a request the payer rejected with HTTP 4xx.
+    /// </summary>
+    private static void ThrowIfRefused(ClaimResponse claimResponse, string requestId, string payerName, string patientId, List<string> orderIds)
+    {
+        if (!PasDecisionReader.IsRefusal(claimResponse))
+        {
+            return;
+        }
+        PriorAuthDecision refused = PasDecisionReader.Refused(requestId, payerName, patientId, orderIds, PasDecisionReader.ErrorMessages(claimResponse));
+        throw new ApiException(422, string.Join("; ", refused.Errors), refused);
+    }
+
+    /// <summary>
+    /// Every order needs a code (the service or the medication): it becomes Claim.item.productOrService, which PAS
+    /// requires. An order without one cannot be sent; 422 names the order so it can be corrected in the EHR.
+    /// </summary>
+    private static void CheckOrdersHaveCode(List<JsonObject> orders)
+    {
+        foreach (JsonObject raw in orders)
+        {
+            OrderResource order = OrderHelper.ReadOrder(raw);
+            CodeableConcept? code = order.GetCode();
+            if (code == null || string.IsNullOrWhiteSpace(code.FirstCode()))
+            {
+                throw new ApiException(422, "Order " + order.Id + " has no code (ServiceRequest.code or MedicationRequest.medicationCodeableConcept). "
+                    + "A prior authorization line needs the service or medication code.");
+            }
+        }
+    }
 
     /// <summary>Required fields and allowed values; all problems are returned together (400).</summary>
     private static void CheckRequest(PriorAuthRequest request)
     {
         // empty header values mean the usual case: a new request for a permanent patient
-        if (string.IsNullOrWhiteSpace(request.RequestType)) request.RequestType = PasCodes.RequestTypeNew;
-        if (string.IsNullOrWhiteSpace(request.PatientType)) request.PatientType = PasCodes.PatientTypePermanent;
+        if (string.IsNullOrWhiteSpace(request.RequestType))
+        {
+            request.RequestType = PasCodes.RequestTypeNew;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.PatientType))
+        {
+            request.PatientType = PasCodes.PatientTypePermanent;
+        }
 
         List<string> problems = new List<string>();
-        if (string.IsNullOrWhiteSpace(request.RequestId)) problems.Add("requestId is required.");
-        if (string.IsNullOrWhiteSpace(request.PayerName)) problems.Add("payerName is required.");
-        if (string.IsNullOrWhiteSpace(request.PatientId)) problems.Add("patientId is required.");
-        if (string.IsNullOrWhiteSpace(request.RequestingOrganizationId)) problems.Add("requestingOrganizationId is required.");
-        if (TextHelper.Distinct(request.OrderIds).Count == 0) problems.Add("orderIds must contain at least one order id.");
-        if (request.Priority != PasCodes.PriorityRoutine && request.Priority != PasCodes.PriorityUrgent) problems.Add("priority must be 'routine' or 'urgent'.");
-        if (request.RequestType != PasCodes.RequestTypeNew && request.RequestType != PasCodes.RequestTypeRenewal) problems.Add("requestType must be 'new' or 'renewal'.");
-        if (request.RequestType == PasCodes.RequestTypeRenewal && string.IsNullOrWhiteSpace(request.PreviousAuthorizationNumber)) problems.Add("previousAuthorizationNumber is required for a renewal.");
-        if (request.PatientType != PasCodes.PatientTypePermanent && request.PatientType != PasCodes.PatientTypeTransient) problems.Add("patientType must be 'permanent' or 'transient'.");
-        if (request.PreviousTreatments != null && request.PreviousTreatments.Value < 0) problems.Add("previousTreatments cannot be negative.");
+        if (string.IsNullOrWhiteSpace(request.RequestId))
+        {
+            problems.Add("requestId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.PayerName))
+        {
+            problems.Add("payerName is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.PatientId))
+        {
+            problems.Add("patientId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.RequestingOrganizationId))
+        {
+            problems.Add("requestingOrganizationId is required.");
+        }
+
+        if (TextHelper.Distinct(request.OrderIds).Count == 0)
+        {
+            problems.Add("orderIds must contain at least one order id.");
+        }
+
+        if (request.Priority != PasCodes.PriorityRoutine && request.Priority != PasCodes.PriorityUrgent)
+        {
+            problems.Add("priority must be 'routine' or 'urgent'.");
+        }
+
+        if (request.RequestType != PasCodes.RequestTypeNew && request.RequestType != PasCodes.RequestTypeRenewal)
+        {
+            problems.Add("requestType must be 'new' or 'renewal'.");
+        }
+
+        if (request.RequestType == PasCodes.RequestTypeRenewal && string.IsNullOrWhiteSpace(request.PreviousAuthorizationNumber))
+        {
+            problems.Add("previousAuthorizationNumber is required for a renewal.");
+        }
+
+        if (request.PatientType != PasCodes.PatientTypePermanent && request.PatientType != PasCodes.PatientTypeTransient)
+        {
+            problems.Add("patientType must be 'permanent' or 'transient'.");
+        }
+
+        if (request.PreviousTreatments != null && request.PreviousTreatments.Value < 0)
+        {
+            problems.Add("previousTreatments cannot be negative.");
+        }
+
         if (problems.Count > 0)
         {
             throw new ApiException(400, "The request is not valid.", problems);
         }
     }
 
-    /// <summary>Stores the request / response Bundles and the new decision.</summary>
-    private async Task ApplyResponseAsync(PriorAuthRecord record, Bundle sent, PayerCallResult result, ClaimResponse claimResponse, CancellationToken ct)
+    /// <summary>
+    /// Stores the request / response Bundles and the new decision of a request the payer accepted.
+    /// </summary>
+    /// <param name="record">The request; its decision, status and Bundles are replaced.</param>
+    /// <param name="sent">The Bundle that was sent (the Claim is its first entry).</param>
+    /// <param name="result">The payer's answer.</param>
+    /// <param name="claimResponse">The ClaimResponse found in the answer.</param>
+    /// <param name="wasCancel">
+    /// True when the Bundle asked the payer to cancel the whole request. When the payer answers "complete" without
+    /// sending line decisions, the request is cancelled (there are no lines that could say so). With line decisions,
+    /// or with any other outcome (for example "queued": the payer has not processed the cancellation yet), the
+    /// status comes from the payer's answer as usual.
+    /// </param>
+    private async Task ApplyResponseAsync(PriorAuthRecord record, Bundle sent, PayerCallResult result, ClaimResponse claimResponse, bool wasCancel)
     {
         Claim? claim = FhirJson.Read<Claim>(sent.Entry[0].Resource);
         record.Decision = PasDecisionReader.Read(claimResponse, claim ?? new Claim(), record, _workflow);
+        if (wasCancel && record.Decision.Lines.Count == 0 && claimResponse.Outcome == "complete")
+        {
+            record.Decision.OverallStatus = DecisionStatus.Cancelled;
+            record.Decision.DecidedAt = FhirDate.Now();
+        }
         record.Status = record.Decision.OverallStatus;
         record.AuthorizationNumber = record.Decision.AuthorizationNumber;
         record.LastRequestBundleJson = FhirJson.Serialize(sent);
         record.LastResponseBundleJson = result.Body == null ? null : result.Body.ToJsonString();
-        await _repository.SaveAsync(record, ct);
+        // The payer has accepted the request. The save is not cancelled when the caller disconnects: without the
+        // row the gateway would not know the request and a retry would submit it a second time.
+        await _repository.SaveAsync(record, CancellationToken.None);
         _logger.LogInformation("PAS {RequestId} v{Version} at {Payer}: {Status}", record.RequestId, record.Version, record.PayerName, record.Status);
     }
 
@@ -449,9 +647,21 @@ public class PasService
                 continue;
             }
             string? status = FhirJson.GetString(form, "status");
-            string? orderId = PasBundleBuilder.FormOrderId(form);
             bool finished = status == "completed" || status == "amended";
-            if (finished && orderId != null && orderIds.Contains(orderId))
+            if (!finished)
+            {
+                continue;
+            }
+            // attached when the form is for at least one of the orders of this request
+            bool forTheseOrders = false;
+            foreach (string formOrderId in PasBundleBuilder.FormOrderIds(form))
+            {
+                if (orderIds.Contains(formOrderId))
+                {
+                    forTheseOrders = true;
+                }
+            }
+            if (forTheseOrders)
             {
                 forms.Add(form);
                 added.Add(id);
@@ -461,7 +671,7 @@ public class PasService
     }
 
     /// <summary>Reads each document with its file embedded; a missing document is an error (404).</summary>
-    private async Task<List<JsonObject>> ReadDocumentsAsync(List<string> documentIds, CancellationToken ct)
+    private async Task<List<JsonObject>> ReadDocumentsAsync(List<string>? documentIds, CancellationToken ct)
     {
         List<JsonObject> documents = new List<JsonObject>();
         foreach (string documentId in TextHelper.Distinct(documentIds))
@@ -566,19 +776,4 @@ public class PasService
         return payer;
     }
 
-    /// <summary>True when the decision is different from the one stored before (logged).</summary>
-    private static bool HasChanged(PriorAuthDecision before, PriorAuthDecision after)
-    {
-        if (before.OverallStatus != after.OverallStatus) return true;
-        if (before.AuthorizationNumber != after.AuthorizationNumber) return true;
-        if (before.Lines.Count != after.Lines.Count) return true;
-        for (int i = 0; i < before.Lines.Count; i++)
-        {
-            if (before.Lines[i].Decision != after.Lines[i].Decision)
-            {
-                return true;
-            }
-        }
-        return false;
-    }
 }

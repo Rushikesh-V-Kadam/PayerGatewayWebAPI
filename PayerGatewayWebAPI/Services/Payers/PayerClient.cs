@@ -35,14 +35,24 @@ public class PayerClient
     // ================================================================== CRD (CDS Hooks, plain JSON)
 
     /// <summary>GET {cds}: the payer's CDS services and prefetch templates.</summary>
-    public async Task<CdsDiscoveryResponse> DiscoverAsync(PayerSettings payer, CancellationToken ct)
+    /// <param name="payer">The payer to ask.</param>
+    /// <param name="timeoutSeconds">
+    /// Seconds to wait: the short CRD timeout when a clinician is waiting (order-sign), the normal timeout otherwise.
+    /// </param>
+    /// <param name="ct">Cancelled when the caller disconnects.</param>
+    public async Task<CdsDiscoveryResponse> DiscoverAsync(PayerSettings payer, int timeoutSeconds, CancellationToken ct)
     {
         HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, payer.GetCdsServicesUrl());
-        string text = await SendForTextAsync(payer, request, payer.TimeoutSeconds, ct);
+        string text = await SendForTextAsync(payer, request, timeoutSeconds, ct);
         CdsDiscoveryResponse? discovery = ReadJson<CdsDiscoveryResponse>(payer, text);
         if (discovery == null)
         {
             return new CdsDiscoveryResponse();
+        }
+        // "services": null is allowed JSON; the rest of the code expects a list
+        if (discovery.Services == null)
+        {
+            discovery.Services = new List<CdsServiceDefinition>();
         }
         return discovery;
     }
@@ -60,6 +70,30 @@ public class PayerClient
         {
             return new CdsHookResponse();
         }
+        // "cards": null, "systemActions": null and "links": null are allowed JSON (some CDS services write them
+        // that way); the rest of the code expects lists, so each is replaced by an empty list
+        if (response.Cards == null)
+        {
+            response.Cards = new List<CdsCard>();
+        }
+        if (response.SystemActions == null)
+        {
+            response.SystemActions = new List<CdsAction>();
+        }
+        List<CdsCard> cards = new List<CdsCard>();
+        foreach (CdsCard? card in response.Cards)
+        {
+            if (card == null)
+            {
+                continue;
+            }
+            if (card.Links == null)
+            {
+                card.Links = new List<CdsLink>();
+            }
+            cards.Add(card);
+        }
+        response.Cards = cards;
         return response;
     }
 
@@ -117,7 +151,15 @@ public class PayerClient
 
         if (FhirJson.ResourceType(result.Body) == "OperationOutcome")
         {
-            result.Outcome = FhirJson.Read<OperationOutcome>(result.Body);
+            try
+            {
+                result.Outcome = FhirJson.Read<OperationOutcome>(result.Body);
+            }
+            catch (JsonException ex)
+            {
+                // the caller still gets the status code and the raw body; only the payer's messages are missing
+                _logger.LogWarning(ex, "Payer {Payer} returned an OperationOutcome that could not be read", payer.PayerName);
+            }
         }
         return result;
     }

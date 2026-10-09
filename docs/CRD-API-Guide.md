@@ -5,6 +5,8 @@
 **Controllers:** `PayersController`, `CrdController`
 **Other guides:** `DTR-Forms-API-Guide.md`, `DTR-SmartApp-API-Guide.md`, `PAS-API-Guide.md`, `CDex-API-Guide.md`
 
+> **Updated Oct 9, 2026 (later the same day).** The payer id and the member id now come only from the patient's insurance in the EHR; table `PA_PAYER` no longer has `PAYER_IDENTIFIER`, `MEMBER_ID_SYSTEM` and `PAYER_ID_SYSTEM`. Orders are service and medication orders only (no device orders). When a patient has more than one active insurance and none is chosen, the gateway answers 422 instead of picking one. The Word guides named "PayerGatewayWebAPI - ... API Guide.docx" in this folder are the complete, current description.
+
 ---
 
 ## 1. What this step does
@@ -99,7 +101,6 @@ GET /api/v1/payers
     "displayName": "Mock Da Vinci Payer",
     "enabled": true,
     "baseUrl": "http://localhost:5080",
-    "payerIdentifier": "PAYER001",
     "fhirVersion": "R4",
     "dtrMode": "Forms"
   }
@@ -178,10 +179,10 @@ The gateway uses the first service whose `hook` is `order-sign`. Its `id` become
 | `eventId` | Yes | Unique id of this signing event in the EHR. The same id sent again returns the stored answer |
 | `payerName` | Yes | Payer to ask (`PA_PAYER.PAYER_NAME`) |
 | `patientId` | Yes | EHR patient id |
-| `orderIds` | Yes, at least one | EHR order ids being signed. An order is a ServiceRequest, DeviceRequest or MedicationRequest at the FHIR API |
-| `coverageId` | No | Insurance to use. Empty = the order's insurance, else the patient's first active coverage |
+| `orderIds` | Yes, at least one | EHR order ids being signed. An order is a ServiceRequest (service order) or a MedicationRequest (medication order) at the FHIR API. Device orders are not used |
+| `coverageId` | No | Insurance to use. Empty = the order's insurance, else the patient's only active insurance. With more than one active insurance and none named by the order: 422 |
 | `encounterId` | No | Current encounter (CDS Hooks `encounterId`) |
-| `userPractitionerId` | No | Clinician signing (CDS Hooks `userId`). Empty = the first order's ordering practitioner |
+| `userPractitionerId` | No, when the order has an ordering practitioner | Clinician signing (CDS Hooks `userId`, required by the payer). Empty = the first order's ordering practitioner; 400 when the order has none |
 
 ```http
 POST /api/v1/crd/order-sign
@@ -202,8 +203,8 @@ Content-Type: application/json
 1. **Checks the input.** All problems are returned together (400).
 2. **Finds the payer** by `payerName`.
 3. **Same `eventId` seen before?** Returns the stored answer. The payer is not called again.
-4. **Reads from the FHIR API:** `Patient/{patientId}`, the orders (`ServiceRequest?_id=...`, `DeviceRequest?_id=...`, `MedicationRequest?_id=...`) and `Coverage?patient=...&status=active`.
-5. **Chooses the coverage:** `coverageId` from the request, else the order's insurance, else the first active coverage.
+4. **Reads from the FHIR API:** `Patient/{patientId}`, the orders (`ServiceRequest?_id=...`, `MedicationRequest?_id=...`) and `Coverage?patient=...&status=active`.
+5. **Chooses the coverage:** `coverageId` from the request, else the order's insurance, else the patient's only active insurance. With more than one active insurance and none chosen the answer is 422.
 6. **Discovery:** `GET {payer}/cds-services`, kept 12 hours. Picks the `order-sign` service.
 7. **Gets a `fhirAuthorization` token** from the FHIR API (`POST /internal/access-tokens`, valid `Workflow:FhirAuthorizationMinutes`). If this fails, the hook is sent without it.
 8. **Fills the prefetch templates** and runs each query against the FHIR API. A template that cannot be filled, or a query that fails, is left out.
@@ -244,7 +245,7 @@ Prefetch placeholders the gateway can fill:
 | `{{context.encounterId}}` | `encounterId` (when sent) |
 | `{{context.userId}}` | `Practitioner/{userPractitionerId}` |
 | `{{userPractitionerId}}` | `userPractitionerId` |
-| `{{context.draftOrders.ServiceRequest.id}}` | Ids of the signed ServiceRequests, comma separated. The same for `DeviceRequest` and `MedicationRequest` |
+| `{{context.draftOrders.ServiceRequest.id}}` | Ids of the signed ServiceRequests, comma separated. The same for `MedicationRequest` |
 
 #### Response 200
 

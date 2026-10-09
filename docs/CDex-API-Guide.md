@@ -7,6 +7,8 @@
 
 This guide replaces the earlier CDex guide and follows the current code. Section 11 lists the code changes it reflects.
 
+> **Updated Oct 9, 2026 (later the same day).** The payer id and the member id now come only from the patient's insurance in the EHR; table `PA_PAYER` no longer has `PAYER_IDENTIFIER`, `MEMBER_ID_SYSTEM` and `PAYER_ID_SYSTEM`. Orders are service and medication orders only (no device orders). When a patient has more than one active insurance and none is chosen, the gateway answers 422 instead of picking one. The Word guides named "PayerGatewayWebAPI - ... API Guide.docx" in this folder are the complete, current description.
+
 ---
 
 ## 1. What this step does
@@ -218,10 +220,10 @@ The request does not have to be `pended`: the gateway sends attachments for any 
   "parameter": [
     { "name": "TrackingId", "valueIdentifier": { "system": "http://example.org/cdex/tracking-ids", "value": "TRK-3f9a1c2b7d4e5f60" } },
     { "name": "AttachTo", "valueCode": "preauthorization" },
-    { "name": "PayerId", "valueIdentifier": { "system": "http://example.org/payer-ids", "value": "PAYER001" } },
+    { "name": "PayerId", "valueIdentifier": { "value": "PAYER001" } },
     { "name": "OrganizationId", "valueIdentifier": { "system": "http://hl7.org/fhir/sid/us-npi", "value": "1999999992" } },
     { "name": "ProviderId", "valueIdentifier": { "system": "http://hl7.org/fhir/sid/us-npi", "value": "1111111112" } },
-    { "name": "MemberId", "valueIdentifier": { "system": "http://example.org/member-ids", "value": "MBR-1001" } },
+    { "name": "MemberId", "valueIdentifier": { "value": "MBR-1001" } },
     {
       "name": "Attachment",
       "part": [
@@ -247,10 +249,10 @@ The request does not have to be `pended`: the gateway sends attachments for any 
 |---|---|
 | `TrackingId` | See the table above |
 | `AttachTo` | Always `preauthorization` |
-| `PayerId` | `PA_PAYER.PAYER_IDENTIFIER` (else the payer name) with `PAYER_ID_SYSTEM` |
+| `PayerId` | The payer id of the patient's insurance, as sent in the PAS request. Left out when the insurance has none |
 | `OrganizationId` | NPI of the requesting organization (saved at the PAS submit) |
 | `ProviderId` | NPI of the requesting practitioner, when known |
-| `MemberId` | The member id of the coverage, with `PA_PAYER.MEMBER_ID_SYSTEM` |
+| `MemberId` | The member id of the patient's insurance, as sent in the PAS request. No identifier system is added |
 | `Attachment` | One per document and one per form |
 | `Attachment.LineItem` | One per number in `lineNumbers` |
 | `Attachment.Code` | Document: the LOINC code of its type. Form: LOINC `102089-0` |
@@ -516,8 +518,8 @@ Both are in the EHR's Oracle database, through the EHR data API (`docs/EHR-Data-
 |---|---|---|
 | `PA_PAYER.BASE_URL` + `FHIR_PATH` | `fhir` | Where `Task` and `$submit-attachment` are |
 | `PA_PAYER.TIMEOUT_SECONDS` | 30 | Seconds to wait for the payer |
-| `PA_PAYER.PAYER_IDENTIFIER`, `PAYER_ID_SYSTEM` | | `PayerId` |
-| `PA_PAYER.MEMBER_ID_SYSTEM` | | System of `MemberId` |
+| The payer id of the patient's insurance (FHIR API, `Coverage.payor.identifier`) | | `PayerId` |
+| The member id of the patient's insurance (FHIR API, `Coverage.subscriberId`) | | `MemberId` |
 | `Workflow:ClaimIdentifierSystem` | `http://provider.example.org/fhir/sid/prior-auth-request-id` | System of the tracking id of an unsolicited attachment |
 | `Workflow:PollMinutes` | 5 | How often the payer's Tasks are searched. 0 = off |
 | `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the push URL given to payers |

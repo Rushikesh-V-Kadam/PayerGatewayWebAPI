@@ -198,8 +198,16 @@ public class QuestionnaireResponseBuilder
         if (type == "boolean")
         {
             string lower = value.ToLowerInvariant();
-            if (lower == "true" || lower == "yes") { answer.ValueBoolean = true; return answer; }
-            if (lower == "false" || lower == "no") { answer.ValueBoolean = false; return answer; }
+            if (lower == "true" || lower == "yes")
+            {
+                answer.ValueBoolean = true;
+                return answer;
+            }
+            if (lower == "false" || lower == "no")
+            {
+                answer.ValueBoolean = false;
+                return answer;
+            }
             Errors.Add(item.LinkId + ": '" + value + "' is not true / false.");
             return null;
         }
@@ -207,7 +215,11 @@ public class QuestionnaireResponseBuilder
         if (type == "integer")
         {
             int number;
-            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out number)) { answer.ValueInteger = number; return answer; }
+            if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out number))
+            {
+                answer.ValueInteger = number;
+                return answer;
+            }
             Errors.Add(item.LinkId + ": '" + value + "' is not a whole number.");
             return null;
         }
@@ -215,7 +227,11 @@ public class QuestionnaireResponseBuilder
         if (type == "decimal")
         {
             decimal number;
-            if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out number)) { answer.ValueDecimal = number; return answer; }
+            if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out number))
+            {
+                answer.ValueDecimal = number;
+                return answer;
+            }
             Errors.Add(item.LinkId + ": '" + value + "' is not a number.");
             return null;
         }
@@ -224,7 +240,11 @@ public class QuestionnaireResponseBuilder
         {
             DateTime date;
             string[] formats = new string[] { "yyyy-MM-dd", "yyyy-MM", "yyyy" };
-            if (DateTime.TryParseExact(value, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out date)) { answer.ValueDate = value; return answer; }
+            if (DateTime.TryParseExact(value, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
+            {
+                answer.ValueDate = value;
+                return answer;
+            }
             Errors.Add(item.LinkId + ": '" + value + "' is not a date (yyyy-MM-dd).");
             return null;
         }
@@ -232,7 +252,11 @@ public class QuestionnaireResponseBuilder
         if (type == "dateTime")
         {
             DateTimeOffset dateTime;
-            if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out dateTime)) { answer.ValueDateTime = value; return answer; }
+            if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out dateTime))
+            {
+                answer.ValueDateTime = value;
+                return answer;
+            }
             Errors.Add(item.LinkId + ": '" + value + "' is not a date and time (yyyy-MM-ddTHH:mm:ssZ).");
             return null;
         }
@@ -240,7 +264,11 @@ public class QuestionnaireResponseBuilder
         if (type == "time")
         {
             TimeSpan time;
-            if (TimeSpan.TryParse(value, CultureInfo.InvariantCulture, out time)) { answer.ValueTime = value; return answer; }
+            if (TimeSpan.TryParse(value, CultureInfo.InvariantCulture, out time))
+            {
+                answer.ValueTime = value;
+                return answer;
+            }
             Errors.Add(item.LinkId + ": '" + value + "' is not a time (HH:mm:ss).");
             return null;
         }
@@ -259,7 +287,11 @@ public class QuestionnaireResponseBuilder
         if (type == "url")
         {
             Uri? uri;
-            if (Uri.TryCreate(value, UriKind.Absolute, out uri)) { answer.ValueUri = value; return answer; }
+            if (Uri.TryCreate(value, UriKind.Absolute, out uri))
+            {
+                answer.ValueUri = value;
+                return answer;
+            }
             Errors.Add(item.LinkId + ": '" + value + "' is not a web address.");
             return null;
         }
@@ -406,16 +438,63 @@ public class QuestionnaireResponseBuilder
             return (values.Count > 0) == expectedExists;
         }
 
+        // The EHR may answer a yes / no question with "yes" and a choice question with the option's text. The rule
+        // of the payer always compares with true / false and with the option's code, so each answer is first brought
+        // to that form (the same way Convert() accepts it).
+        QuestionnaireItem? asked;
+        _items.TryGetValue(rule.Question, out asked);
+
         string expected = AnswerText.FromCondition(rule);
         foreach (string value in values)
         {
-            if (Compare(value, expected, rule.Operator))
+            if (Compare(ComparableValue(asked, value), expected, rule.Operator))
             {
                 return true;
             }
         }
         // "!=" with no answer at all counts as "not equal"
         return rule.Operator == "!=" && values.Count == 0;
+    }
+
+    /// <summary>
+    /// An answer in the form enableWhen rules compare with: "true" / "false" for a yes / no question (also when
+    /// "yes" / "no" was sent), the option's code for a choice question (also when the option's text was sent).
+    /// Every other answer is returned as it is.
+    /// </summary>
+    private static string ComparableValue(QuestionnaireItem? question, string value)
+    {
+        if (question == null)
+        {
+            return value;
+        }
+
+        if (question.Type == "boolean")
+        {
+            string lower = value.ToLowerInvariant();
+            if (lower == "true" || lower == "yes")
+            {
+                return "true";
+            }
+            if (lower == "false" || lower == "no")
+            {
+                return "false";
+            }
+            return value;
+        }
+
+        if (question.Type == "choice" || question.Type == "open-choice")
+        {
+            foreach (QuestionnaireAnswerOption option in question.AnswerOption)
+            {
+                DtrOption simple = QuestionnaireReader.ToOption(option);
+                if (string.Equals(simple.Code, value, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(simple.Display, value, StringComparison.OrdinalIgnoreCase))
+                {
+                    return simple.Code;
+                }
+            }
+        }
+        return value;
     }
 
     /// <summary>Compares numbers as numbers, everything else as text (ISO dates sort correctly as text).</summary>
@@ -438,12 +517,36 @@ public class QuestionnaireResponseBuilder
             result = string.CompareOrdinal(actual, expected);
         }
 
-        if (op == "=") return result == 0;
-        if (op == "!=") return result != 0;
-        if (op == ">") return result > 0;
-        if (op == "<") return result < 0;
-        if (op == ">=") return result >= 0;
-        if (op == "<=") return result <= 0;
+        if (op == "=")
+        {
+            return result == 0;
+        }
+
+        if (op == "!=")
+        {
+            return result != 0;
+        }
+
+        if (op == ">")
+        {
+            return result > 0;
+        }
+
+        if (op == "<")
+        {
+            return result < 0;
+        }
+
+        if (op == ">=")
+        {
+            return result >= 0;
+        }
+
+        if (op == "<=")
+        {
+            return result <= 0;
+        }
+
         return false;
     }
 

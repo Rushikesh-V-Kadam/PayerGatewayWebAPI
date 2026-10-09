@@ -84,7 +84,14 @@ public static class OrderHelper
     }
 
     /// <summary>
-    /// Which Coverage to use: the one asked for, else the orders' coverage, else the first active one. Null when none.
+    /// Which Coverage (insurance) to use, in this order:
+    ///   1. the one asked for in the request (coverageId)
+    ///   2. the one on the orders (Order.insurance)
+    ///   3. the patient's only active insurance
+    /// Returns null when the patient has no active insurance, or the one asked for is not active.
+    /// When the patient has several active insurances and neither the request nor the orders say which one, the
+    /// gateway does not pick one (it could send the member id of the wrong plan to the payer): 422, with the ids to
+    /// choose from.
     /// </summary>
     public static Coverage? ChooseCoverage(List<Coverage> activeCoverages, string? requestedCoverageId, List<JsonObject> orders)
     {
@@ -98,7 +105,7 @@ public static class OrderHelper
         {
             foreach (Coverage coverage in activeCoverages)
             {
-                if (coverage.Id == coverageId)
+                if (coverage.Id == coverageId.Trim())
                 {
                     return coverage;
                 }
@@ -106,10 +113,21 @@ public static class OrderHelper
             return null;
         }
 
-        if (activeCoverages.Count > 0)
+        if (activeCoverages.Count == 0)
+        {
+            return null;
+        }
+        if (activeCoverages.Count == 1)
         {
             return activeCoverages[0];
         }
-        return null;
+
+        List<string> ids = new List<string>();
+        foreach (Coverage coverage in activeCoverages)
+        {
+            ids.Add(coverage.Id ?? "(no id)");
+        }
+        throw new ApiException(422, "The patient has " + activeCoverages.Count + " active insurances (" + string.Join(", ", ids)
+            + ") and the orders do not say which one to use. Send coverageId.");
     }
 }

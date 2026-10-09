@@ -18,12 +18,14 @@ public class EhrApiDtrFormRepository : IDtrFormRepository
         _ehr = ehr;
     }
 
+    /// <summary>Inserts or updates one form: PUT dtr-forms/{formId}. Sets UpdatedAt to now.</summary>
     public async Task SaveAsync(DtrFormRecord record, CancellationToken ct)
     {
         record.UpdatedAt = DateTime.UtcNow;
         await _ehr.PutAsync("dtr-forms/" + EhrDataClient.Esc(record.FormId), ToRow(record), ct);
     }
 
+    /// <summary>One form: GET dtr-forms/{formId}. Null when it does not exist.</summary>
     public async Task<DtrFormRecord?> GetAsync(string formId, CancellationToken ct)
     {
         DtrFormRow? row = await _ehr.GetAsync<DtrFormRow>("dtr-forms/" + EhrDataClient.Esc(formId), ct);

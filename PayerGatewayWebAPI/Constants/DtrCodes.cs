@@ -29,7 +29,11 @@ public static class DtrCodes
     /// <summary>SDC 3.0 name of the same flag (sdc-questionnaire-questionnaireAdaptive); payers send either one.</summary>
     public const string AdaptiveExtensionUrlSdc3 = "http://hl7.org/fhir/uv/sdc/StructureDefinition/sdc-questionnaire-questionnaireAdaptive";
     public const string ContainedQuestionnaireId = "adaptive-questionnaire";
-    public const string ParamIn = "in";
+
+    /// <summary>Name of the $next-question input parameter (SDC): the QuestionnaireResponse with the answers so far.</summary>
+    public const string ParamQuestionnaireResponse = "questionnaire-response";
+
+    /// <summary>Name of the $next-question output parameter (SDC).</summary>
     public const string ParamReturn = "return";
 
     // form status (QuestionnaireResponse.status)

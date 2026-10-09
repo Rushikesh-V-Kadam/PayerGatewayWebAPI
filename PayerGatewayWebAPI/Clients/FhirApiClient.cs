@@ -101,8 +101,9 @@ public class FhirApiClient
     }
 
     /// <summary>
-    /// Reads orders by EHR order id. An order can be a ServiceRequest, DeviceRequest or MedicationRequest,
-    /// so each type is searched with _id=id1,id2. Orders that do not exist are simply missing from the result.
+    /// Reads orders by EHR order id. An order is a ServiceRequest (dialysis service) or a MedicationRequest
+    /// (medication), so each of the two types is searched with _id=id1,id2. Orders that do not exist are simply
+    /// missing from the result. DeviceRequest is not read: the EHR has no device orders.
     /// </summary>
     public async Task<List<JsonObject>> ReadOrdersAsync(List<string> orderIds, CancellationToken ct)
     {
@@ -124,8 +125,7 @@ public class FhirApiClient
         }
 
         string ids = string.Join(",", escaped);
-        string[] orderTypes = new string[] { "ServiceRequest", "DeviceRequest", "MedicationRequest" };
-        foreach (string orderType in orderTypes)
+        foreach (string orderType in OrderResource.SupportedTypes)
         {
             Bundle bundle = await SearchAsync(orderType + "?_id=" + ids, r5, ct);
             orders.AddRange(bundle.ResourcesOfType(orderType));
@@ -136,6 +136,10 @@ public class FhirApiClient
     /// <summary>
     /// Reads a DocumentReference and embeds the file (attachment.data) by downloading its Binary,
     /// because payers must receive the content itself (PAS / CDex), not a link to our server.
+    /// The file address may be complete ("http://.../Binary/b1") or relative to the FHIR API ("Binary/b1").
+    /// A document without any file (no content, or a file that cannot be downloaded) is an error
+    /// (FhirApiException): a document without its content is never sent to a payer.
+    /// Null when the DocumentReference itself does not exist.
     /// </summary>
     public async Task<JsonObject?> ReadDocumentWithContentAsync(string documentId, CancellationToken ct)
     {
@@ -147,9 +151,10 @@ public class FhirApiClient
         JsonArray? contents = document["content"] as JsonArray;
         if (contents == null)
         {
-            return document;
+            throw new FhirApiException("Document " + documentId + " has no file (DocumentReference.content is missing), so it cannot be sent to the payer.");
         }
 
+        int files = 0;
         foreach (JsonNode? content in contents)
         {
             JsonObject? attachment = null;
@@ -157,23 +162,48 @@ public class FhirApiClient
             {
                 attachment = content["attachment"] as JsonObject;
             }
-            if (attachment == null || attachment["data"] != null)
+            if (attachment == null)
             {
                 continue;
             }
+            if (!string.IsNullOrEmpty(FhirJson.GetString(attachment, "data")))
+            {
+                files = files + 1;   // the file is already inside the document
+                continue;
+            }
             string? url = FhirJson.GetString(attachment, "url");
-            if (url == null)
+            if (string.IsNullOrWhiteSpace(url))
             {
                 continue;
             }
 
-            JsonNode? binary = await GetJsonAsync(url, ct);
-            attachment["data"] = FhirJson.GetString(binary, "data");
+            // a relative address ("Binary/b1") is an address at the FHIR API
+            string fileUrl = url.Trim();
+            bool isComplete = fileUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                || fileUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+            if (!isComplete)
+            {
+                fileUrl = GetBaseUrl() + "/" + fileUrl.TrimStart('/');
+            }
+
+            JsonNode? binary = await GetJsonAsync(fileUrl, ct);
+            string? data = FhirJson.GetString(binary, "data");
+            if (string.IsNullOrEmpty(data))
+            {
+                throw new FhirApiException("The file of document " + documentId + " could not be read from " + fileUrl
+                    + " (it does not exist or it is empty), so the document cannot be sent to the payer.");
+            }
+            attachment["data"] = data;
             if (attachment["contentType"] == null)
             {
                 attachment["contentType"] = FhirJson.GetString(binary, "contentType");
             }
             attachment.Remove("url");
+            files = files + 1;
+        }
+        if (files == 0)
+        {
+            throw new FhirApiException("Document " + documentId + " has no file (no attachment with data or url), so it cannot be sent to the payer.");
         }
         return document;
     }

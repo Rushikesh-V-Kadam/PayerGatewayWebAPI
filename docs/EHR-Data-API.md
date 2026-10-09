@@ -3,6 +3,8 @@
 **For the EHR team.** This is what the Payer Gateway needs from the EHR so that all prior authorization data is kept in the EHR's own Oracle database.
 
 - Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (9 tables, all named `PA_...`).
+  A database that was created from an earlier version of that script: run `03_alter_pa_payer_drop_id_columns.sql`
+  (it removes three `PA_PAYER` columns the gateway no longer uses; see 4.1).
 - Web API to build: 19 small endpoints, described below. Each one reads or saves **one row of one table**.
 - A working example of the whole API (in memory, for testing): `MockEhr.Api/Controllers/PriorAuthDataController.cs`.
 - Swagger file of the API (every endpoint and every property, with its meaning, column, example and required mark):
@@ -39,7 +41,7 @@ EHR screens ──(existing gateway API: order-sign, forms, prior auth)──▶
 | Row = columns | A row is a flat JSON object. **One property = one column**: `requestId` ↔ `REQUEST_ID`, `decisionJson` ↔ `DECISION_JSON`. |
 | JSON text columns | Properties ending in `Json` or `Bundle`, and `appContext`, are **strings** that contain JSON text. Store the string unchanged in the CLOB column and return it unchanged. Do not parse or re-format it. |
 | Timestamps | UTC, ISO-8601 with `Z`: `"2026-10-07T18:36:17Z"` (fractions of a second are allowed). |
-| Booleans | JSON `true` / `false` (stored as `NUMBER(1)` 1 / 0). |
+| Booleans | JSON `true` / `false` (stored as `NUMBER(1)` 1 / 0). When it reads a row, the gateway also understands `1` / `0` and `"Y"` / `"N"`, but `true` / `false` is the agreed format. |
 | Empty values | `null` (or leave the property out). |
 | PUT | **Insert, or update when the key in the URL already exists** (Oracle `MERGE`). Answer `204` (or `200`). The key in the URL wins over the key in the body. |
 | GET one row | `200` with the row, or `404` when there is no such row. |
@@ -83,40 +85,57 @@ Types: *text* = JSON string, *JSON text* = JSON string that holds JSON (CLOB), *
 
 ### 4.1 `PA_PAYER` (endpoint 1; maintained by the EHR team)
 
+**Only `payerName` and `baseUrl` must be filled.** Every other property is optional: it may be `null`, an empty text,
+or left out of the JSON, and the gateway then uses the default in the table. A row with only those two values is a
+working payer. An optional value the gateway cannot understand (for example text in `timeoutSeconds`) does not switch
+the payer off: the default is used and a warning is written to the gateway log. A row without `payerName`, or without a
+complete `http` / `https` address in `baseUrl`, is left out (also with a warning).
+
 | Property | Type | Meaning |
 | --- | --- | --- |
 | **payerName** | text | The name the EHR sends as `payerName` in gateway requests. Key. |
-| displayName | text | Friendly name for messages and logs. |
-| **enabled** | bool | `false` = switched off (the gateway answers "payer not configured"). |
-| payerIdentifier | text | The payer's own id (sent in PAS and CDex), e.g. `PAYER001`. |
-| **baseUrl** | text | Payer base URL, e.g. `https://api.payer.com`. |
-| cdsServicesPath | text | CDS Hooks path under baseUrl. Empty = `cds-services`. |
-| fhirPath | text | FHIR path under baseUrl. Empty = `fhir`. |
+| displayName | text | Friendly name for messages and logs. Empty = `payerName` is shown. |
+| enabled | bool | `false` = switched off (the gateway answers "payer not configured"). Empty = `true`. |
+| **baseUrl** | text | Payer base URL: a complete `http` / `https` address, e.g. `https://api.payer.com`. |
+| cdsServicesPath | text | CDS Hooks path under baseUrl. Empty = `cds-services`. `/` = no extra path (the address is baseUrl itself). |
+| fhirPath | text | FHIR path under baseUrl. Empty = `fhir`. `/` = no extra path (the address is baseUrl itself). |
 | authType | text | *Not read by the gateway (kept for the authentication layer).* `none`, `client-secret` or `smart-backend`. Empty = `none`. |
 | authTokenUrl | text | *Not read by the gateway (kept for the authentication layer).* The payer's OAuth token URL. |
 | authClientId | text | *Not read by the gateway (kept for the authentication layer).* Client id registered with the payer. |
 | authClientSecret | text | *Not read by the gateway (kept for the authentication layer).* Client secret (`client-secret` only). **Sensitive.** |
-| authScope | text | *Not read by the gateway (kept for the authentication layer).* OAuth scopes. Empty = the gateway default. |
-| signCdsHooksRequests | bool | *Not read by the gateway (kept for the authentication layer).* Send a signed JWT with each CDS Hooks call (normally `true`). |
-| useSubscriptions | bool | Ask the payer to notify the gateway about decisions (normally `true`). |
+| authScope | text | *Not read by the gateway (kept for the authentication layer).* OAuth scopes. |
+| signCdsHooksRequests | bool | *Not read by the gateway (kept for the authentication layer).* Send a signed JWT with each CDS Hooks call. |
+| useSubscriptions | bool | Ask the payer to notify the gateway about decisions. Empty = `true`. |
 | notificationSecret | text | *Not read by the gateway (kept for the authentication layer).* Secret the payer sends with notifications. **Sensitive.** |
-| memberIdSystem | text | Identifier system the payer expects for member ids. |
-| payerIdSystem | text | Identifier system the payer expects for its payer id. |
 | crdTimeoutSeconds | int | Seconds to wait for the payer at order-sign. Empty or 0 = 5. |
 | timeoutSeconds | int | Seconds to wait for every other payer call. Empty or 0 = 30. |
 | fhirVersion | text | `R4` or `R5`: FHIR release the payer works in. Empty = `R4`. |
 | dtrMode | text | `Forms` (the EHR shows the payer's questions) or `SmartApp` (the payer's own SMART DTR app). Empty = `Forms`. |
 | dtrAppLaunchUrl | text | Launch URL of the payer's DTR app. Empty = the URL on the payer's CRD card. |
 
+**Removed (Oct 9, 2026): `payerIdentifier`, `memberIdSystem`, `payerIdSystem`.** Payers do not give these values per
+payer. The payer id and the member id belong to the patient's insurance in the EHR (`GET api/patients/{id}/insurances`:
+`payerId` and `memberId`); the gateway reads them from there and sends them to the payer as they are, without adding
+an identifier "system". If the API still returns the three properties, the gateway ignores them.
+
+The smallest row that works:
+
+```json
+[
+  { "payerName": "AcmeHealth", "baseUrl": "https://api.acmehealth.example" }
+]
+```
+
+A row with every property:
+
 ```json
 [
   {
     "payerName": "MockPayer", "displayName": "Mock Da Vinci Payer", "enabled": true,
-    "payerIdentifier": "PAYER001", "baseUrl": "http://localhost:5080",
+    "baseUrl": "http://localhost:5080",
     "cdsServicesPath": "cds-services", "fhirPath": "fhir",
     "authType": "none", "authTokenUrl": null, "authClientId": null, "authClientSecret": null, "authScope": null,
     "signCdsHooksRequests": true, "useSubscriptions": true, "notificationSecret": null,
-    "memberIdSystem": "http://example.org/member-ids", "payerIdSystem": "http://example.org/payer-ids",
     "crdTimeoutSeconds": 10, "timeoutSeconds": 30,
     "fhirVersion": "R4", "dtrMode": "Forms", "dtrAppLaunchUrl": null
   }
@@ -291,6 +310,8 @@ Nothing is pushed to the EHR. The EHR screens read the tables (example SQL is at
 the payer's notification) then updates the same `PA_PRIOR_AUTH` row. The EHR can notice this in any of three ways:
 read the row when the screen opens; ask for rows with `UPDATED_AT > :lastCheck`; or react inside the Web API when
 endpoint 11 is called (for example, raise a task for the user when `status` changes).
+The gateway saves a row only when something in it changed: asking a payer again and getting the same answer does not
+save, so `UPDATED_AT` of `PA_PRIOR_AUTH` and `RECEIVED_AT` of `PA_CDEX_TASK` move only when there is something new.
 
 The same data is also available from the gateway: `GET /api/v1/crd/decisions/{orderId}` and `GET /api/v1/pas/requests/{requestId}`.
 
@@ -308,11 +329,12 @@ Data API calls per gateway operation (for sizing):
 
 | Gateway operation | Data API calls |
 | --- | --- |
-| Order-sign | `GET crd-events`, then `PUT coverage-decisions` per order, `PUT crd-events` |
+| Order-sign | `GET crd-events`, then `PUT coverage-decisions` per order, `PUT crd-events` (and `PUT dtr-links` for each payer app link) |
 | Get a form | `PUT dtr-forms` per questionnaire |
 | Save answers | `GET dtr-forms`, `GET` + `PUT questionnaire-responses`, `PUT dtr-forms` |
 | Submit / update a request | `GET prior-auths/{id}`, `GET questionnaire-responses?patientId`, `PUT prior-auths/{id}`, `GET payer-subscriptions` (+ `PUT` the first time) |
-| Background job (every 5 minutes) | `GET prior-auths?status=pended`, then per pended request `GET` + `PUT prior-auths/{id}`, and `PUT cdex-tasks` for each Task the payer has open |
+| Ask the payer again (inquire) | `GET prior-auths/{id}`; `PUT prior-auths/{id}` only when the decision changed |
+| Background job (every 5 minutes) | `GET prior-auths?status=pended`, then per pended request `GET prior-auths/{id}`, and per Task the payer has open `GET prior-auths/{id}` + `GET cdex-tasks?requestId`. A `PUT` (`prior-auths`, `cdex-tasks`) follows only when something changed |
 
 ## 7. Testing
 

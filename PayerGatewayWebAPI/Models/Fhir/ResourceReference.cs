@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace PayerGatewayWebAPI.Models.Fhir;
 
 /// <summary>FHIR Reference, e.g. { "reference": "Patient/pat-1" } or a reference by identifier.</summary>
@@ -7,6 +10,13 @@ public class ResourceReference
     public string? Type { get; set; }
     public Identifier? Identifier { get; set; }
     public string? Display { get; set; }
+
+    /// <summary>
+    /// Every other property of this element, kept exactly as it was read. The gateway does not use them, but they are
+    /// written back when the element is sent on (to a payer or the FHIR API), so nothing the sender put in is lost.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? OtherProperties { get; set; }
 
     /// <summary>Empty reference (used by the JSON serializer).</summary>
     public ResourceReference()

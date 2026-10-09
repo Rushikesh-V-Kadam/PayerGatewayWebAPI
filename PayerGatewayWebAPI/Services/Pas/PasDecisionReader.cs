@@ -1,6 +1,8 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using PayerGatewayWebAPI.Configuration;
 using PayerGatewayWebAPI.Constants;
+using PayerGatewayWebAPI.Exceptions;
 using PayerGatewayWebAPI.Helpers;
 using PayerGatewayWebAPI.Models.Entities;
 using PayerGatewayWebAPI.Models.Fhir;
@@ -14,36 +16,105 @@ namespace PayerGatewayWebAPI.Services.Pas;
 ///   per line  : extension-reviewAction (X12 306 code A1/A2/A3/A4..., authorization number, reason), authorized quantity/period
 ///   overall   : preAuthRef / preAuthPeriod, and a combined status from the lines
 ///   errors    : ClaimResponse.error, or the OperationOutcome of a rejected request
+/// PAS 2.0.1 puts reviewAction on ClaimResponse.item.adjudication. Earlier PAS versions (and some payers) put it
+/// directly on ClaimResponse.item, so that place is read too when the adjudications have none.
 /// </summary>
 public static class PasDecisionReader
 {
-    /// <summary>The newest ClaimResponse in a payer response Bundle, or null.</summary>
+    /// <summary>
+    /// The newest ClaimResponse in a payer response Bundle, or null when the body is not a Bundle or has none.
+    /// A Bundle or ClaimResponse that does not have the FHIR shape (for example text where a number belongs) is a
+    /// payer problem: PayerException (502), never an error about the EHR's own request.
+    /// </summary>
     public static ClaimResponse? FindClaimResponse(PayerCallResult result)
     {
         if (FhirJson.ResourceType(result.Body) != "Bundle")
         {
             return null;
         }
-        Bundle? bundle = FhirJson.Read<Bundle>(result.Body);
-        if (bundle == null)
-        {
-            return null;
-        }
 
-        ClaimResponse? newest = null;
-        foreach (JsonObject raw in bundle.ResourcesOfType("ClaimResponse"))
+        try
         {
-            ClaimResponse? response = FhirJson.Read<ClaimResponse>(raw);
-            if (response == null)
+            Bundle? bundle = FhirJson.Read<Bundle>(result.Body);
+            if (bundle == null)
             {
-                continue;
+                return null;
             }
-            if (newest == null || string.CompareOrdinal(response.Created ?? string.Empty, newest.Created ?? string.Empty) > 0)
+
+            ClaimResponse? newest = null;
+            foreach (JsonObject raw in bundle.ResourcesOfType("ClaimResponse"))
             {
-                newest = response;
+                ClaimResponse? response = FhirJson.Read<ClaimResponse>(raw);
+                if (response == null)
+                {
+                    continue;
+                }
+                if (newest == null || string.CompareOrdinal(response.Created ?? string.Empty, newest.Created ?? string.Empty) > 0)
+                {
+                    newest = response;
+                }
             }
+            return newest;
         }
-        return newest;
+        catch (JsonException ex)
+        {
+            throw new PayerException("The payer's prior authorization answer could not be read: " + ex.Message, 502, ex);
+        }
+    }
+
+    /// <summary>
+    /// True when the payer did not take the request: the ClaimResponse says "error" and has no line decision.
+    /// (Business errors such as "member not found" come back this way, with HTTP 200 and ClaimResponse.error.)
+    /// </summary>
+    public static bool IsRefusal(ClaimResponse response)
+    {
+        return response.Outcome == "error" && response.Item.Count == 0;
+    }
+
+    /// <summary>The payer's error texts of a ClaimResponse ("Line 2: ..." when an error is about one line).</summary>
+    public static List<string> ErrorMessages(ClaimResponse response)
+    {
+        List<string> messages = new List<string>();
+        foreach (ClaimResponseError error in response.Error)
+        {
+            // Payers often send only a code (X12 reject reason, e.g. "T4") without text: say that it is a code
+            string text = "Payer error";
+            Coding? coding = error.Code.FirstCoding();
+            bool hasWords = !string.IsNullOrWhiteSpace(error.Code.Text) || (coding != null && !string.IsNullOrWhiteSpace(coding.Display));
+            string? best = error.Code.BestText();
+            if (hasWords && best != null)
+            {
+                text = best;
+            }
+            else if (!string.IsNullOrWhiteSpace(best))
+            {
+                text = "Payer error code " + best;
+            }
+
+            // where the problem is, when the payer says so
+            List<string> places = new List<string>();
+            Extension? element = Extension.Find(error.Extension, PasExtensions.ErrorElement);
+            if (element != null && !string.IsNullOrWhiteSpace(element.ValueString))
+            {
+                places.Add(element.ValueString);
+            }
+            Extension? path = Extension.Find(error.Extension, PasExtensions.ErrorPath);
+            if (path != null && !string.IsNullOrWhiteSpace(path.ValueString))
+            {
+                places.Add(path.ValueString);
+            }
+            if (places.Count > 0)
+            {
+                text = text + " (" + string.Join(", ", places) + ")";
+            }
+
+            if (error.ItemSequence != null)
+            {
+                text = "Line " + error.ItemSequence.Value + ": " + text;
+            }
+            messages.Add(text);
+        }
+        return messages;
     }
 
     /// <summary>Builds the decision from a ClaimResponse.</summary>
@@ -90,11 +161,7 @@ public static class PasDecisionReader
         decision.ValidFrom = response.PreAuthPeriod != null && response.PreAuthPeriod.Start != null ? response.PreAuthPeriod.Start : EarliestFrom(decision.Lines);
         decision.ValidTo = response.PreAuthPeriod != null && response.PreAuthPeriod.End != null ? response.PreAuthPeriod.End : LatestTo(decision.Lines);
 
-        foreach (ClaimResponseError error in response.Error)
-        {
-            string text = error.Code.BestText() ?? "Payer error";
-            decision.Errors.Add(error.ItemSequence != null ? "Line " + error.ItemSequence.Value + ": " + text : text);
-        }
+        decision.Errors.AddRange(ErrorMessages(response));
 
         if (response.Outcome == "error" && decision.Lines.Count == 0)
         {
@@ -114,13 +181,23 @@ public static class PasDecisionReader
     /// <summary>Decision for a request the payer rejected (HTTP 4xx with an OperationOutcome, or no ClaimResponse).</summary>
     public static PriorAuthDecision Rejected(string requestId, string payerName, string patientId, List<string> orderIds, PayerCallResult result)
     {
+        return Refused(requestId, payerName, patientId, orderIds, result.Messages());
+    }
+
+    /// <summary>Decision for a request the payer did not take, with the payer's error texts.</summary>
+    public static PriorAuthDecision Refused(string requestId, string payerName, string patientId, List<string> orderIds, List<string> errors)
+    {
         PriorAuthDecision decision = new PriorAuthDecision();
         decision.RequestId = requestId;
         decision.PayerName = payerName;
         decision.PatientId = patientId;
         decision.OrderIds = orderIds;
         decision.OverallStatus = DecisionStatus.Error;
-        decision.Errors.AddRange(result.Messages());
+        decision.Errors.AddRange(errors);
+        if (decision.Errors.Count == 0)
+        {
+            decision.Errors.Add("The payer did not accept the request and gave no reason.");
+        }
         return decision;
     }
 
@@ -168,8 +245,15 @@ public static class PasDecisionReader
                 active.Add(line.Decision);
             }
         }
-        if (active.Count == 0) return DecisionStatus.Cancelled;
-        if (active.Contains(DecisionStatus.Pended)) return DecisionStatus.Pended;
+        if (active.Count == 0)
+        {
+            return DecisionStatus.Cancelled;
+        }
+
+        if (active.Contains(DecisionStatus.Pended))
+        {
+            return DecisionStatus.Pended;
+        }
 
         int approved = 0;
         int notRequired = 0;
@@ -177,16 +261,44 @@ public static class PasDecisionReader
         int partial = 0;
         foreach (string value in active)
         {
-            if (value == DecisionStatus.Approved || value == DecisionStatus.Modified) approved++;
-            else if (value == DecisionStatus.NotRequired) notRequired++;
-            else if (value == DecisionStatus.Denied) denied++;
-            else if (value == DecisionStatus.PartiallyApproved) partial++;
+            if (value == DecisionStatus.Approved || value == DecisionStatus.Modified)
+            {
+                approved++;
+            }
+            else if (value == DecisionStatus.NotRequired)
+            {
+                notRequired++;
+            }
+            else if (value == DecisionStatus.Denied)
+            {
+                denied++;
+            }
+            else if (value == DecisionStatus.PartiallyApproved)
+            {
+                partial++;
+            }
         }
 
-        if (notRequired == active.Count) return DecisionStatus.NotRequired;
-        if (approved + notRequired == active.Count) return DecisionStatus.Approved;
-        if (approved > 0 || partial > 0) return DecisionStatus.PartiallyApproved;
-        if (denied + notRequired == active.Count) return DecisionStatus.Denied;
+        if (notRequired == active.Count)
+        {
+            return DecisionStatus.NotRequired;
+        }
+
+        if (approved + notRequired == active.Count)
+        {
+            return DecisionStatus.Approved;
+        }
+
+        if (approved > 0 || partial > 0)
+        {
+            return DecisionStatus.PartiallyApproved;
+        }
+
+        if (denied + notRequired == active.Count)
+        {
+            return DecisionStatus.Denied;
+        }
+
         return DecisionStatus.ContactPayer;
     }
 
@@ -205,7 +317,7 @@ public static class PasDecisionReader
             }
         }
 
-        Extension? review = Extension.Find(item.Extension, PasExtensions.ReviewAction);
+        Extension? review = FindReviewAction(item);
         string? actionCode = null;
         string? reason = null;
         if (review != null)
@@ -272,13 +384,30 @@ public static class PasDecisionReader
     /// <summary>The authorization number on a line's review action, or null.</summary>
     private static string? ReviewNumber(ClaimResponseItem item)
     {
-        Extension? review = Extension.Find(item.Extension, PasExtensions.ReviewAction);
+        Extension? review = FindReviewAction(item);
         if (review == null)
         {
             return null;
         }
         Extension? number = review.Child("number");
         return number == null ? null : number.ValueString;
+    }
+
+    /// <summary>
+    /// The reviewAction extension of a line (the decision), or null when the payer sent none.
+    /// Looked for on item.adjudication first (PAS 2.0.1), then on the item itself (earlier PAS versions).
+    /// </summary>
+    private static Extension? FindReviewAction(ClaimResponseItem item)
+    {
+        foreach (ClaimResponseAdjudication adjudication in item.Adjudication)
+        {
+            Extension? onAdjudication = Extension.Find(adjudication.Extension, PasExtensions.ReviewAction);
+            if (onAdjudication != null)
+            {
+                return onAdjudication;
+            }
+        }
+        return Extension.Find(item.Extension, PasExtensions.ReviewAction);
     }
 
     /// <summary>The first payer note linked to the line, or null.</summary>

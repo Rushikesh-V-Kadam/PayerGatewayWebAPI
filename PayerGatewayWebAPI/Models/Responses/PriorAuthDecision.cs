@@ -1,8 +1,8 @@
 namespace PayerGatewayWebAPI.Models.Responses;
 
 /// <summary>
-/// The payer's prior authorization decision in plain JSON. Returned by every PAS endpoint and written to the EHR
-/// (PUT api/prior-auth-requests/{requestId}).
+/// The payer's prior authorization decision in plain JSON. Returned by every PAS endpoint and saved in table
+/// PA_PRIOR_AUTH of the EHR database (column DECISION_JSON), where the EHR reads it.
 /// </summary>
 public class PriorAuthDecision
 {
@@ -32,6 +32,7 @@ public class PriorAuthDecision
     /// <example>2027-03-31</example>
     public string? ValidTo { get; set; }
 
+    /// <summary>When the gateway first received this decision from the payer (UTC). Empty while the request is pended.</summary>
     public string? DecidedAt { get; set; }
 
     /// <summary>When the payer must decide at the latest (CMS-0057-F: 72 hours urgent, 7 days standard).</summary>

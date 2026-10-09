@@ -30,14 +30,16 @@ public class CrdController : ControllerBase
     /// - **callPas = true** → POST /api/v1/pas/requests (after DTR when both are true).
     /// - both false → nothing more is needed for that order.
     ///
-    /// If the payer cannot be reached, the call still returns 200 with covered = "unknown" and payerCall.outcome = "timeout" / "error".
+    /// If the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = "unknown" and payerCall.outcome = "timeout" / "error".
+    /// Orders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).
     /// Sending the same eventId again returns the stored answer without calling the payer.
     /// </remarks>
     /// <param name="request">Required. The signing event: eventId, payerName, patientId and orderIds must be filled.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">One decision per order (see callDtr / callPas).</response>
-    /// <response code="400">Invalid body, missing field, unknown payerName, or an order of another patient.</response>
+    /// <response code="400">Invalid body, missing field, unknown payerName, an order of another patient, or no signing clinician (userPractitionerId is empty and the orders have no ordering practitioner).</response>
     /// <response code="404">Patient or orders not found at the FHIR API.</response>
+    /// <response code="422">The patient has several active insurances and neither coverageId nor the orders say which one to use.</response>
     /// <response code="502">The FHIR API failed.</response>
     /// <response code="503">The database is not available.</response>
     [HttpPost("order-sign")]
@@ -45,6 +47,7 @@ public class CrdController : ControllerBase
     [ProducesResponseType(typeof(OrderSignResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiError), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status502BadGateway)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult<OrderSignResponse>> OrderSign([FromBody, Required] OrderSignRequest request, CancellationToken ct)

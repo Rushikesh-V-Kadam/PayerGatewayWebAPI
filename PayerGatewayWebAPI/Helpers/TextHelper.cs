@@ -39,10 +39,17 @@ public static class TextHelper
         return reference.Substring(0, slash);
     }
 
-    /// <summary>A list without empty entries and without duplicates, in the original order.</summary>
-    public static List<string> Distinct(List<string> values)
+    /// <summary>
+    /// A list without empty entries and without duplicates, in the original order.
+    /// A missing list (null, e.g. "documentIds": null in a request) gives an empty list.
+    /// </summary>
+    public static List<string> Distinct(List<string>? values)
     {
         List<string> result = new List<string>();
+        if (values == null)
+        {
+            return result;
+        }
         foreach (string value in values)
         {
             if (!string.IsNullOrWhiteSpace(value) && !result.Contains(value))

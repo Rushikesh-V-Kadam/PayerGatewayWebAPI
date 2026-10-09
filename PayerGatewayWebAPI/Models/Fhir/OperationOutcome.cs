@@ -12,7 +12,16 @@ public class OperationOutcome
         List<string> messages = new List<string>();
         foreach (OperationOutcomeIssue issue in Issue)
         {
-            string text = issue.Diagnostics ?? issue.Code;
+            // the message: diagnostics, else details (text / display / code), else the issue code
+            string text = issue.Code;
+            if (!string.IsNullOrWhiteSpace(issue.Diagnostics))
+            {
+                text = issue.Diagnostics;
+            }
+            else if (issue.Details != null && !string.IsNullOrWhiteSpace(issue.Details.BestText()))
+            {
+                text = issue.Details.BestText()!;
+            }
             if (issue.Expression.Count > 0)
             {
                 text = text + " (" + string.Join(", ", issue.Expression) + ")";

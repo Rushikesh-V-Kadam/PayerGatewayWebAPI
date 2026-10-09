@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using PayerGatewayWebAPI.Clients;
 using PayerGatewayWebAPI.Configuration;
 using PayerGatewayWebAPI.Constants;
+using PayerGatewayWebAPI.Exceptions;
 using PayerGatewayWebAPI.Helpers;
 using PayerGatewayWebAPI.Models.Fhir;
 
@@ -40,7 +41,7 @@ public class PasBundleBuilder
         // ---- the payer as an Organization (Claim.insurer)
         string insurerId = "payer-" + SafeId(payer.PayerName);
         JsonObject insurer = BuildInsurer(input, insurerId);
-        Coverage coverage = CoverageForPayer(input.Coverage, payer, insurerId);
+        Coverage coverage = CoverageForBundle(input.Coverage, insurerId);
 
         // ---- Claim header
         Claim claim = new Claim();
@@ -59,9 +60,12 @@ public class PasBundleBuilder
         insurance.Coverage = new ResourceReference("Coverage/" + coverage.Id);
         claim.Insurance.Add(insurance);
 
+        // The care team members are for the whole request, not for single lines: PAS wants that said on each member
+        // (careTeamClaimScope = true), and such members are not listed again on the lines.
         if (practitionerId != null)
         {
             ClaimCareTeam careTeam = new ClaimCareTeam();
+            careTeam.Extension.Add(WholeRequestScope());
             careTeam.Sequence = 1;
             careTeam.Provider = new ResourceReference("Practitioner/" + practitionerId);
             careTeam.Role = new CodeableConcept(CodeSystems.CareTeamRole, "primary", "Primary provider");
@@ -73,6 +77,7 @@ public class PasBundleBuilder
         if (referringId != null && referringId != practitionerId)
         {
             ClaimCareTeam referring = new ClaimCareTeam();
+            referring.Extension.Add(WholeRequestScope());
             referring.Sequence = claim.CareTeam.Count + 1;
             referring.Provider = new ResourceReference("Practitioner/" + referringId);
             referring.Role = new CodeableConcept(CodeSystems.CareTeamRole, "other", "Referring provider");
@@ -132,13 +137,14 @@ public class PasBundleBuilder
         foreach (JsonObject form in input.Forms)
         {
             int sequence = AddSupportingInfo(claim, "QuestionnaireResponse/" + FhirJson.Id(form));
-            string? orderId = FormOrderId(form);
-            if (orderId == null)
+            List<string> formOrderIds = FormOrderIds(form);
+            if (formOrderIds.Count == 0)
             {
-                infoForAll.Add(sequence);
+                infoForAll.Add(sequence);   // the form names no order: it supports every line
             }
-            else
+            foreach (string orderId in formOrderIds)
             {
+                // a form can be for several orders: it is linked to the line of each of them
                 if (!infoByOrder.ContainsKey(orderId))
                 {
                     infoByOrder[orderId] = new List<int>();
@@ -153,9 +159,10 @@ public class PasBundleBuilder
         string? header = HeaderText(input);
         if (header != null)
         {
+            // free text goes in a "freeFormMessage" entry (PAS MessageText); "additionalInformation" is for references
             ClaimSupportingInfo details = new ClaimSupportingInfo();
             details.Sequence = claim.SupportingInfo.Count + 1;
-            details.Category = new CodeableConcept(CodeSystems.PasTemp, PasCodes.AdditionalInformation);
+            details.Category = new CodeableConcept(CodeSystems.PasTemp, PasCodes.FreeFormMessage);
             details.ValueString = header;
             claim.SupportingInfo.Add(details);
             infoForAll.Add(details.Sequence);
@@ -172,7 +179,7 @@ public class PasBundleBuilder
         // ---- one item per order
         foreach (PasOrderLine line in lines)
         {
-            claim.Item.Add(BuildItem(input, line, practitionerId, diagnosisNumbers, infoByOrder, infoForAll));
+            claim.Item.Add(BuildItem(input, line, diagnosisNumbers, infoByOrder, infoForAll));
         }
         claim.Item.Sort(CompareItems);
 
@@ -206,16 +213,24 @@ public class PasBundleBuilder
         return bundle;
     }
 
-    /// <summary>One Claim.item for one order, with the PAS item extensions.</summary>
-    private ClaimItem BuildItem(PasBuildInput input, PasOrderLine line, string? practitionerId, Dictionary<string, int> diagnosisNumbers,
+    /// <summary>
+    /// One Claim.item for one order, with the PAS item extensions.
+    /// The order must have a code (PasService.CheckOrdersHaveCode runs before every Bundle is built) and a line number.
+    /// </summary>
+    private ClaimItem BuildItem(PasBuildInput input, PasOrderLine line, Dictionary<string, int> diagnosisNumbers,
         Dictionary<string, List<int>> infoByOrder, List<int> infoForAll)
     {
         OrderResource order = line.Order;
         string orderId = order.Id ?? string.Empty;
 
-        ClaimItem item = new ClaimItem();
         int lineNumber;
-        item.Sequence = input.LineNumbers.TryGetValue(orderId, out lineNumber) ? lineNumber : input.LineNumbers.Count + 1;
+        if (!input.LineNumbers.TryGetValue(orderId, out lineNumber))
+        {
+            throw new ApiException(500, "Order " + orderId + " has no line number in request " + input.RequestId + ".");
+        }
+
+        ClaimItem item = new ClaimItem();
+        item.Sequence = lineNumber;
         item.Category = new CodeableConcept(CodeSystems.X12ServiceType, ServiceType(order));
         item.ProductOrService = order.GetCode();
 
@@ -247,10 +262,6 @@ public class PasBundleBuilder
             }
         }
 
-        if (practitionerId != null)
-        {
-            item.CareTeamSequence.Add(1);
-        }
         foreach (CodeableConcept diagnosis in order.ReasonCode)
         {
             int number = diagnosisNumbers[DiagnosisKey(diagnosis)];
@@ -303,12 +314,12 @@ public class PasBundleBuilder
         Bundle? lastRequest = FhirJson.Deserialize<Bundle>(lastRequestBundleJson);
         if (lastRequest == null || lastRequest.Entry.Count == 0)
         {
-            throw new InvalidOperationException("The stored PAS request Bundle is empty.");
+            throw new ApiException(500, "The stored prior authorization request (PA_PRIOR_AUTH.LAST_REQUEST_BUNDLE) is empty; the payer cannot be asked about it.");
         }
         Claim? claim = FhirJson.Read<Claim>(lastRequest.Entry[0].Resource);
-        if (claim == null)
+        if (claim == null || FhirJson.ResourceType(lastRequest.Entry[0].Resource) != "Claim")
         {
-            throw new InvalidOperationException("The stored PAS request Bundle has no Claim.");
+            throw new ApiException(500, "The stored prior authorization request (PA_PRIOR_AUTH.LAST_REQUEST_BUNDLE) does not start with a Claim; the payer cannot be asked about it.");
         }
 
         claim.Meta = new Meta();
@@ -337,13 +348,17 @@ public class PasBundleBuilder
 
     // ================================================================== helpers
 
-    /// <summary>The order a DTR form is for: its qr-context reference that is not the Coverage.</summary>
-    public static string? FormOrderId(JsonObject form)
+    /// <summary>
+    /// The orders a DTR form is for: every qr-context reference of the form that is not the Coverage.
+    /// A form can be for one order or for several; an empty list means the form names no order.
+    /// </summary>
+    public static List<string> FormOrderIds(JsonObject form)
     {
+        List<string> orderIds = new List<string>();
         QuestionnaireResponse? typed = FhirJson.Read<QuestionnaireResponse>(form);
         if (typed == null)
         {
-            return null;
+            return orderIds;
         }
         foreach (Extension extension in typed.Extension)
         {
@@ -356,12 +371,12 @@ public class PasBundleBuilder
                 continue;
             }
             string? id = extension.ValueReference.GetId();
-            if (id != null)
+            if (id != null && !orderIds.Contains(id))
             {
-                return id;
+                orderIds.Add(id);
             }
         }
-        return null;
+        return orderIds;
     }
 
     /// <summary>X12 1365 service type for Claim.item.category, from the order type and code.</summary>
@@ -374,11 +389,12 @@ public class PasBundleBuilder
             code = concept.FirstCode()!.Trim().ToUpperInvariant();
         }
 
-        if (order.ResourceType == "MedicationRequest")
+        if (order.ResourceType == OrderResource.MedicationRequestType)
         {
             return X12Codes.Pharmacy;
         }
-        if (order.ResourceType == "DeviceRequest" || code.StartsWith("E") || code.StartsWith("K"))
+        // a service order for equipment or supplies: HCPCS codes that start with E or K
+        if (code.StartsWith("E") || code.StartsWith("K"))
         {
             return X12Codes.DmePurchase;
         }
@@ -386,59 +402,90 @@ public class PasBundleBuilder
         int cpt;
         if (code.Length == 5 && int.TryParse(code, out cpt))
         {
-            if (cpt >= 90935 && cpt <= 90999) return X12Codes.Dialysis;
-            if (cpt >= 97010 && cpt <= 97799) return X12Codes.PhysicalTherapy;
-            if (cpt >= 70010 && cpt <= 79999) return X12Codes.DiagnosticXRay;
-            if (cpt >= 10004 && cpt <= 69990) return X12Codes.Surgical;
+            if (cpt >= 90935 && cpt <= 90999)
+            {
+                return X12Codes.Dialysis;
+            }
+
+            if (cpt >= 97010 && cpt <= 97799)
+            {
+                return X12Codes.PhysicalTherapy;
+            }
+
+            if (cpt >= 70010 && cpt <= 79999)
+            {
+                return X12Codes.DiagnosticXRay;
+            }
+
+            if (cpt >= 10004 && cpt <= 69990)
+            {
+                return X12Codes.Surgical;
+            }
         }
         return X12Codes.MedicalCare;
     }
 
-    /// <summary>The payer as an Organization inside the Bundle (Claim.insurer).</summary>
+    /// <summary>
+    /// The payer as an Organization inside the Bundle (Claim.insurer).
+    /// Name: the payer's name on the patient's insurance (Coverage.payor.display), else the payer's display name.
+    /// Identifier: the payer id of the patient's insurance (Coverage.payor.identifier, i.e. the payer id the EHR keeps
+    /// with the insurance), sent exactly as the FHIR API returned it (the system only when the insurance has one).
+    /// When the insurance has no payer id, no identifier is sent: the gateway never makes one up. (PAS allows an
+    /// insurer without identifier; CDex then also sends no PayerId, so both stay the same.)
+    /// </summary>
     private static JsonObject BuildInsurer(PasBuildInput input, string insurerId)
     {
         PayerSettings payer = input.Payer;
-        string payerId = string.IsNullOrEmpty(payer.PayerIdentifier) ? payer.PayerName : payer.PayerIdentifier;
-
-        JsonObject identifier = new JsonObject();
-        identifier["system"] = payer.PayerIdSystem;
-        identifier["value"] = payerId;
-        JsonArray identifiers = new JsonArray();
-        identifiers.Add(identifier);
 
         JsonObject insurer = new JsonObject();
         insurer["resourceType"] = "Organization";
         insurer["id"] = insurerId;
         insurer["active"] = true;
         insurer["name"] = input.Coverage.PayorDisplay() ?? payer.GetDisplayName();
-        insurer["identifier"] = identifiers;
+
+        Identifier? payorId = input.Coverage.PayorIdentifier();
+        if (payorId != null && !string.IsNullOrWhiteSpace(payorId.Value))
+        {
+            JsonObject identifier = new JsonObject();
+            if (!string.IsNullOrWhiteSpace(payorId.System))
+            {
+                identifier["system"] = payorId.System;
+            }
+            identifier["value"] = payorId.Value;
+
+            JsonArray identifiers = new JsonArray();
+            identifiers.Add(identifier);
+            insurer["identifier"] = identifiers;
+        }
         return insurer;
     }
 
     /// <summary>
-    /// Copy of the Coverage prepared for this payer: identifier systems the payer expects, and Coverage.payor pointing
-    /// at the insurer Organization inside the Bundle.
+    /// Copy of the Coverage for the Bundle: Coverage.payor points at the insurer Organization inside the Bundle
+    /// (a Coverage that came without payor gets that reference, because FHIR requires a payor).
+    /// The member id and the payer id stay exactly as the FHIR API returned them (the values of the patient's insurance).
     /// </summary>
-    private static Coverage CoverageForPayer(Coverage source, PayerSettings payer, string insurerId)
+    private static Coverage CoverageForBundle(Coverage source, string insurerId)
     {
         Coverage? copy = FhirJson.Read<Coverage>(FhirJson.ToNode(source));   // copy, the original stays unchanged
         Coverage coverage = copy ?? new Coverage();
-        foreach (Identifier identifier in coverage.Identifier)
-        {
-            if (identifier.Type != null && identifier.Type.HasCode("MB"))
-            {
-                identifier.System = payer.MemberIdSystem;
-            }
-        }
         foreach (ResourceReference payor in coverage.Payor)
         {
             payor.Reference = "Organization/" + insurerId;
-            if (payor.Identifier != null)
-            {
-                payor.Identifier.System = payer.PayerIdSystem;
-            }
+        }
+        if (coverage.Payor.Count == 0)
+        {
+            coverage.Payor.Add(new ResourceReference("Organization/" + insurerId));
         }
         return coverage;
+    }
+
+    /// <summary>The PAS careTeamClaimScope extension with value true: the care team member is for the whole request.</summary>
+    private static Extension WholeRequestScope()
+    {
+        Extension scope = new Extension(PasExtensions.CareTeamClaimScope);
+        scope.ValueBoolean = true;
+        return scope;
     }
 
     /// <summary>Typed view of a raw order.</summary>
@@ -448,7 +495,6 @@ public class PasBundleBuilder
         return order ?? new OrderResource();
     }
 
-    /// <summary>Adds a supportingInfo entry pointing to a form or document; returns its sequence number.</summary>
     /// <summary>X12 1322 certification type of a line: 3 = cancel, R = renewal, I = initial.</summary>
     private static string CertificationCode(PasBuildInput input, PasOrderLine line)
     {
@@ -495,6 +541,7 @@ public class PasBundleBuilder
         return all.Length > 264 ? all.Substring(0, 264) : all;   // X12 MSG01 limit
     }
 
+    /// <summary>Adds a supportingInfo entry pointing to a form or document; returns its sequence number.</summary>
     private static int AddSupportingInfo(Claim claim, string reference)
     {
         ClaimSupportingInfo info = new ClaimSupportingInfo();

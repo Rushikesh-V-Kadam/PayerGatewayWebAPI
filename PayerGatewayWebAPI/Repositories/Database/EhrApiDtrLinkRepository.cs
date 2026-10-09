@@ -17,6 +17,7 @@ public class EhrApiDtrLinkRepository : IDtrLinkRepository
         _ehr = ehr;
     }
 
+    /// <summary>Inserts or updates one DTR app link: PUT dtr-links/{linkId}. The list of references is sent as JSON text.</summary>
     public async Task SaveAsync(DtrLinkRecord record, CancellationToken ct)
     {
         DtrLinkRow row = new DtrLinkRow();
@@ -32,6 +33,7 @@ public class EhrApiDtrLinkRepository : IDtrLinkRepository
         await _ehr.PutAsync("dtr-links/" + EhrDataClient.Esc(record.LinkId), row, ct);
     }
 
+    /// <summary>One DTR app link: GET dtr-links/{linkId}. Null when it does not exist.</summary>
     public async Task<DtrLinkRecord?> GetAsync(string linkId, CancellationToken ct)
     {
         DtrLinkRow? row = await _ehr.GetAsync<DtrLinkRow>("dtr-links/" + EhrDataClient.Esc(linkId), ct);

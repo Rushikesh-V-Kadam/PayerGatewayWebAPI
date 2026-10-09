@@ -13,7 +13,7 @@ namespace PayerGatewayWebAPI.Middleware;
 ///   FhirApiException        -> 502 (FHIR API failed)
 ///   EhrException            -> 503 (EHR data API failed: gateway data could not be read or saved)
 ///   BadHttpRequestException -> 400 (body could not be read)
-///   JsonException           -> 400 (invalid JSON)
+///   JsonException           -> 502 (data from the payer, the FHIR API or the EHR database could not be read)
 ///   request aborted         -> nothing written (the caller is gone)
 ///   anything else           -> 500
 /// Every error body carries the traceId that is also written to the log.
@@ -91,9 +91,15 @@ public class ApiExceptionHandler : IExceptionHandler
         }
         else if (exception is JsonException)
         {
-            status = StatusCodes.Status400BadRequest;
-            error.Error = "Invalid JSON: " + exception.Message;
+            // Not the caller's JSON: a request body that is not valid JSON is refused by MVC before a controller runs
+            // (400, see ModelValidationResponse), and the two endpoints payers call (PAS notifications, CDex Tasks)
+            // answer 400 themselves when the FHIR body has the wrong shape. A JsonException that arrives here means
+            // data the gateway asked for - from the payer, the FHIR API or the EHR database - could not be read.
+            status = StatusCodes.Status502BadGateway;
+            error.Error = "Data received from the payer, the FHIR API or the EHR database could not be read.";
+            error.Details.Add(exception.Message);
             body = error;
+            _logger.LogError(exception, "Received data could not be read ({TraceId})", context.TraceIdentifier);
         }
         else
         {

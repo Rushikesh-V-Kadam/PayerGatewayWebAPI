@@ -15,6 +15,7 @@ public class InMemoryPayerRepository : IPayerRepository
         _payers = payers.Value;
     }
 
+    /// <summary>The payers of appsettings "Payers", as they were read at start-up.</summary>
     public Task<List<PayerSettings>> GetAllAsync(CancellationToken ct)
     {
         return Task.FromResult(_payers);

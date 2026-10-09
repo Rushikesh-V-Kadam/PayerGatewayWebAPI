@@ -1,7 +1,8 @@
 namespace PayerGatewayWebAPI.Models.Responses;
 
 /// <summary>
-/// CRD answer for one order. Also written to the EHR (PUT api/orders/{orderId}/coverage-decision).
+/// CRD answer for one order. Also saved in table PA_COVERAGE_DECISION of the EHR database (column DECISION_JSON),
+/// where the EHR reads it.
 /// What to do next:
 ///   callDtr = true  -> DTR: POST /api/v1/dtr/forms with questionnaireUrls, then POST .../answers
 ///   callPas = true  -> PAS: POST /api/v1/pas/requests (after DTR when both are true)

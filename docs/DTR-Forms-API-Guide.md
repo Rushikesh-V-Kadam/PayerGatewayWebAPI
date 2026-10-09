@@ -6,6 +6,8 @@
 **Used when:** `PA_PAYER.DTR_MODE = Forms` (the default). The payer has no SMART DTR app of its own.
 **Other DTR flow:** `DTR-SmartApp-API-Guide.md` (the payer's own SMART app)
 
+> **Updated Oct 9, 2026 (later the same day).** The payer id and the member id now come only from the patient's insurance in the EHR; table `PA_PAYER` no longer has `PAYER_IDENTIFIER`, `MEMBER_ID_SYSTEM` and `PAYER_ID_SYSTEM`. Orders are service and medication orders only (no device orders). When a patient has more than one active insurance and none is chosen, the gateway answers 422 instead of picking one. The Word guides named "PayerGatewayWebAPI - ... API Guide.docx" in this folder are the complete, current description.
+
 ---
 
 ## 1. What this flow does
@@ -85,7 +87,7 @@ The payer wants a questionnaire filled in before it decides. In this flow the **
 | `payerName` | Yes | Payer to ask |
 | `patientId` | Yes | EHR patient id |
 | `orderIds` | Yes, at least one | Orders the documentation is for |
-| `coverageId` | No | Insurance to use. Empty = the order's insurance, else the first active coverage |
+| `coverageId` | No | Insurance to use. Empty = the order's insurance, else the patient's only active insurance. With more than one active insurance and none named by the order: 422 |
 | `questionnaireUrls` | No | From the order-sign decision. Empty = the payer decides from the orders |
 | `coverageAssertionId` | No | From the order-sign decision (DTR `context`), or a CDex tracking id |
 

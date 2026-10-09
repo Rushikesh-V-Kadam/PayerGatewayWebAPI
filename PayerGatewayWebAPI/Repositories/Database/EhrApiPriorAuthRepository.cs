@@ -24,6 +24,7 @@ public class EhrApiPriorAuthRepository : IPriorAuthRepository
         _ehr = ehr;
     }
 
+    /// <summary>One prior authorization request: GET prior-auths/{requestId}. Null when it does not exist.</summary>
     public async Task<PriorAuthRecord?> GetAsync(string requestId, CancellationToken ct)
     {
         PriorAuthRow? row = await _ehr.GetAsync<PriorAuthRow>("prior-auths/" + EhrDataClient.Esc(requestId), ct);
@@ -34,12 +35,14 @@ public class EhrApiPriorAuthRepository : IPriorAuthRepository
         return ToRecord(row);
     }
 
+    /// <summary>Inserts or updates one request: PUT prior-auths/{requestId}. Sets UpdatedAt to now, so call it only when something changed.</summary>
     public async Task SaveAsync(PriorAuthRecord record, CancellationToken ct)
     {
         record.UpdatedAt = DateTime.UtcNow;
         await _ehr.PutAsync("prior-auths/" + EhrDataClient.Esc(record.RequestId), ToRow(record), ct);
     }
 
+    /// <summary>The requests still waiting for a payer decision: GET prior-auths?status=pended, optionally of one payer.</summary>
     public async Task<List<PriorAuthRecord>> GetOpenAsync(string? payerName, CancellationToken ct)
     {
         string path = "prior-auths?status=" + DecisionStatus.Pended;

@@ -33,7 +33,12 @@ public class PasSubscriptionService
         _logger = logger;
     }
 
-    /// <summary>Creates the Subscription at the payer unless one is already active for this organization. Never throws.</summary>
+    /// <summary>
+    /// Creates the Subscription at the payer unless one is already active for this organization.
+    /// It is called after a prior authorization request was accepted and saved, so a problem here must not turn that
+    /// success into an error: a payer failure or an EHR data API failure is logged and the method returns normally.
+    /// The background poller then finds the decision with $inquire.
+    /// </summary>
     public async Task EnsureSubscribedAsync(PayerSettings payer, string organizationNpi, CancellationToken ct)
     {
         if (!payer.UseSubscriptions)
@@ -41,6 +46,23 @@ public class PasSubscriptionService
             return;
         }
 
+        try
+        {
+            await SubscribeAsync(payer, organizationNpi, ct);
+        }
+        catch (PayerException ex)
+        {
+            _logger.LogWarning(ex, "PAS Subscription at {Payer} failed; the background poller will use $inquire", payer.PayerName);
+        }
+        catch (EhrException ex)
+        {
+            _logger.LogWarning(ex, "The PAS Subscription of {Payer} could not be read or saved in the EHR database; it is tried again with the next request", payer.PayerName);
+        }
+    }
+
+    /// <summary>Does the work of EnsureSubscribedAsync; may throw PayerException or EhrException.</summary>
+    private async Task SubscribeAsync(PayerSettings payer, string organizationNpi, CancellationToken ct)
+    {
         PayerSubscriptionRecord? existing = await _repository.GetAsync(payer.PayerName, organizationNpi, ct);
         if (existing != null && existing.Status == "active")
         {
@@ -75,9 +97,13 @@ public class PasSubscriptionService
         {
             PayerCallResult result = await _payerClient.PostFhirAsync(payer, "Subscription", subscription, ct);
             record.SubscriptionId = FhirJson.Id(result.Body);
-            record.Status = result.IsSuccess() ? "active" : "error";
-            if (!result.IsSuccess())
+            if (result.IsSuccess())
             {
+                record.Status = "active";
+            }
+            else
+            {
+                record.Status = "error";
                 _logger.LogWarning("{Payer} refused the PAS Subscription (HTTP {Status}); the background poller will use $inquire", payer.PayerName, result.StatusCode);
             }
         }

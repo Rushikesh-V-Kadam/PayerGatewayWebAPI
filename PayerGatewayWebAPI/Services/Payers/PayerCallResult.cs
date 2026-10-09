@@ -6,6 +6,7 @@ namespace PayerGatewayWebAPI.Services.Payers;
 /// <summary>Result of a FHIR call to a payer: HTTP status, the body, and the OperationOutcome when the payer sent one.</summary>
 public class PayerCallResult
 {
+    /// <summary>HTTP status the payer answered with.</summary>
     public int StatusCode { get; set; }
 
     /// <summary>Response body as raw JSON (null when empty or not JSON).</summary>

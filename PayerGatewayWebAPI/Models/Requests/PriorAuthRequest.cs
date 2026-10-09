@@ -24,7 +24,7 @@ public class PriorAuthRequest
     [Required]
     public string PatientId { get; set; } = string.Empty;
 
-    /// <summary>Insurance to use. Empty = the orders' insurance, else the patient's first active coverage.</summary>
+    /// <summary>Insurance to use. Empty = the orders' insurance, else the patient's only active insurance. Required when the patient has several active insurances and the orders name none.</summary>
     /// <example>cov-1</example>
     public string? CoverageId { get; set; }
 

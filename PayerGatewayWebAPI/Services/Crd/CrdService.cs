@@ -59,10 +59,26 @@ public class CrdService
     {
         // ---- check the input
         List<string> problems = new List<string>();
-        if (string.IsNullOrWhiteSpace(request.EventId)) problems.Add("eventId is required.");
-        if (string.IsNullOrWhiteSpace(request.PayerName)) problems.Add("payerName is required.");
-        if (string.IsNullOrWhiteSpace(request.PatientId)) problems.Add("patientId is required.");
-        if (TextHelper.Distinct(request.OrderIds).Count == 0) problems.Add("orderIds must contain at least one order id.");
+        if (string.IsNullOrWhiteSpace(request.EventId))
+        {
+            problems.Add("eventId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.PayerName))
+        {
+            problems.Add("payerName is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.PatientId))
+        {
+            problems.Add("patientId is required.");
+        }
+
+        if (TextHelper.Distinct(request.OrderIds).Count == 0)
+        {
+            problems.Add("orderIds must contain at least one order id.");
+        }
+
         if (problems.Count > 0)
         {
             throw new ApiException(400, "The request is not valid.", problems);
@@ -100,19 +116,37 @@ public class CrdService
             throw new ApiException(404, "None of the orders in orderIds were found at the FHIR API.");
         }
 
+        // The signing clinician is a required part of the order-sign call (CDS Hooks context.userId):
+        // the one in the request, else the practitioner who ordered.
+        string? userPractitionerId = request.UserPractitionerId;
+        if (string.IsNullOrWhiteSpace(userPractitionerId))
+        {
+            userPractitionerId = OrderHelper.RequesterOfOrders(orders);
+        }
+        if (string.IsNullOrWhiteSpace(userPractitionerId))
+        {
+            throw new ApiException(400, "userPractitionerId is required: the orders have no ordering practitioner that could be used instead.");
+        }
+        userPractitionerId = userPractitionerId.Trim();
+
         List<Coverage> coverages = await _fhir.GetActiveCoveragesAsync(request.PatientId, ct);
         Coverage? coverage = OrderHelper.ChooseCoverage(coverages, request.CoverageId, orders);
 
         // ---- 3-5. ask the payer (or explain why it could not be asked)
         if (coverage == null)
         {
+            string reason = "No active insurance on file for this patient.";
+            if (!string.IsNullOrWhiteSpace(request.CoverageId))
+            {
+                reason = "Insurance " + request.CoverageId.Trim() + " is not an active insurance of this patient.";
+            }
             response.PayerCall.Outcome = "skipped";
-            response.PayerCall.Error = "No active insurance on file.";
-            AddUnknownDecisions(response, orders, payer, null, "No active insurance on file for this patient. Coverage requirements could not be checked.");
+            response.PayerCall.Error = reason;
+            AddUnknownDecisions(response, orders, payer, null, reason + " Coverage requirements could not be checked.");
         }
         else
         {
-            await CallPayerAsync(request, payer, coverage, orders, response, ct);
+            await CallPayerAsync(request, payer, coverage, orders, userPractitionerId, response, ct);
         }
 
         // ---- 6. save (the EHR reads the decision from the same table; no separate write-back)
@@ -191,19 +225,24 @@ public class CrdService
 
     // ================================================================== 3-5. the payer call
 
-    /// <summary>Calls the payer's order-sign service and adds the decisions / messages to the response.</summary>
+    /// <summary>
+    /// Calls the payer's order-sign service and adds the decisions / messages to the response.
+    /// A payer that cannot be reached, is too slow or sends an answer that cannot be read never fails the request:
+    /// every order then gets an "unknown" decision and the reason is in response.PayerCall.
+    /// </summary>
     private async Task CallPayerAsync(OrderSignRequest request, PayerSettings payer, Coverage coverage,
-        List<JsonObject> orders, OrderSignResponse response, CancellationToken ct)
+        List<JsonObject> orders, string user, OrderSignResponse response, CancellationToken ct)
     {
         Stopwatch watch = Stopwatch.StartNew();
         try
         {
-            // ---- 3. discovery: which CDS service handles order-sign (cached 12 h)
-            CdsDiscoveryResponse? discovery = _payers.GetCachedDiscovery(payer.PayerName);
+            // ---- 3. discovery: which CDS service handles order-sign (cached 12 h).
+            // The clinician is waiting, so the short CRD timeout is used for this call too.
+            CdsDiscoveryResponse? discovery = _payers.GetCachedDiscovery(payer);
             if (discovery == null)
             {
-                discovery = await _payerClient.DiscoverAsync(payer, ct);
-                _payers.CacheDiscovery(payer.PayerName, discovery);
+                discovery = await _payerClient.DiscoverAsync(payer, payer.CrdTimeoutSeconds, ct);
+                _payers.CacheDiscovery(payer, discovery);
             }
 
             CdsServiceDefinition? service = FindOrderSignService(discovery);
@@ -217,12 +256,6 @@ public class CrdService
             response.PayerCall.ServiceId = service.Id;
 
             // ---- 4. the hook call
-            string? user = request.UserPractitionerId;
-            if (string.IsNullOrWhiteSpace(user))
-            {
-                user = OrderHelper.RequesterOfOrders(orders);
-            }
-
             CdsHookRequest hookRequest = new CdsHookRequest();
             hookRequest.Hook = CrdCodes.OrderSignHook;
             // R5 payer: fhirServer, draftOrders and prefetch are R5 (/fhir/r5); the gateway keeps working with the R4 orders
@@ -236,6 +269,15 @@ public class CrdService
                     ids.Add(FhirJson.Id(raw) ?? string.Empty);
                 }
                 sentOrders = await _fhir.ReadOrdersAsync(ids, true, ct);
+                if (sentOrders.Count != orders.Count)
+                {
+                    // the payer works in R5 and must get every order as R5; an incomplete hook is not sent
+                    response.PayerCall.Outcome = "skipped";
+                    response.PayerCall.Error = "The FHIR API did not return the R5 copy of every order (" + _fhir.GetBaseUrl(true) + "); "
+                        + payer.GetDisplayName() + " works in FHIR R5.";
+                    AddUnknownDecisions(response, orders, payer, coverage.Id, response.PayerCall.Error);
+                    return;
+                }
             }
             hookRequest.FhirServer = _fhir.GetBaseUrl(r5);
             hookRequest.FhirAuthorization = await TryGetFhirAuthorizationAsync(payer, request.PatientId, ct);
@@ -274,7 +316,7 @@ public class CrdService
             foreach (CdsCard card in hookResponse.Cards)
             {
                 string? orderId = OrderMentionedByCard(card, orders);
-                EhrMessage message = await ToMessageAsync(card, payer, request, orders, orderId, coverage.Id, ct);
+                EhrMessage message = await ToMessageAsync(card, payer, request, orders, orderId, coverage.Id, user, ct);
                 CoverageDecision? owner = orderId == null ? null : FindDecision(response, orderId);
                 if (owner != null)
                 {
@@ -294,6 +336,17 @@ public class CrdService
             AddUnknownDecisions(response, orders, payer, coverage.Id,
                 payer.GetDisplayName() + " did not answer the coverage check. Continue; requirements are checked again at prior authorization.");
         }
+        catch (JsonException ex)
+        {
+            // The payer answered, but a part of the answer does not have the CRD shape (for example a broken
+            // coverage-information extension). Treated like no answer: no half-read decision is returned.
+            _logger.LogWarning(ex, "The order-sign answer of {Payer} could not be read", payer.PayerName);
+            response.PayerCall.Outcome = "error";
+            response.PayerCall.Error = payer.GetDisplayName() + " returned an answer that could not be read: " + ex.Message;
+            response.Decisions.Clear();
+            AddUnknownDecisions(response, orders, payer, coverage.Id,
+                payer.GetDisplayName() + " returned a coverage answer that could not be read. Continue; requirements are checked again at prior authorization.");
+        }
         finally
         {
             response.PayerCall.DurationMs = watch.ElapsedMilliseconds;
@@ -303,9 +356,10 @@ public class CrdService
     /// <summary>The payer's CDS service for the order-sign hook, or null.</summary>
     private static CdsServiceDefinition? FindOrderSignService(CdsDiscoveryResponse discovery)
     {
-        foreach (CdsServiceDefinition service in discovery.Services)
+        foreach (CdsServiceDefinition? service in discovery.Services)
         {
-            if (service.Hook == CrdCodes.OrderSignHook)
+            // a service without an id cannot be called (its id is part of the URL)
+            if (service != null && service.Hook == CrdCodes.OrderSignHook && !string.IsNullOrWhiteSpace(service.Id))
             {
                 return service;
             }
@@ -345,7 +399,7 @@ public class CrdService
         foreach (JsonObject raw in orders)
         {
             OrderResource order = OrderHelper.ReadOrder(raw);
-            if (text.Contains(order.GetReference(), StringComparison.Ordinal))
+            if (MentionsReference(text, order.GetReference()))
             {
                 return order.Id;
             }
@@ -354,11 +408,53 @@ public class CrdService
     }
 
     /// <summary>
+    /// True when the text contains exactly this "Type/id". A longer id that only starts the same does not count:
+    /// "ServiceRequest/ord-10" in the text is not a mention of "ServiceRequest/ord-1".
+    /// </summary>
+    private static bool MentionsReference(string text, string reference)
+    {
+        int position = text.IndexOf(reference, StringComparison.Ordinal);
+        while (position >= 0)
+        {
+            int end = position + reference.Length;
+            if (!IdGoesOn(text, end))
+            {
+                return true;
+            }
+            position = text.IndexOf(reference, end, StringComparison.Ordinal);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// True when the id that ends just before <paramref name="position"/> continues there: with a letter or digit,
+    /// or with "-" / "." followed by a letter or digit ("ord-1" continues in "ord-10" and in "ord-1-hd").
+    /// A "." or "-" that is not followed by a letter or digit is normal punctuation ("... ServiceRequest/ord-1.").
+    /// </summary>
+    private static bool IdGoesOn(string text, int position)
+    {
+        if (position >= text.Length)
+        {
+            return false;
+        }
+        char next = text[position];
+        if (char.IsLetterOrDigit(next))
+        {
+            return true;
+        }
+        if (next == '-' || next == '.')
+        {
+            return position + 1 < text.Length && char.IsLetterOrDigit(text[position + 1]);
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Card -> EHR message. A SMART link (a payer DTR app) cannot be opened by the EHR directly, so the launch details are
     /// saved and the EHR gets a plain gateway URL: /api/v1/dtr/launch/{linkId}.
     /// </summary>
     private async Task<EhrMessage> ToMessageAsync(CdsCard card, PayerSettings payer, OrderSignRequest request, List<JsonObject> orders,
-        string? orderId, string? coverageId, CancellationToken ct)
+        string? orderId, string? coverageId, string userPractitionerId, CancellationToken ct)
     {
         EhrMessage message = new EhrMessage();
         message.Severity = card.Indicator;
@@ -397,7 +493,7 @@ public class CrdService
         dtrLink.PayerName = payer.PayerName;
         dtrLink.PatientId = request.PatientId;
         dtrLink.EncounterId = request.EncounterId;
-        dtrLink.UserPractitionerId = request.UserPractitionerId;
+        dtrLink.UserPractitionerId = userPractitionerId;
         foreach (JsonObject raw in orders)
         {
             OrderResource order = OrderHelper.ReadOrder(raw);

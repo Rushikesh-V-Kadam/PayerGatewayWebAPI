@@ -18,11 +18,11 @@ public static class CoverageDecisionReader
     {
         Dictionary<string, CoverageDecision> decisions = new Dictionary<string, CoverageDecision>();
 
-        foreach (CdsAction action in response.SystemActions)
+        foreach (CdsAction? action in response.SystemActions)
         {
-            if (action.Resource == null)
+            if (action == null || action.Resource == null)
             {
-                continue;
+                continue;   // an empty entry, or an action without the order
             }
             string reference = FhirJson.ResourceType(action.Resource) + "/" + FhirJson.Id(action.Resource);
             List<Extension>? extensions = FhirJson.Read<List<Extension>>(action.Resource["extension"]);

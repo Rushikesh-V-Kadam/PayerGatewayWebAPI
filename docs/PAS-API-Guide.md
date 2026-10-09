@@ -7,6 +7,8 @@
 
 This guide replaces the earlier PAS guide and follows the current code. Section 13 lists the code changes it reflects.
 
+> **Updated Oct 9, 2026 (later the same day).** The payer id and the member id now come only from the patient's insurance in the EHR; table `PA_PAYER` no longer has `PAYER_IDENTIFIER`, `MEMBER_ID_SYSTEM` and `PAYER_ID_SYSTEM`. Orders are service and medication orders only (no device orders). When a patient has more than one active insurance and none is chosen, the gateway answers 422 instead of picking one. The Word guides named "PayerGatewayWebAPI - ... API Guide.docx" in this folder are the complete, current description.
+
 ---
 
 ## 1. What this step does
@@ -89,7 +91,7 @@ Every endpoint 1 to 5 returns the same object: the **decision** (section 5).
 | `patientId` | Yes | | EHR patient id |
 | `requestingOrganizationId` | Yes | | Provider organization asking for the authorization. It must have an NPI |
 | `orderIds` | Yes, at least one | | Orders to authorize. One claim line per order |
-| `coverageId` | No | | Insurance to use. Empty = the orders' insurance, else the first active coverage |
+| `coverageId` | No | | Insurance to use. Empty = the orders' insurance, else the patient's only active insurance. With more than one active insurance and none named by the orders: 422 |
 | `requestingPractitionerId` | No | | Requesting clinician. Empty = the first order's ordering practitioner |
 | `priority` | No | `routine` | `routine` or `urgent`. `urgent` = expedited review (72 hours under CMS-0057-F) |
 | `requestType` | No | `new` | `new` or `renewal` |
@@ -541,10 +543,10 @@ Each `fullUrl` is `{FHIR API}/{type}/{id}`, for example `http://localhost:5100/f
 | first submit / update | `meta.profile` = `profile-claim` (version 1) or `profile-claim-update` (version 2 and up) |
 | | `status` = `active`, `use` = `preauthorization`, `type` = `professional` |
 | `patientId` | `Claim.patient` |
-| `payerName` | `Claim.insurer` = an Organization built from `PA_PAYER` (`PAYER_IDENTIFIER`, `PAYER_ID_SYSTEM`) |
+| `payerName` | Chooses the payer to call. `Claim.insurer` = an Organization built from the patient's insurance (payer name and payer id, `Coverage.payor`); no identifier when the insurance has no payer id |
 | `requestingOrganizationId` | `Claim.provider` |
 | `priority` | `Claim.priority`: `routine` = `normal`, `urgent` = `stat` |
-| coverage | `Claim.insurance[1]`, focal. The member id system is set to `PA_PAYER.MEMBER_ID_SYSTEM` |
+| coverage | `Claim.insurance[1]`, focal. The Coverage is sent as the FHIR API returns it; the gateway adds no identifier system |
 | `requestingPractitionerId` | `Claim.careTeam[1]`, role `primary` |
 | `referringPractitionerId` | `Claim.careTeam[2]`, role `other` ("Referring provider"). Left out when it is the same person as the requesting practitioner |
 | `requestType = renewal` | `Claim.related`: relationship `prior`, reference = `previousAuthorizationNumber`. Every line gets certification type `R` |
@@ -578,7 +580,7 @@ Each `fullUrl` is `{FHIR API}/{type}/{id}`, for example `http://localhost:5100/f
 | Order | Code |
 |---|---|
 | MedicationRequest | `88` Pharmacy |
-| DeviceRequest, or a code starting with `E` or `K` | `12` DME purchase |
+| A code starting with `E` or `K` | `12` DME purchase |
 | CPT 90935 to 90999 | `76` Dialysis |
 | CPT 97010 to 97799 | `PT` Physical therapy |
 | CPT 70010 to 79999 | `4` Diagnostic X-ray |
@@ -730,8 +732,8 @@ The EHR reads the result with `GET /api/v1/pas/requests/{requestId}` or straight
 |---|---|---|
 | `PA_PAYER.BASE_URL` + `FHIR_PATH` | `fhir` | Where `Claim/$submit`, `Claim/$inquire` and `Subscription` are |
 | `PA_PAYER.TIMEOUT_SECONDS` | 30 | Seconds to wait for the payer |
-| `PA_PAYER.PAYER_IDENTIFIER`, `PAYER_ID_SYSTEM` | | The payer's id in `Claim.insurer` |
-| `PA_PAYER.MEMBER_ID_SYSTEM` | | Identifier system of the member id |
+| The payer id of the patient's insurance (FHIR API, `Coverage.payor.identifier`) | | The payer's id in `Claim.insurer` |
+| The member id of the patient's insurance (FHIR API, `Coverage.subscriberId`) | | The member id in the Coverage |
 | `PA_PAYER.USE_SUBSCRIPTIONS` | 1 | Create the PAS Subscription |
 | `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the notification URL given to the payer. The payer must be able to reach it |
 | `Workflow:ClaimIdentifierSystem` | `http://provider.example.org/fhir/sid/prior-auth-request-id` | System of `Claim.identifier` |

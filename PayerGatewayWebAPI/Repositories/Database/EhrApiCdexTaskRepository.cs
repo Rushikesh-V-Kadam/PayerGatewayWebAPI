@@ -20,12 +20,14 @@ public class EhrApiCdexTaskRepository : ICdexTaskRepository
         _ehr = ehr;
     }
 
+    /// <summary>Inserts or updates one Task: PUT cdex-tasks/{payerName}/{taskId}.</summary>
     public async Task SaveAsync(CdexTaskRecord record, CancellationToken ct)
     {
         string path = "cdex-tasks/" + EhrDataClient.Esc(record.PayerName) + "/" + EhrDataClient.Esc(record.TaskId);
         await _ehr.PutAsync(path, record, ct);
     }
 
+    /// <summary>All Tasks of one prior authorization request: GET cdex-tasks?requestId=... (an empty list when there are none).</summary>
     public async Task<List<CdexTaskRecord>> GetForRequestAsync(string requestId, CancellationToken ct)
     {
         return await _ehr.GetListAsync<CdexTaskRecord>("cdex-tasks?requestId=" + EhrDataClient.Esc(requestId), ct);

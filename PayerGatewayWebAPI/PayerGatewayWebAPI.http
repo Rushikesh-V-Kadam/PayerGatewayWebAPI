@@ -18,9 +18,9 @@ Content-Type: application/json
 {
   "eventId": "evt-20260929-0001",
   "payerName": "MockPayer",
-  "patientId": "pat-1001",
-  "orderIds": ["ord-1001"],
-  "userPractitionerId": "prac-2001"
+  "patientId": "pat-1",
+  "orderIds": ["ord-1-hd"],
+  "userPractitionerId": "prac-1"
 }
 
 ### 2a. DTR: get the payer's questionnaire as simple questions (callDtr = true)
@@ -29,9 +29,9 @@ Content-Type: application/json
 
 {
   "payerName": "MockPayer",
-  "patientId": "pat-1001",
-  "orderIds": ["ord-1001"],
-  "questionnaireUrls": ["http://localhost:5080/fhir/Questionnaire/dialysis-pa"],
+  "patientId": "pat-1",
+  "orderIds": ["ord-1-hd"],
+  "questionnaireUrls": ["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"],
   "coverageAssertionId": "CA-20260929-0001"
 }
 
@@ -41,7 +41,7 @@ Content-Type: application/json
 
 {
   "complete": true,
-  "authorPractitionerId": "prac-2001",
+  "authorPractitionerId": "prac-1",
   "answers": [
     { "linkId": "egfr", "values": ["12"] },
     { "linkId": "on-dialysis", "values": ["true"] },
@@ -52,18 +52,18 @@ Content-Type: application/json
 ### 2c. DTR: read the form back
 GET {{gateway}}/api/v1/dtr/forms/frm-000000000000
 
-### 3. PAS: submit (completed DTR forms of ord-1001 are attached automatically)
+### 3. PAS: submit (completed DTR forms of ord-1-hd are attached automatically)
 POST {{gateway}}/api/v1/pas/requests
 Content-Type: application/json
 
 {
   "requestId": "PA-2026-0001",
   "payerName": "MockPayer",
-  "patientId": "pat-1001",
-  "requestingOrganizationId": "org-3001",
-  "orderIds": ["ord-1001"],
+  "patientId": "pat-1",
+  "requestingOrganizationId": "org-1",
+  "orderIds": ["ord-1-hd"],
   "priority": "routine",
-  "documentIds": ["doc-7001"],
+  "documentIds": ["doc-1-note"],
   "notes": "Patient started hemodialysis on 2026-09-01."
 }
 
@@ -81,7 +81,7 @@ POST {{gateway}}/api/v1/cdex/requests/PA-2026-0001/attachments
 Content-Type: application/json
 
 {
-  "documentIds": ["doc-7002"],
+  "documentIds": ["doc-1-labs"],
   "final": true
 }
 
@@ -92,7 +92,7 @@ Content-Type: application/json
 { "reason": "Order cancelled by the physician." }
 
 ### 6. Payer SMART DTR app: forms the app saved for an order (DTR_MODE = SmartApp)
-GET {{gateway}}/api/v1/dtr/saved-forms?patientId=pat-1001&orderId=ord-1001
+GET {{gateway}}/api/v1/dtr/saved-forms?patientId=pat-1&orderId=ord-1-hd
 
 ### 7. Payers with their FHIR release and DTR mode
 GET {{gateway}}/api/v1/payers

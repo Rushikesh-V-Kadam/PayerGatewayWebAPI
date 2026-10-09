@@ -6,13 +6,26 @@ public class WorkflowSettings
     /// <summary>Name of the appsettings section.</summary>
     public const string SectionName = "Workflow";
 
-    /// <summary>Public URL of the gateway; used in DTR links and in the PAS Subscription endpoint.</summary>
+    /// <summary>
+    /// Public URL of the gateway; used in DTR links and in the PAS Subscription endpoint the payer calls back.
+    /// TODO: the default is the local test address. Set Workflow:GatewayPublicBaseUrl in appsettings.json to the
+    /// address payers and the EHR can reach in each environment (test, production).
+    /// </summary>
     public string GatewayPublicBaseUrl { get; set; } = "http://localhost:5200";
 
-    /// <summary>Identifier system of our prior auth request ids (Claim.identifier).</summary>
+    /// <summary>
+    /// Identifier system of our prior auth request ids (Claim.identifier). It is the same for every payer.
+    /// TODO: "provider.example.org" is a placeholder. Set Workflow:ClaimIdentifierSystem in appsettings.json to a URL
+    /// that belongs to the provider organization before going live. If a payer asks for its own value, this becomes
+    /// a per-payer setting (a new column of PA_PAYER).
+    /// </summary>
     public string ClaimIdentifierSystem { get; set; } = "http://provider.example.org/fhir/sid/prior-auth-request-id";
 
-    /// <summary>Identifier system of PAS Bundle ids.</summary>
+    /// <summary>
+    /// Identifier system of PAS Bundle ids. It is the same for every payer.
+    /// TODO: "provider.example.org" is a placeholder. Set Workflow:BundleIdentifierSystem in appsettings.json to a URL
+    /// that belongs to the provider organization before going live.
+    /// </summary>
     public string BundleIdentifierSystem { get; set; } = "http://provider.example.org/fhir/sid/pas-bundle-id";
 
     /// <summary>

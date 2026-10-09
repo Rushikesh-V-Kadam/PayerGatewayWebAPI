@@ -141,7 +141,7 @@
             }
           },
           "502": {
-            "description": "The payer or the FHIR API failed.",
+            "description": "The payer or the FHIR API failed, or the file of a document could not be read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -213,7 +213,7 @@
             }
           },
           "400": {
-            "description": "Not a Task or Bundle.",
+            "description": "Not a Task or a Bundle of Tasks, or the Task is not valid FHIR.",
             "content": {
               "application/json": {
                 "schema": {
@@ -251,7 +251,7 @@
           "Crd"
         ],
         "summary": "Order signed: asks the payer (CDS Hooks order-sign) and returns one coverage decision per order.",
-        "description": "The gateway reads the patient, orders and coverage from the FHIR API, calls the payer named in\npayerName, and reads pa-needed / doc-needed from the payer's answer.\n            \nWhat to do with each decision:\n- **callDtr = true** → POST /api/v1/dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.\n- **callPas = true** → POST /api/v1/pas/requests (after DTR when both are true).\n- both false → nothing more is needed for that order.\n            \nIf the payer cannot be reached, the call still returns 200 with covered = \"unknown\" and payerCall.outcome = \"timeout\" / \"error\".\nSending the same eventId again returns the stored answer without calling the payer.",
+        "description": "The gateway reads the patient, orders and coverage from the FHIR API, calls the payer named in\npayerName, and reads pa-needed / doc-needed from the payer's answer.\n            \nWhat to do with each decision:\n- **callDtr = true** → POST /api/v1/dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.\n- **callPas = true** → POST /api/v1/pas/requests (after DTR when both are true).\n- both false → nothing more is needed for that order.\n            \nIf the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = \"unknown\" and payerCall.outcome = \"timeout\" / \"error\".\nOrders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).\nSending the same eventId again returns the stored answer without calling the payer.",
         "requestBody": {
           "description": "Required. The signing event: eventId, payerName, patientId and orderIds must be filled.",
           "content": {
@@ -275,7 +275,7 @@
             }
           },
           "400": {
-            "description": "Invalid body, missing field, unknown payerName, or an order of another patient.",
+            "description": "Invalid body, missing field, unknown payerName, an order of another patient, or no signing clinician (userPractitionerId is empty and the orders have no ordering practitioner).",
             "content": {
               "application/json": {
                 "schema": {
@@ -286,6 +286,16 @@
           },
           "404": {
             "description": "Patient or orders not found at the FHIR API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The patient has several active insurances and neither coverageId nor the orders say which one to use.",
             "content": {
               "application/json": {
                 "schema": {
@@ -411,7 +421,7 @@
             }
           },
           "422": {
-            "description": "No active insurance, or the payer refused / returned no questionnaire.",
+            "description": "No active insurance (or several and none chosen: send coverageId), or the payer refused / returned no questionnaire.",
             "content": {
               "application/json": {
                 "schema": {
@@ -843,7 +853,7 @@
           "Pas"
         ],
         "summary": "Submits a new prior authorization request (Claim/$submit).",
-        "description": "Call when order-sign returned callPas = true (after DTR when callDtr was also true).\nThe gateway builds the PAS Bundle with the Claim, patient, coverage, organization, practitioner and orders,\nattaches **completed DTR forms of these orders automatically**, plus the documents in documentIds (file embedded).\n            \noverallStatus in the answer: approved | partially-approved | denied | pended | not-required | contact-payer.\nWhen pended, the payer may ask for more (informationRequests) → CDex attachments.\nNothing is saved when the payer rejects the request (422 / 502 with the payer's errors).",
+        "description": "Call when order-sign returned callPas = true (after DTR when callDtr was also true).\nThe gateway builds the PAS Bundle with the Claim, patient, coverage, organization, practitioner and orders,\nattaches **completed DTR forms of these orders automatically**, plus the documents in documentIds (file embedded).\n            \noverallStatus in the answer: approved | partially-approved | denied | pended | not-required | contact-payer.\nWhen pended, the payer may ask for more (informationRequests) → CDex attachments.\nNothing is saved when the payer rejects the request (422 / 502 with the payer's errors); correct the data and\nsend the same requestId again. The payer can reject with an HTTP error or with an answer that only carries errors\n(for example \"member not found\") - both give 422.",
         "requestBody": {
           "description": "Required. The prior authorization request: requestId, payerName, patientId, requestingOrganizationId and orderIds must be filled.",
           "content": {
@@ -897,7 +907,7 @@
             }
           },
           "422": {
-            "description": "No active insurance, organization without NPI, or the payer rejected the request (body = decision with errors).",
+            "description": "No active insurance (or several and none chosen: send coverageId), insurance without member id, order without code, organization without NPI, or the payer rejected the request (body = decision with errors).",
             "content": {
               "application/json": {
                 "schema": {
@@ -907,7 +917,7 @@
             }
           },
           "502": {
-            "description": "The payer or the FHIR API failed.",
+            "description": "The payer or the FHIR API failed, the payer's answer could not be read, or the file of a document could not be read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1000,7 +1010,7 @@
             }
           },
           "422": {
-            "description": "The payer rejected the update (body = decision with errors).",
+            "description": "Insurance without member id, order without code, organization without NPI, or the payer rejected the update (body = decision with errors). The stored request is unchanged.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1010,7 +1020,7 @@
             }
           },
           "502": {
-            "description": "The payer or the FHIR API failed.",
+            "description": "The payer or the FHIR API failed, the payer's answer could not be read, or the file of a document could not be read.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1135,7 +1145,7 @@
             }
           },
           "422": {
-            "description": "The request's data can no longer be read, or the payer rejected the cancel.",
+            "description": "The request's data can no longer be read, or the payer rejected the cancel (the request stays as it was).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1145,7 +1155,7 @@
             }
           },
           "502": {
-            "description": "The payer failed.",
+            "description": "The payer or the FHIR API failed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1187,7 +1197,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The latest decision.",
+            "description": "The latest decision (the stored one when the payer has nothing new, or the request is cancelled).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1207,7 +1217,7 @@
             }
           },
           "502": {
-            "description": "The payer failed.",
+            "description": "The payer failed or answered the inquiry with errors only. The stored decision is unchanged.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1275,6 +1285,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NotificationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not a valid FHIR Bundle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -1673,7 +1693,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "CRD answer for one order. Also written to the EHR (PUT api/orders/{orderId}/coverage-decision).\nWhat to do next:\n  callDtr = true  -> DTR: POST /api/v1/dtr/forms with questionnaireUrls, then POST .../answers\n  callPas = true  -> PAS: POST /api/v1/pas/requests (after DTR when both are true)\n  both false      -> nothing more for this order (see covered / priorAuthNeeded)"
+        "description": "CRD answer for one order. Also saved in table PA_COVERAGE_DECISION of the EHR database (column DECISION_JSON),\nwhere the EHR reads it.\nWhat to do next:\n  callDtr = true  -> DTR: POST /api/v1/dtr/forms with questionnaireUrls, then POST .../answers\n  callPas = true  -> PAS: POST /api/v1/pas/requests (after DTR when both are true)\n  both false      -> nothing more for this order (see covered / priorAuthNeeded)"
       },
       "DocumentNeeded": {
         "type": "object",
@@ -1939,7 +1959,7 @@
           },
           "coverageId": {
             "type": "string",
-            "description": "Insurance to use. Empty = the order's insurance, else the patient's first active coverage.",
+            "description": "Insurance to use. Empty = the order's insurance, else the patient's only active insurance. Required when the patient has several active insurances and the order names none.",
             "nullable": true,
             "example": "cov-1"
           },
@@ -2092,6 +2112,7 @@
           },
           "detail": {
             "type": "string",
+            "description": "Longer text of the message, when the payer gave one.",
             "nullable": true
           },
           "link": {
@@ -2105,10 +2126,12 @@
         "type": "object",
         "properties": {
           "label": {
-            "type": "string"
+            "type": "string",
+            "description": "Text to show for the link."
           },
           "url": {
-            "type": "string"
+            "type": "string",
+            "description": "Where the link goes. For a DTR launch this is a gateway URL: /api/v1/dtr/launch/{linkId}."
           },
           "type": {
             "type": "string",
@@ -2253,14 +2276,14 @@
             "items": {
               "type": "string"
             },
-            "description": "EHR order ids being signed (ServiceRequest, DeviceRequest or MedicationRequest ids at the FHIR API).",
+            "description": "EHR order ids being signed: service orders and medication orders (ServiceRequest or MedicationRequest ids at the FHIR API).",
             "example": [
               "ord-1-hd"
             ]
           },
           "coverageId": {
             "type": "string",
-            "description": "Insurance to use. Empty = the order's insurance, else the patient's first active coverage.",
+            "description": "Insurance to use. Empty = the order's insurance, else the patient's only active insurance. Required when the patient has several active insurances and the order names none.",
             "nullable": true,
             "example": "cov-1"
           },
@@ -2272,7 +2295,7 @@
           },
           "userPractitionerId": {
             "type": "string",
-            "description": "Clinician signing the order (CDS Hooks userId). Empty = the order's requester.",
+            "description": "Clinician signing the order (CDS Hooks userId, required by the payer). Empty = the order's ordering practitioner; when the order has none either, the request is refused (400).",
             "nullable": true,
             "example": "prac-1"
           }
@@ -2337,6 +2360,7 @@
           },
           "error": {
             "type": "string",
+            "description": "Why the payer could not be asked, or what went wrong. Empty when outcome is \"ok\".",
             "nullable": true
           }
         },
@@ -2362,11 +2386,6 @@
           "baseUrl": {
             "type": "string",
             "example": "http://localhost:5080"
-          },
-          "payerIdentifier": {
-            "type": "string",
-            "description": "The payer's own id (sent in PAS and CDex).",
-            "example": "PAYER001"
           },
           "fhirVersion": {
             "type": "string",
@@ -2430,6 +2449,7 @@
           },
           "decidedAt": {
             "type": "string",
+            "description": "When the gateway first received this decision from the payer (UTC). Empty while the request is pended.",
             "nullable": true
           },
           "decisionDueBy": {
@@ -2462,7 +2482,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "The payer's prior authorization decision in plain JSON. Returned by every PAS endpoint and written to the EHR\n(PUT api/prior-auth-requests/{requestId})."
+        "description": "The payer's prior authorization decision in plain JSON. Returned by every PAS endpoint and saved in table\nPA_PRIOR_AUTH of the EHR database (column DECISION_JSON), where the EHR reads it."
       },
       "PriorAuthLine": {
         "type": "object",
@@ -2501,24 +2521,29 @@
           },
           "requestedQuantity": {
             "type": "number",
+            "description": "Units asked for on this line.",
             "format": "double",
             "nullable": true
           },
           "approvedQuantity": {
             "type": "number",
+            "description": "Units the payer approved, when it said so.",
             "format": "double",
             "nullable": true
           },
           "reason": {
             "type": "string",
+            "description": "The payer's reason or note for this line.",
             "nullable": true
           },
           "validFrom": {
             "type": "string",
+            "description": "First day the line is authorized (yyyy-MM-dd).",
             "nullable": true
           },
           "validTo": {
             "type": "string",
+            "description": "Last day the line is authorized (yyyy-MM-dd).",
             "nullable": true
           }
         },
@@ -2553,7 +2578,7 @@
           },
           "coverageId": {
             "type": "string",
-            "description": "Insurance to use. Empty = the orders' insurance, else the patient's first active coverage.",
+            "description": "Insurance to use. Empty = the orders' insurance, else the patient's only active insurance. Required when the patient has several active insurances and the orders name none.",
             "nullable": true,
             "example": "cov-1"
           },

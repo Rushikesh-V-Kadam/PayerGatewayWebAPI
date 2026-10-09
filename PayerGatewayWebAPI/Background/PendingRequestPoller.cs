@@ -45,9 +45,14 @@ public class PendingRequestPoller : BackgroundService
                 await Task.Delay(TimeSpan.FromMinutes(_workflow.PollMinutes), stoppingToken);
                 await RunOnceAsync(stoppingToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
-                return;   // the app is stopping
+                if (stoppingToken.IsCancellationRequested)
+                {
+                    return;   // the app is stopping
+                }
+                // a cancelled call that was not caused by the app stopping: the loop must go on
+                _logger.LogWarning(ex, "Pending request poll was interrupted; will try again next time");
             }
             catch (Exception ex)
             {
@@ -81,13 +86,13 @@ public class PendingRequestPoller : BackgroundService
                     continue;
                 }
                 searched.Add(key);
-                await RunSafelyAsync("Task search at " + record.PayerName, cdex.PollTasksAsync(record.PayerName, record.OrganizationNpi, ct));
+                await RunSafelyAsync("Task search at " + record.PayerName, cdex.PollTasksAsync(record.PayerName, record.OrganizationNpi, ct), ct);
             }
 
             // 2. latest decisions
             foreach (PriorAuthRecord record in open)
             {
-                await RunSafelyAsync("Inquiry of " + record.RequestId, pas.InquireAsync(record.RequestId, ct));
+                await RunSafelyAsync("Inquiry of " + record.RequestId, pas.InquireAsync(record.RequestId, ct), ct);
             }
 
             if (open.Count > 0)
@@ -97,16 +102,23 @@ public class PendingRequestPoller : BackgroundService
         }
     }
 
-    /// <summary>Waits for one piece of work; a failure is logged and does not stop the pass.</summary>
-    private async Task RunSafelyAsync(string label, Task work)
+    /// <summary>
+    /// Waits for one piece of work; a failure is logged and does not stop the pass.
+    /// Only the app stopping (the token is cancelled) is passed on, so the loop can end.
+    /// </summary>
+    private async Task RunSafelyAsync(string label, Task work, CancellationToken ct)
     {
         try
         {
             await work;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            throw;
+            if (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            _logger.LogWarning(ex, "{Label} was interrupted", label);
         }
         catch (Exception ex)
         {

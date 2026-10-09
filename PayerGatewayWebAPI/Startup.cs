@@ -57,7 +57,9 @@ public class Startup
         _configuration.GetSection(StorageSettings.SectionName).Bind(storage);
 
         // ------------------------------------------------------------ 2. HTTP (one factory; each client sets its own timeout per call)
-        services.AddHttpClient();
+        // HttpClient has a built-in limit of 100 seconds. It is switched off here (ConfigureHttpClient), because every
+        // call already has its own limit from the settings (payer timeouts, FhirApi:TimeoutSeconds, Ehr:TimeoutSeconds).
+        services.AddHttpClient(Microsoft.Extensions.Options.Options.DefaultName, ConfigureHttpClient);
 
         // ------------------------------------------------------------ 3. clients and payers (one instance for the app)
         services.AddSingleton<FhirApiClient>();
@@ -128,6 +130,15 @@ public class Startup
     }
 
     // ================================================================== option methods (named methods instead of lambdas)
+
+    /// <summary>
+    /// Removes HttpClient's own 100 second limit. PayerClient, FhirApiClient and EhrDataClient stop each call
+    /// themselves after the configured number of seconds, so a configured timeout above 100 seconds works too.
+    /// </summary>
+    private static void ConfigureHttpClient(HttpClient client)
+    {
+        client.Timeout = Timeout.InfiniteTimeSpan;
+    }
 
     /// <summary>Accepts "application/fhir+json" request bodies (payer notifications, pushed Tasks, DTR app relay).</summary>
     private static void ConfigureMvc(MvcOptions options)

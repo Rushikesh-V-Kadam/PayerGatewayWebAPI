@@ -23,13 +23,13 @@ public class OrderSignRequest
     [Required]
     public string PatientId { get; set; } = string.Empty;
 
-    /// <summary>EHR order ids being signed (ServiceRequest, DeviceRequest or MedicationRequest ids at the FHIR API).</summary>
+    /// <summary>EHR order ids being signed: service orders and medication orders (ServiceRequest or MedicationRequest ids at the FHIR API).</summary>
     /// <example>["ord-1-hd"]</example>
     [Required]
     [MinLength(1, ErrorMessage = "orderIds must contain at least one order id.")]
     public List<string> OrderIds { get; set; } = new();
 
-    /// <summary>Insurance to use. Empty = the order's insurance, else the patient's first active coverage.</summary>
+    /// <summary>Insurance to use. Empty = the order's insurance, else the patient's only active insurance. Required when the patient has several active insurances and the order names none.</summary>
     /// <example>cov-1</example>
     public string? CoverageId { get; set; }
 
@@ -37,7 +37,7 @@ public class OrderSignRequest
     /// <example>enc-1</example>
     public string? EncounterId { get; set; }
 
-    /// <summary>Clinician signing the order (CDS Hooks userId). Empty = the order's requester.</summary>
+    /// <summary>Clinician signing the order (CDS Hooks userId, required by the payer). Empty = the order's ordering practitioner; when the order has none either, the request is refused (400).</summary>
     /// <example>prac-1</example>
     public string? UserPractitionerId { get; set; }
 }

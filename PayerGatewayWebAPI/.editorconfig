@@ -1,0 +1,7 @@
+# Code style rules for this project (read by Visual Studio and "dotnet format").
+root = true
+
+[*.cs]
+# Every if / else / for / foreach / while body is written with curly braces, also when it is one statement.
+csharp_prefer_braces = true:warning
+dotnet_diagnostic.IDE0011.severity = warning

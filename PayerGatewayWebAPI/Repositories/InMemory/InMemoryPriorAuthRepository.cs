@@ -9,6 +9,7 @@ public class InMemoryPriorAuthRepository : IPriorAuthRepository
 {
     private readonly ConcurrentDictionary<string, PriorAuthRecord> _requests = new ConcurrentDictionary<string, PriorAuthRecord>();
 
+    /// <summary>The request with this id, or null.</summary>
     public Task<PriorAuthRecord?> GetAsync(string requestId, CancellationToken ct)
     {
         PriorAuthRecord? record;
@@ -16,6 +17,7 @@ public class InMemoryPriorAuthRepository : IPriorAuthRepository
         return Task.FromResult(record);
     }
 
+    /// <summary>Keeps the request and sets UpdatedAt to now.</summary>
     public Task SaveAsync(PriorAuthRecord record, CancellationToken ct)
     {
         record.UpdatedAt = DateTime.UtcNow;
@@ -23,6 +25,7 @@ public class InMemoryPriorAuthRepository : IPriorAuthRepository
         return Task.CompletedTask;
     }
 
+    /// <summary>The requests still waiting for a payer decision, optionally of one payer.</summary>
     public Task<List<PriorAuthRecord>> GetOpenAsync(string? payerName, CancellationToken ct)
     {
         List<PriorAuthRecord> open = new List<PriorAuthRecord>();

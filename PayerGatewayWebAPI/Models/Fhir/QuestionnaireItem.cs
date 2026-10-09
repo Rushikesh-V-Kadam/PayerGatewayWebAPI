@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace PayerGatewayWebAPI.Models.Fhir;
 
 /// <summary>One question or group of a Questionnaire.</summary>
@@ -19,4 +22,11 @@ public class QuestionnaireItem
     public string? AnswerValueSet { get; set; }
     public List<QuestionnaireInitial> Initial { get; set; } = new();
     public List<QuestionnaireItem> Item { get; set; } = new();
+
+    /// <summary>
+    /// Every other property of this element, kept exactly as it was read. The gateway does not use them, but they are
+    /// written back when the element is sent on (to a payer or the FHIR API), so nothing the sender put in is lost.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? OtherProperties { get; set; }
 }

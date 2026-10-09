@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using PayerGatewayWebAPI.Clients;
@@ -84,15 +85,31 @@ public class CdexService
             return 0;
         }
 
-        Bundle? bundle = FhirJson.Read<Bundle>(result.Body);
+        Bundle? bundle;
+        try
+        {
+            bundle = FhirJson.Read<Bundle>(result.Body);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "The Task search answer of {Payer} is not a readable FHIR Bundle", payerName);
+            return 0;
+        }
         if (bundle == null)
         {
             return 0;
         }
+
         int matched = 0;
         foreach (JsonObject raw in bundle.ResourcesOfType("Task"))
         {
-            if (await ProcessTaskAsync(payer, raw, ct))
+            FhirTask? task = ReadTask(raw);
+            if (task == null)
+            {
+                _logger.LogWarning("A Task of {Payer} is skipped: it is not a readable FHIR Task", payerName);
+                continue;
+            }
+            if (await ProcessTaskAsync(payer, task, raw, ct))
             {
                 matched++;
             }
@@ -113,10 +130,18 @@ public class CdexService
         }
         else if (type == "Bundle")
         {
-            Bundle? bundle = FhirJson.Read<Bundle>(body);
-            if (bundle != null)
+            try
             {
-                tasks.AddRange(bundle.ResourcesOfType("Task"));
+                Bundle? bundle = FhirJson.Read<Bundle>(body);
+                if (bundle != null)
+                {
+                    tasks.AddRange(bundle.ResourcesOfType("Task"));
+                }
+            }
+            catch (JsonException ex)
+            {
+                // the sender's mistake, so 400 (a payer must not keep re-sending the same body)
+                throw new ApiException(400, "The Bundle is not valid FHIR: " + ex.Message);
             }
         }
         else
@@ -127,7 +152,12 @@ public class CdexService
         int matched = 0;
         foreach (JsonObject raw in tasks)
         {
-            if (await ProcessTaskAsync(payer, raw, ct))
+            FhirTask? task = ReadTask(raw);
+            if (task == null)
+            {
+                throw new ApiException(400, "A Task in the body is not valid FHIR (an element has the wrong type).");
+            }
+            if (await ProcessTaskAsync(payer, task, raw, ct))
             {
                 matched++;
             }
@@ -143,11 +173,30 @@ public class CdexService
         return outcome;
     }
 
-    /// <summary>Stores the Task and updates the request's informationRequests (saved with the request).</summary>
-    private async Task<bool> ProcessTaskAsync(PayerSettings payer, JsonObject raw, CancellationToken ct)
+    /// <summary>The typed view of a raw Task, or null when the JSON does not have the shape of a FHIR Task.</summary>
+    private static FhirTask? ReadTask(JsonObject raw)
     {
-        FhirTask? task = FhirJson.Read<FhirTask>(raw);
-        if (task == null || task.Id == null)
+        try
+        {
+            return FhirJson.Read<FhirTask>(raw);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Stores the Task and updates the request's informationRequests (saved with the request).
+    /// Returns false when the Task is not about a request of this gateway and this payer.
+    /// </summary>
+    /// <param name="payer">The payer the Task came from.</param>
+    /// <param name="task">The typed view of the Task.</param>
+    /// <param name="raw">The Task exactly as received (stored in PA_CDEX_TASK.TASK_JSON).</param>
+    /// <param name="ct">Cancelled when the caller disconnects.</param>
+    private async Task<bool> ProcessTaskAsync(PayerSettings payer, FhirTask task, JsonObject raw, CancellationToken ct)
+    {
+        if (task.Id == null)
         {
             return false;
         }
@@ -159,17 +208,6 @@ public class CdexService
         {
             return false;   // not one of ours
         }
-
-        CdexTaskRecord taskRecord = new CdexTaskRecord();
-        taskRecord.PayerName = payer.PayerName;
-        taskRecord.TaskId = task.Id;
-        taskRecord.RequestId = record.RequestId;
-        taskRecord.TrackingId = tracking.Value;
-        taskRecord.TrackingSystem = tracking.System;
-        taskRecord.Status = task.Status;
-        taskRecord.DueDate = task.Restriction != null && task.Restriction.Period != null ? task.Restriction.Period.End : null;
-        taskRecord.TaskJson = raw.ToJsonString();
-        await _tasks.SaveAsync(taskRecord, ct);
 
         // One information request per tracking id on the decision
         InformationRequest info = TaskReader.ToInformationRequest(task);
@@ -183,7 +221,44 @@ public class CdexService
                 break;
             }
         }
-        bool changed = index < 0 || list[index].Status != info.Status;
+
+        // The same Task is seen again on every poll. Each of the two rows is saved only when it really changed, so
+        // RECEIVED_AT of PA_CDEX_TASK and UPDATED_AT of PA_PRIOR_AUTH keep meaning "something changed".
+
+        // ---- the Task row (PA_CDEX_TASK): new, or the payer changed anything in the Task
+        string taskJson = raw.ToJsonString();
+        CdexTaskRecord? storedTask = null;
+        foreach (CdexTaskRecord candidate in await _tasks.GetForRequestAsync(record.RequestId, ct))
+        {
+            if (candidate.TaskId == task.Id && string.Equals(candidate.PayerName, payer.PayerName, StringComparison.OrdinalIgnoreCase))
+            {
+                storedTask = candidate;
+            }
+        }
+        if (storedTask == null || storedTask.TaskJson != taskJson)
+        {
+            CdexTaskRecord taskRecord = new CdexTaskRecord();
+            taskRecord.PayerName = payer.PayerName;
+            taskRecord.TaskId = task.Id;
+            taskRecord.RequestId = record.RequestId;
+            taskRecord.TrackingId = tracking.Value;
+            taskRecord.TrackingSystem = tracking.System;
+            taskRecord.Status = task.Status;
+            if (task.Restriction != null && task.Restriction.Period != null)
+            {
+                taskRecord.DueDate = task.Restriction.Period.End;
+            }
+            taskRecord.TaskJson = taskJson;
+            await _tasks.SaveAsync(taskRecord, ct);
+        }
+
+        // ---- the information request on the decision (PA_PRIOR_AUTH): new, or different from what is stored.
+        // Compared as JSON so every detail counts (status, due date, documents).
+        bool changed = index < 0 || ApiJson.Write(list[index]) != ApiJson.Write(info);
+        if (!changed)
+        {
+            return true;
+        }
         if (index < 0)
         {
             list.Add(info);
@@ -192,11 +267,7 @@ public class CdexService
         {
             list[index] = info;
         }
-
-        if (changed)
-        {
-            _logger.LogInformation("Information request {TrackingId} for {RequestId}: {Status}", info.TrackingId, record.RequestId, info.Status);
-        }
+        _logger.LogInformation("Information request {TrackingId} for {RequestId}: {Status}", info.TrackingId, record.RequestId, info.Status);
         await _requests.SaveAsync(record, ct);
         return true;
     }
@@ -211,9 +282,9 @@ public class CdexService
         {
             throw new ApiException(400, "Send at least one documentId or questionnaireResponseId.");
         }
-        if (string.IsNullOrEmpty(record.MemberId))
+        if (string.IsNullOrWhiteSpace(record.MemberId))
         {
-            throw new ApiException(422, "The request has no member id (Coverage.subscriberId).");
+            throw new ApiException(422, "Request " + requestId + " has no member id (PA_PRIOR_AUTH.MEMBER_ID), so the attachments cannot be sent: the payer needs it to find the member.");
         }
         PayerSettings? payer = await _payers.FindAsync(record.PayerName, ct);
         if (payer == null)
@@ -222,7 +293,7 @@ public class CdexService
         }
 
         Identifier trackingId = await ChooseTrackingIdAsync(record, request.TrackingId, ct);
-        Parameters parameters = BuildHeader(record, payer, trackingId);
+        Parameters parameters = BuildHeader(record, trackingId);
 
         // attachments: documents (file embedded) and forms
         int count = 0;
@@ -284,22 +355,14 @@ public class CdexService
                 info.Status = request.Final ? "completed" : "in-progress";
             }
         }
-        await _requests.SaveAsync(record, ct);
+        // the payer has the attachments: this is saved even when the caller has stopped waiting
+        await _requests.SaveAsync(record, CancellationToken.None);
 
         if (request.Final)
         {
-            try
-            {
-                summary.Decision = await _pas.InquireAsync(requestId, ct);
-            }
-            catch (ApiException ex)
-            {
-                _logger.LogWarning(ex, "Inquiry after attachments failed");
-            }
-            catch (PayerException ex)
-            {
-                _logger.LogWarning(ex, "Inquiry after attachments failed");
-            }
+            // An extra step: when it fails, the attachments were still sent. The decision is then left empty in
+            // the answer and the background poller (or POST .../inquire) gets it later.
+            summary.Decision = await _pas.TryInquireAsync(requestId, ct);
         }
         return summary;
     }
@@ -325,7 +388,7 @@ public class CdexService
         }
         if (string.IsNullOrWhiteSpace(trackingId) || trackingId == record.RequestId)
         {
-            return new Identifier(_workflow.ClaimIdentifierSystem, record.RequestId);
+            return new Identifier(SystemOrNull(_workflow.ClaimIdentifierSystem), record.RequestId);
         }
 
         List<CdexTaskRecord> tasks = await _tasks.GetForRequestAsync(record.RequestId, ct);
@@ -333,15 +396,23 @@ public class CdexService
         {
             if (task.TrackingId == trackingId)
             {
-                return new Identifier(task.TrackingSystem, task.TrackingId);
+                return new Identifier(SystemOrNull(task.TrackingSystem), task.TrackingId);
             }
         }
         throw new ApiException(400, "Tracking id " + trackingId + " is not an information request of " + record.RequestId + ".");
     }
 
-    /// <summary>The $submit-attachment header parameters: TrackingId, AttachTo, PayerId, OrganizationId, ProviderId, MemberId.</summary>
-    private static Parameters BuildHeader(PriorAuthRecord record, PayerSettings payer, Identifier trackingId)
+    /// <summary>
+    /// The $submit-attachment header parameters: TrackingId, AttachTo, PayerId, OrganizationId, ProviderId, MemberId.
+    /// The payer id and the member id are the ones of the prior authorization request (read from the Coverage of the
+    /// stored request Bundle, with the system they had there), so the payer can match the attachment to that request.
+    /// PayerId is optional in CDex and is left out when the insurance has no payer id - the request then had no
+    /// insurer identifier either. MemberId is required and always sent (the caller has already checked that the
+    /// request has a member id); it has no system when the insurance gives none.
+    /// </summary>
+    private static Parameters BuildHeader(PriorAuthRecord record, Identifier trackingId)
     {
+        Coverage? sentCoverage = SentCoverage(record);
         Parameters parameters = new Parameters();
         parameters.Meta = new Meta();
         parameters.Meta.Profile.Add(CdexCodes.ParametersProfile);
@@ -353,8 +424,15 @@ public class CdexService
         attachTo.ValueCode = CdexCodes.PreAuthorization;
         parameters.Parameter.Add(attachTo);
 
-        string payerId = string.IsNullOrEmpty(payer.PayerIdentifier) ? payer.PayerName : payer.PayerIdentifier;
-        parameters.Parameter.Add(IdentifierParameter(CdexCodes.PayerId, new Identifier(payer.PayerIdSystem, payerId)));
+        Identifier? payerId = null;
+        if (sentCoverage != null)
+        {
+            payerId = sentCoverage.PayorIdentifier();
+        }
+        if (payerId != null && !string.IsNullOrWhiteSpace(payerId.Value))
+        {
+            parameters.Parameter.Add(IdentifierParameter(CdexCodes.PayerId, new Identifier(SystemOrNull(payerId.System), payerId.Value)));
+        }
         if (record.OrganizationNpi != null)
         {
             parameters.Parameter.Add(IdentifierParameter(CdexCodes.OrganizationId, new Identifier(CodeSystems.Npi, record.OrganizationNpi)));
@@ -363,8 +441,64 @@ public class CdexService
         {
             parameters.Parameter.Add(IdentifierParameter(CdexCodes.ProviderId, new Identifier(CodeSystems.Npi, record.PractitionerNpi)));
         }
-        parameters.Parameter.Add(IdentifierParameter(CdexCodes.MemberId, new Identifier(payer.MemberIdSystem, record.MemberId)));
+        // the member id with the system it had in the request (no system when the insurance gives none)
+        string? memberIdSystem = null;
+        if (sentCoverage != null)
+        {
+            Identifier? memberIdentifier = sentCoverage.MemberIdentifier();
+            if (memberIdentifier != null && memberIdentifier.Value == record.MemberId)
+            {
+                memberIdSystem = SystemOrNull(memberIdentifier.System);
+            }
+        }
+        parameters.Parameter.Add(IdentifierParameter(CdexCodes.MemberId, new Identifier(memberIdSystem, record.MemberId)));
         return parameters;
+    }
+
+    /// <summary>
+    /// The Coverage that was sent to the payer in the last prior authorization request of this record,
+    /// or null when the stored request Bundle is missing or has no Coverage.
+    /// </summary>
+    private static Coverage? SentCoverage(PriorAuthRecord record)
+    {
+        if (string.IsNullOrWhiteSpace(record.LastRequestBundleJson))
+        {
+            return null;
+        }
+
+        Bundle? bundle;
+        try
+        {
+            bundle = FhirJson.Deserialize<Bundle>(record.LastRequestBundleJson);
+        }
+        catch (JsonException)
+        {
+            return null;   // the stored text is not a Bundle: send the ids without their systems
+        }
+        if (bundle == null)
+        {
+            return null;
+        }
+
+        foreach (JsonObject raw in bundle.ResourcesOfType("Coverage"))
+        {
+            Coverage? coverage = FhirJson.Read<Coverage>(raw);
+            if (coverage != null)
+            {
+                return coverage;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>An identifier system, or null when it is empty (an empty "system" must not be sent).</summary>
+    private static string? SystemOrNull(string? system)
+    {
+        if (string.IsNullOrWhiteSpace(system))
+        {
+            return null;
+        }
+        return system;
     }
 
     /// <summary>A parameter holding an Identifier.</summary>
@@ -377,13 +511,15 @@ public class CdexService
     }
 
     /// <summary>One "Attachment" parameter: line numbers, LOINC code and the resource itself.</summary>
-    private static ParametersParameter AttachmentPart(JsonObject content, Coding? loinc, List<int> lineNumbers)
+    private static ParametersParameter AttachmentPart(JsonObject content, Coding? loinc, List<int>? lineNumbers)
     {
         ParametersParameter part = new ParametersParameter();
         part.Name = CdexCodes.Attachment;
 
+        // no line numbers (an empty or missing list) = the attachment is for the whole request
+        List<int> lines = lineNumbers ?? new List<int>();
         List<int> added = new List<int>();
-        foreach (int line in lineNumbers)
+        foreach (int line in lines)
         {
             if (added.Contains(line))
             {

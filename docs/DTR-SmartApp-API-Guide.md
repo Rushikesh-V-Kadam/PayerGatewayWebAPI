@@ -6,6 +6,8 @@
 **Used when:** `PA_PAYER.DTR_MODE = SmartApp`. The payer brings its own SMART DTR app.
 **Other DTR flow:** `DTR-Forms-API-Guide.md` (questionnaire through the gateway forms)
 
+> **Updated Oct 9, 2026 (later the same day).** The payer id and the member id now come only from the patient's insurance in the EHR; table `PA_PAYER` no longer has `PAYER_IDENTIFIER`, `MEMBER_ID_SYSTEM` and `PAYER_ID_SYSTEM`. Orders are service and medication orders only (no device orders). When a patient has more than one active insurance and none is chosen, the gateway answers 422 instead of picking one. The Word guides named "PayerGatewayWebAPI - ... API Guide.docx" in this folder are the complete, current description.
+
 ---
 
 ## 1. What this flow does
@@ -378,15 +380,12 @@ Content-Type: application/json
   "payerName": "MockPayer",
   "displayName": "Mock Da Vinci Payer",
   "enabled": true,
-  "payerIdentifier": "PAYER001",
   "baseUrl": "http://localhost:5080",
   "cdsServicesPath": "cds-services",
   "fhirPath": "fhir",
   "authType": "none",
   "signCdsHooksRequests": true,
   "useSubscriptions": true,
-  "memberIdSystem": "http://example.org/member-ids",
-  "payerIdSystem": "http://example.org/payer-ids",
   "crdTimeoutSeconds": 300,
   "timeoutSeconds": 300,
   "fhirVersion": "R4",

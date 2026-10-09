@@ -6,7 +6,9 @@ namespace PayerGatewayWebAPI.Models.Responses;
 /// </summary>
 public class EhrMessageLink
 {
+    /// <summary>Text to show for the link.</summary>
     public string Label { get; set; } = string.Empty;
+    /// <summary>Where the link goes. For a DTR launch this is a gateway URL: /api/v1/dtr/launch/{linkId}.</summary>
     public string Url { get; set; } = string.Empty;
     /// <summary>absolute | smart</summary>
     public string Type { get; set; } = "absolute";

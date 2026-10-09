@@ -40,7 +40,6 @@ public class PayersController : ControllerBase
             summary.DisplayName = payer.GetDisplayName();
             summary.Enabled = payer.Enabled;
             summary.BaseUrl = payer.BaseUrl;
-            summary.PayerIdentifier = payer.PayerIdentifier;
             summary.FhirVersion = payer.IsR5() ? "R5" : "R4";
             summary.DtrMode = payer.UsesSmartApp() ? "SmartApp" : "Forms";
             result.Add(summary);
@@ -67,8 +66,8 @@ public class PayersController : ControllerBase
     public async Task<ActionResult<CdsDiscoveryResponse>> Discover(string payerName, CancellationToken ct)
     {
         PayerSettings payer = await _payers.GetRequiredAsync(payerName, StatusCodes.Status404NotFound, ct);
-        CdsDiscoveryResponse discovery = await _payerClient.DiscoverAsync(payer, ct);
-        _payers.CacheDiscovery(payer.PayerName, discovery);
+        CdsDiscoveryResponse discovery = await _payerClient.DiscoverAsync(payer, payer.TimeoutSeconds, ct);
+        _payers.CacheDiscovery(payer, discovery);
         return Ok(discovery);
     }
 }

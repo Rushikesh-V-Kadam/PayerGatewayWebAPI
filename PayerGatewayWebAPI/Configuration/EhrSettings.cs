@@ -9,12 +9,15 @@ public class EhrSettings
     /// <summary>Name of the appsettings section.</summary>
     public const string SectionName = "Ehr";
 
-    /// <summary>EHR REST base URL (mock EHR: http://localhost:5090).</summary>
+    /// <summary>
+    /// EHR REST base URL (mock EHR: http://localhost:5090).
+    /// TODO: the default is the local mock EHR. Set Ehr:BaseUrl in appsettings.json to the real EHR Web API address
+    /// in each environment.
+    /// </summary>
     public string BaseUrl { get; set; } = "http://localhost:5090";
 
     /// <summary>Path of the data API under BaseUrl (default "api/prior-auth-data").</summary>
     public string DataPath { get; set; } = "api/prior-auth-data";
-
 
     /// <summary>Timeout of each data API call, in seconds.</summary>
     public int TimeoutSeconds { get; set; } = 30;

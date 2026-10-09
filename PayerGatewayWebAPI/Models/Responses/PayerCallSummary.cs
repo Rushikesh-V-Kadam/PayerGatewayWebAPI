@@ -17,5 +17,6 @@ public class PayerCallSummary
     /// <example>412</example>
     public long DurationMs { get; set; }
 
+    /// <summary>Why the payer could not be asked, or what went wrong. Empty when outcome is "ok".</summary>
     public string? Error { get; set; }
 }

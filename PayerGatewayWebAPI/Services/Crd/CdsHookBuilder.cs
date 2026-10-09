@@ -29,14 +29,14 @@ public class CdsHookBuilder
         _logger = logger;
     }
 
-    /// <summary>The order-sign context for these orders.</summary>
-    public JsonObject BuildContext(OrderSignRequest request, List<JsonObject> orders, string? userPractitionerId)
+    /// <summary>
+    /// The order-sign context for these orders. userId is required by CDS Hooks; CrdService has already made sure
+    /// the practitioner id is known.
+    /// </summary>
+    public JsonObject BuildContext(OrderSignRequest request, List<JsonObject> orders, string userPractitionerId)
     {
         JsonObject context = new JsonObject();
-        if (!string.IsNullOrEmpty(userPractitionerId))
-        {
-            context["userId"] = "Practitioner/" + userPractitionerId;
-        }
+        context["userId"] = "Practitioner/" + userPractitionerId;
         context["patientId"] = request.PatientId;
         if (!string.IsNullOrEmpty(request.EncounterId))
         {

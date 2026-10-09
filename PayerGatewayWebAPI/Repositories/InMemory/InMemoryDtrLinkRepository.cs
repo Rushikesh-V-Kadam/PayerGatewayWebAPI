@@ -9,12 +9,14 @@ public class InMemoryDtrLinkRepository : IDtrLinkRepository
 {
     private readonly ConcurrentDictionary<string, DtrLinkRecord> _links = new ConcurrentDictionary<string, DtrLinkRecord>();
 
+    /// <summary>Keeps the DTR app link.</summary>
     public Task SaveAsync(DtrLinkRecord record, CancellationToken ct)
     {
         _links[record.LinkId] = record;
         return Task.CompletedTask;
     }
 
+    /// <summary>The DTR app link with this id, or null.</summary>
     public Task<DtrLinkRecord?> GetAsync(string linkId, CancellationToken ct)
     {
         DtrLinkRecord? record;

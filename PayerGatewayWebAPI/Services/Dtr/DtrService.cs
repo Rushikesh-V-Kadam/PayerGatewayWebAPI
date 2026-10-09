@@ -56,9 +56,21 @@ public class DtrService
     public async Task<List<DtrForm>> CreateFormsAsync(DtrFormRequest request, CancellationToken ct)
     {
         List<string> problems = new List<string>();
-        if (string.IsNullOrWhiteSpace(request.PayerName)) problems.Add("payerName is required.");
-        if (string.IsNullOrWhiteSpace(request.PatientId)) problems.Add("patientId is required.");
-        if (TextHelper.Distinct(request.OrderIds).Count == 0) problems.Add("orderIds must contain at least one order id.");
+        if (string.IsNullOrWhiteSpace(request.PayerName))
+        {
+            problems.Add("payerName is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.PatientId))
+        {
+            problems.Add("patientId is required.");
+        }
+
+        if (TextHelper.Distinct(request.OrderIds).Count == 0)
+        {
+            problems.Add("orderIds must contain at least one order id.");
+        }
+
         if (problems.Count > 0)
         {
             throw new ApiException(400, "The request is not valid.", problems);
@@ -91,6 +103,12 @@ public class DtrService
         {
             sentCoverage = await _fhir.ReadAsync("Coverage", coverage.Id ?? string.Empty, true, ct);
             sentOrders = await _fhir.ReadOrdersAsync(orderIds, true, ct);
+            if (sentCoverage == null || sentOrders.Count != orders.Count)
+            {
+                // the payer works in R5, so it must get R5 resources; an incomplete request is not sent
+                throw new ApiException(502, "The FHIR API did not return the R5 copy of the insurance or of every order ("
+                    + _fhir.GetBaseUrl(true) + "). " + payer.GetDisplayName() + " works in FHIR R5.");
+            }
         }
 
         ParametersParameter coverageParameter = new ParametersParameter();
@@ -275,7 +293,7 @@ public class DtrService
 
             Parameters input = new Parameters();
             ParametersParameter inParameter = new ParametersParameter();
-            inParameter.Name = DtrCodes.ParamIn;
+            inParameter.Name = DtrCodes.ParamQuestionnaireResponse;
             inParameter.Resource = FhirJson.ToNode(outgoing);
             input.Parameter.Add(inParameter);
 
@@ -403,7 +421,7 @@ public class DtrService
         {
             Questionnaire copy = FhirJson.Read<Questionnaire>(FhirJson.ToNode(questionnaire)) ?? new Questionnaire();
             copy.Id = DtrCodes.ContainedQuestionnaireId;
-            response.Contained.Add(FhirJson.ToNode(copy));
+            response.Contained.Add(ForContained(FhirJson.ToNode(copy)));
             response.Questionnaire = "#" + DtrCodes.ContainedQuestionnaireId;
         }
         else
@@ -425,6 +443,29 @@ public class DtrService
             response.Extension.Add(coverageContext);
         }
         return response;
+    }
+
+    /// <summary>
+    /// Makes a resource fit to be "contained" in another resource. FHIR does not allow a contained resource to have
+    /// narrative text, its own contained resources, a version / last-updated stamp or security labels, so those are
+    /// removed. Everything else the payer sent (profile, extensions, questions) stays.
+    /// </summary>
+    private static JsonObject ForContained(JsonObject resource)
+    {
+        resource.Remove("text");
+        resource.Remove("contained");
+        JsonObject? meta = resource["meta"] as JsonObject;
+        if (meta != null)
+        {
+            meta.Remove("versionId");
+            meta.Remove("lastUpdated");
+            meta.Remove("security");
+            if (meta.Count == 0)
+            {
+                resource.Remove("meta");
+            }
+        }
+        return resource;
     }
 
     // ================================================================== later: payer SMART DTR apps
@@ -477,9 +518,20 @@ public class DtrService
             form.Questionnaire = FhirJson.GetString(resource, "questionnaire");
             form.Status = FhirJson.GetString(resource, "status") ?? string.Empty;
             form.Authored = FhirJson.GetString(resource, "authored");
-            form.OrderId = PasBundleBuilder.FormOrderId(resource);
-            if (string.IsNullOrWhiteSpace(orderId) || form.OrderId == orderId.Trim())
+
+            // a form can be for several orders: it is listed when the order asked for is one of them
+            List<string> formOrderIds = PasBundleBuilder.FormOrderIds(resource);
+            if (string.IsNullOrWhiteSpace(orderId))
             {
+                if (formOrderIds.Count > 0)
+                {
+                    form.OrderId = formOrderIds[0];
+                }
+                result.Add(form);
+            }
+            else if (formOrderIds.Contains(orderId.Trim()))
+            {
+                form.OrderId = orderId.Trim();
                 result.Add(form);
             }
         }
@@ -600,11 +652,11 @@ public class DtrService
             }
             byLinkId[answer.LinkId] = answer;
         }
-        foreach (DtrAnswerInput answer in latest)
+        foreach (DtrAnswerInput? answer in latest)
         {
-            if (string.IsNullOrWhiteSpace(answer.LinkId))
+            if (answer == null || string.IsNullOrWhiteSpace(answer.LinkId) || answer.Values == null)
             {
-                continue;
+                continue;   // an empty entry in the list
             }
             if (!byLinkId.ContainsKey(answer.LinkId))
             {

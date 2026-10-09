@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace PayerGatewayWebAPI.Models.Fhir;
@@ -27,6 +28,13 @@ public class Extension
     public Identifier? ValueIdentifier { get; set; }
     public Period? ValuePeriod { get; set; }
     public Quantity? ValueQuantity { get; set; }
+
+    /// <summary>
+    /// Every other property of this element, kept exactly as it was read. The gateway does not use them, but they are
+    /// written back when the element is sent on (to a payer or the FHIR API), so nothing the sender put in is lost.
+    /// </summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? OtherProperties { get; set; }
 
     /// <summary>Empty extension (used by the JSON serializer).</summary>
     public Extension()

@@ -19,11 +19,13 @@ public class EhrApiPayerSubscriptionRepository : IPayerSubscriptionRepository
         _ehr = ehr;
     }
 
+    /// <summary>The Subscription created at this payer for this organization: GET payer-subscriptions/{payerName}/{organizationNpi}. Null when there is none.</summary>
     public async Task<PayerSubscriptionRecord?> GetAsync(string payerName, string organizationNpi, CancellationToken ct)
     {
         return await _ehr.GetAsync<PayerSubscriptionRecord>(RowPath(payerName, organizationNpi), ct);
     }
 
+    /// <summary>Inserts or updates the Subscription of a payer + organization: PUT payer-subscriptions/{payerName}/{organizationNpi}.</summary>
     public async Task SaveAsync(PayerSubscriptionRecord record, CancellationToken ct)
     {
         await _ehr.PutAsync(RowPath(record.PayerName, record.OrganizationNpi), record, ct);

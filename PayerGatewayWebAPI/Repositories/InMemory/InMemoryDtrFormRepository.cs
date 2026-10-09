@@ -9,6 +9,7 @@ public class InMemoryDtrFormRepository : IDtrFormRepository
 {
     private readonly ConcurrentDictionary<string, DtrFormRecord> _forms = new ConcurrentDictionary<string, DtrFormRecord>();
 
+    /// <summary>Keeps the form and sets UpdatedAt to now.</summary>
     public Task SaveAsync(DtrFormRecord record, CancellationToken ct)
     {
         record.UpdatedAt = DateTime.UtcNow;
@@ -16,6 +17,7 @@ public class InMemoryDtrFormRepository : IDtrFormRepository
         return Task.CompletedTask;
     }
 
+    /// <summary>The form with this id, or null.</summary>
     public Task<DtrFormRecord?> GetAsync(string formId, CancellationToken ct)
     {
         DtrFormRecord? record;

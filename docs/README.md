@@ -20,7 +20,7 @@ EHR's Oracle database, in tables named `PA_...`, and is read and saved through a
 
 | What | Where |
 | --- | --- |
-| Tables (the EHR team runs this once) | `PayerGatewayWebAPI/Database/01_create_tables.sql` |
+| Tables (the EHR team runs this once) | `PayerGatewayWebAPI/Database/01_create_tables.sql`. For a database created from an earlier version: `02_alter_pa_payer.sql` (adds the FHIR release and DTR columns) and `03_alter_pa_payer_drop_id_columns.sql` (removes the three payer id columns that are no longer used) |
 | The API the EHR team builds (19 endpoints: one row of one table each) | `docs/EHR-Data-API.md` |
 | The gateway code that calls it | `Clients/EhrDataClient.cs` and `Repositories/Database/EhrApi*Repository.cs` |
 | Settings | `Storage:Provider = EhrApi`, `Ehr:BaseUrl`, `Ehr:DataPath` |
@@ -31,7 +31,8 @@ longer exist.
 
 **Background job.** `PendingRequestPoller` still runs every `Workflow:PollMinutes`: for requests the payer has pended
 it looks for payer information requests (CDex Tasks) and asks the payer for the latest decision (`$inquire`), then
-saves the result in `PA_PRIOR_AUTH`. It no longer retries write-backs, because there are none.
+saves the result in `PA_PRIOR_AUTH` - only when it is different from what is stored, so `UPDATED_AT` moves only when
+something changed. It no longer retries write-backs, because there are none.
 
 `Storage:Provider = InMemory` keeps everything in memory instead (lost on restart) and reads the payers from
 `appsettings.json` → `Payers`. Use it only to run the gateway without the EHR.
@@ -51,6 +52,18 @@ read through the EHR data API, and uses that row's base URL, paths and timeouts.
 `Storage:PayerCacheMinutes` (default 5); a name that is not in the kept list is looked up again right away.
 To onboard a payer, the EHR team inserts a row; nothing changes in the gateway and no restart is needed.
 An unknown or disabled name returns 400 with the list of configured payers.
+
+**Only `PAYER_NAME` and `BASE_URL` must be filled in a payer row.** Every other column is optional and has a default
+(`PayerSettings.ApplyDefaults`); a row without a name or without a complete http / https address is left out with a
+warning in the log. The payer row has no payer id and no identifier systems: the payer id and the member id come from
+the patient's insurance in the EHR (FHIR `Coverage.payor.identifier` and `Coverage.subscriberId`) and are sent to the
+payer as they are. The gateway never makes up an id or a "system".
+
+**Orders** are service orders and medication orders (FHIR `ServiceRequest` and `MedicationRequest`). Device orders
+(`DeviceRequest`) are not read.
+
+**Which insurance is used:** the `coverageId` of the request, else the insurance on the order, else the patient's only
+active insurance. With more than one active insurance and none chosen the gateway answers 422; it does not pick one.
 
 ## How the questionnaire is filled
 
@@ -101,11 +114,11 @@ Every error has the same body: `{ "error": "...", "details": ["..."], "traceId":
 
 | Status | Meaning |
 | --- | --- |
-| 400 | Invalid body / missing field / unknown payerName / wrong answer format |
+| 400 | Invalid body / missing field / unknown payerName / wrong answer format / order-sign without a signing clinician |
 | 404 | Patient, order, form, document or request not found |
 | 409 | Request already submitted (use PUT), or it is cancelled |
-| 422 | Cannot be processed: no active insurance, no NPI, required questions missing, payer rejected (PAS returns the decision with errors) |
-| 502 | Payer or FHIR API failed |
+| 422 | Cannot be processed: no active insurance, more than one active insurance and none chosen, insurance without member id, order without code, no NPI, required questions missing, payer rejected (PAS returns the decision with errors) |
+| 502 | Payer or FHIR API failed, or data received from them could not be read |
 | 503 | EHR data API not available (gateway data could not be read or saved; `details` has the failing call) |
 | 504 | Payer did not answer in time |
 | 500 | Unexpected error (look up the traceId in the log) |
@@ -125,3 +138,8 @@ Every error has the same body: `{ "error": "...", "details": ["..."], "traceId":
 - Controllers only (no minimal API endpoints); `Program.cs` uses top-level statements and calls `Startup`.
 - No lambdas: plain loops and named methods (option setup uses named methods such as `ConfigureSwagger`).
 - One class per file, a comment on every class and method, all FHIR / CDS Hooks models written in the project.
+- Curly braces around every block, also a block of one statement (`.editorconfig` in the project folder makes the
+  compiler and `dotnet format` report a missing brace).
+- Every address that must be changed for another environment or payer has a `TODO` comment: in `appsettings.json`
+  and on the default values in `Configuration/*.cs`. Search the project for `TODO` before installing it somewhere else.
+- Nothing is made up: a value the EHR or the payer did not give (an id, an identifier system) is not sent.

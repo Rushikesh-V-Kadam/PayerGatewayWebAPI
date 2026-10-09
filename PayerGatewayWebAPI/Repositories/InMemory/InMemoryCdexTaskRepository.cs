@@ -9,12 +9,14 @@ public class InMemoryCdexTaskRepository : ICdexTaskRepository
 {
     private readonly ConcurrentDictionary<string, CdexTaskRecord> _tasks = new ConcurrentDictionary<string, CdexTaskRecord>();
 
+    /// <summary>Keeps the Task under payer name + Task id (a second save replaces the first).</summary>
     public Task SaveAsync(CdexTaskRecord record, CancellationToken ct)
     {
         _tasks[record.PayerName + "|" + record.TaskId] = record;
         return Task.CompletedTask;
     }
 
+    /// <summary>All Tasks of one prior authorization request.</summary>
     public Task<List<CdexTaskRecord>> GetForRequestAsync(string requestId, CancellationToken ct)
     {
         List<CdexTaskRecord> result = new List<CdexTaskRecord>();
