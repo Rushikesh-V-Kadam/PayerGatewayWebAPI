@@ -1,0 +1,13 @@
+using PayerGatewayWebAPI.Models.Entities;
+
+namespace PayerGatewayWebAPI.Repositories.Interfaces;
+
+/// <summary>Storage for DTR forms (payer questionnaires fetched for an order, and their latest answers).</summary>
+public interface IDtrFormRepository
+{
+    /// <summary>Inserts or updates the form.</summary>
+    Task SaveAsync(DtrFormRecord record, CancellationToken ct);
+
+    /// <summary>The form, or null when unknown.</summary>
+    Task<DtrFormRecord?> GetAsync(string formId, CancellationToken ct);
+}

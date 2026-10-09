@@ -1,0 +1,2754 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "Payer Gateway Web API",
+    "description": "Da Vinci prior authorization for the EHR. Call order: 1) POST /api/v1/crd/order-sign  2) DTR forms (when documentation is needed)  3) POST /api/v1/pas/requests (when prior auth is needed)  4) CDex attachments (when the payer pends and asks for more). Every EHR request carries payerName; the gateway finds that payer in table PA_PAYER. All gateway data is stored in the EHR database through the EHR data API, so decisions are not written back separately. No authentication is built in (it is added outside this code). Errors always return { \"error\": \"...\", \"details\": [ ... ], \"traceId\": \"...\" }.",
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/cdex/requests/{requestId}/information-requests": {
+      "get": {
+        "tags": [
+          "Cdex"
+        ],
+        "summary": "Documents / forms the payer asked for on a pended request.",
+        "description": "Each information request lists LOINC document types (documentsNeeded) and / or questionnaires (questionnairesNeeded).\nFor questionnaires: POST /api/v1/dtr/forms with those URLs, answer them, then send the questionnaireResponseId.",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "description": "EHR prior auth request id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "description": "true = search the payer's Tasks now instead of waiting for the background job.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The information requests (may be empty).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InformationRequest"
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown requestId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer failed (refresh = true).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cdex/requests/{requestId}/attachments": {
+      "post": {
+        "tags": [
+          "Cdex"
+        ],
+        "summary": "Sends additional documents and / or completed forms to the payer ($submit-attachment).",
+        "description": "Use for a pended request (the first documents go with PAS). With final = true the gateway asks the payer for the\nnew decision right away and returns it in \"decision\".",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "description": "EHR prior auth request id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Required. Documents, forms and the tracking id. Send at least one documentId or questionnaireResponseId.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachmentSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Sent to the payer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Nothing to send, or unknown tracking id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown requestId, document or form.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "No member id, or the payer rejected the attachments (body = result with messages).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentResult"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer or the FHIR API failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The payer did not answer in time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/cdex/tasks/{payerName}": {
+      "post": {
+        "tags": [
+          "Cdex"
+        ],
+        "summary": "Called BY THE PAYER to push a Task (or a Bundle of Tasks) asking for more information.",
+        "parameters": [
+          {
+            "name": "payerName",
+            "in": "path",
+            "description": "Payer name.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "A FHIR Task or a Bundle of Tasks.",
+          "content": {
+            "application/fhir+json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonNode"
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonNode"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a Task or Bundle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The payer is not configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The Task is not about a request sent by this gateway.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crd/order-sign": {
+      "post": {
+        "tags": [
+          "Crd"
+        ],
+        "summary": "Order signed: asks the payer (CDS Hooks order-sign) and returns one coverage decision per order.",
+        "description": "The gateway reads the patient, orders and coverage from the FHIR API, calls the payer named in\npayerName, and reads pa-needed / doc-needed from the payer's answer.\n            \nWhat to do with each decision:\n- **callDtr = true** → POST /api/v1/dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.\n- **callPas = true** → POST /api/v1/pas/requests (after DTR when both are true).\n- both false → nothing more is needed for that order.\n            \nIf the payer cannot be reached, the call still returns 200 with covered = \"unknown\" and payerCall.outcome = \"timeout\" / \"error\".\nSending the same eventId again returns the stored answer without calling the payer.",
+        "requestBody": {
+          "description": "Required. The signing event: eventId, payerName, patientId and orderIds must be filled.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderSignRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "One decision per order (see callDtr / callPas).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderSignResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, missing field, unknown payerName, or an order of another patient.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Patient or orders not found at the FHIR API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The FHIR API failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is not available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/crd/decisions/{orderId}": {
+      "get": {
+        "tags": [
+          "Crd"
+        ],
+        "summary": "Latest coverage decision of an order (no payer call).",
+        "parameters": [
+          {
+            "name": "orderId",
+            "in": "path",
+            "description": "EHR order id, e.g. ord-1-hd.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageDecision"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No order-sign was run for this order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dtr/forms": {
+      "post": {
+        "tags": [
+          "DTR 1 - Forms (our questionnaire app or EHR screen)"
+        ],
+        "summary": "Gets the payer's questionnaire(s) for the orders, as simple questions.",
+        "description": "Call when order-sign returned callDtr = true. The gateway calls the payer's Questionnaire/$questionnaire-package\nwith the orders and coverage, and returns one form per questionnaire.\n            \nNext: show each question (text, type, options, required, showWhen) on the EHR screen and send the answers to\nPOST /api/v1/dtr/forms/{formId}/answers. During testing the answers can be sent from Swagger or Postman.",
+        "requestBody": {
+          "description": "Required. Payer, patient, orders and the questionnaire URLs from the order-sign decision.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DtrFormRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The forms with their questions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DtrForm"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, missing field, unknown payerName, or an order of another patient.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "An order was not found at the FHIR API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "No active insurance, or the payer refused / returned no questionnaire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer or the FHIR API failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The payer did not answer in time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dtr/forms/{formId}": {
+      "get": {
+        "tags": [
+          "DTR 1 - Forms (our questionnaire app or EHR screen)"
+        ],
+        "summary": "Reads a form: its questions and the answers saved so far.",
+        "parameters": [
+          {
+            "name": "formId",
+            "in": "path",
+            "description": "Form id from POST /api/v1/dtr/forms, e.g. frm-6f1c2a9e.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The form.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DtrForm"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown formId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dtr/forms/{formId}/answers": {
+      "post": {
+        "tags": [
+          "DTR 1 - Forms (our questionnaire app or EHR screen)"
+        ],
+        "summary": "Saves the answers of a form (builds and stores the FHIR QuestionnaireResponse).",
+        "description": "Send one entry per question: { \"linkId\": \"...\", \"values\": [\"...\"] }. Values are text in the format of the question type\n(boolean \"true\", integer \"12\", date \"2026-08-10\", choice = the option code, quantity \"12 mL/min\").\n            \n- Answers are merged with earlier ones; an entry with an empty values list removes that answer.\n- complete = true: all required (shown) questions must be answered, otherwise 422 lists them.\n- complete = false: saved as in-progress; missingRequired lists what is still open.\n            \nThe QuestionnaireResponse is saved at the FHIR API. POST /api/v1/pas/requests attaches completed forms\nof the same orders automatically; for CDex send questionnaireResponseId in the attachments call.",
+        "parameters": [
+          {
+            "name": "formId",
+            "in": "path",
+            "description": "Form id from POST /api/v1/dtr/forms.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Required. The answers (one entry per answered question).",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DtrAnswersRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved; the QuestionnaireResponse id is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DtrAnswersResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An answer has the wrong format or is not one of the options (details list each one). Nothing saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown formId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "complete = true but required questions are unanswered (details list them). Nothing saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The FHIR API failed to save the form.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dtr/saved-forms": {
+      "get": {
+        "tags": [
+          "DTR 1 - Forms (our questionnaire app or EHR screen)"
+        ],
+        "summary": "Lists the DTR forms saved for a patient (by the gateway forms or by a payer's SMART DTR app).",
+        "description": "After the payer's own DTR app was used (it saves its QuestionnaireResponse at the FHIR API), call this to see\nwhether the form is completed. POST /api/v1/pas/requests attaches completed forms of the same orders automatically.",
+        "parameters": [
+          {
+            "name": "patientId",
+            "in": "query",
+            "description": "Patient id, e.g. pat-1. Required.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "orderId",
+            "in": "query",
+            "description": "Optional: only the forms of this order.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The saved forms, newest first (empty list when none).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SavedForm"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "patientId missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The FHIR API failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dtr/launch/{linkId}": {
+      "get": {
+        "tags": [
+          "DTR 2 - Payer SMART app"
+        ],
+        "summary": "Opens a payer's SMART DTR app (link from an order-sign message, type \"smart\").",
+        "description": "Opened in the clinician's browser. Creates the SMART launch at the FHIR API - with the\npayer's FHIR release (R4 / R5) - and redirects (302) to the\npayer's DTR app with iss and launch. Shows a short HTML page when the link is invalid or expired.",
+        "parameters": [
+          {
+            "name": "linkId",
+            "in": "path",
+            "description": "Id at the end of the link.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the payer DTR app."
+          },
+          "404": {
+            "description": "Unknown or expired link (HTML page).",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dtr/{payerName}/Questionnaire/$questionnaire-package": {
+      "post": {
+        "tags": [
+          "DTR 2 - Payer SMART app"
+        ],
+        "summary": "For payer SMART DTR apps: $questionnaire-package passed to the payer unchanged (body = FHIR Parameters).",
+        "description": "Only needed when a DTR app calls the payer through the gateway (most payer apps call their own payer directly).",
+        "parameters": [
+          {
+            "name": "payerName",
+            "in": "path",
+            "description": "Payer name.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Required. FHIR Parameters from the DTR app.",
+          "content": {
+            "application/fhir+json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonNode"
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonNode"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The payer's FHIR answer (the payer's own status code is passed through).",
+            "content": {
+              "application/fhir+json": {
+                "schema": { }
+              }
+            }
+          },
+          "404": {
+            "description": "The payer is not configured.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer could not be reached.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The payer did not answer in time.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dtr/{payerName}/Questionnaire/$next-question": {
+      "post": {
+        "tags": [
+          "DTR 2 - Payer SMART app"
+        ],
+        "summary": "For payer SMART DTR apps: adaptive forms, $next-question passed to the payer unchanged.",
+        "parameters": [
+          {
+            "name": "payerName",
+            "in": "path",
+            "description": "Payer name.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Required. FHIR Parameters / QuestionnaireResponse from the DTR app.",
+          "content": {
+            "application/fhir+json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonNode"
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonNode"
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The payer's FHIR answer (the payer's own status code is passed through).",
+            "content": {
+              "application/fhir+json": {
+                "schema": { }
+              }
+            }
+          },
+          "404": {
+            "description": "The payer is not configured.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer could not be reached.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The payer did not answer in time.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pas/requests": {
+      "post": {
+        "tags": [
+          "Pas"
+        ],
+        "summary": "Submits a new prior authorization request (Claim/$submit).",
+        "description": "Call when order-sign returned callPas = true (after DTR when callDtr was also true).\nThe gateway builds the PAS Bundle with the Claim, patient, coverage, organization, practitioner and orders,\nattaches **completed DTR forms of these orders automatically**, plus the documents in documentIds (file embedded).\n            \noverallStatus in the answer: approved | partially-approved | denied | pended | not-required | contact-payer.\nWhen pended, the payer may ask for more (informationRequests) → CDex attachments.\nNothing is saved when the payer rejects the request (422 / 502 with the payer's errors).",
+        "requestBody": {
+          "description": "Required. The prior authorization request: requestId, payerName, patientId, requestingOrganizationId and orderIds must be filled.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriorAuthRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Accepted by the payer; the decision (may be pended).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriorAuthDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, missing field, unknown payerName, or an order of another patient.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Patient, order, organization, form or document not found at the FHIR API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "requestId was already submitted (use PUT to change it).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "No active insurance, organization without NPI, or the payer rejected the request (body = decision with errors).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriorAuthDecision"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer or the FHIR API failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The payer did not answer in time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pas/requests/{requestId}": {
+      "put": {
+        "tags": [
+          "Pas"
+        ],
+        "summary": "Changes a request: add / remove orders, add forms or documents (Claim update).",
+        "description": "Send the full list of orders that should stay in the request; orders left out are sent as cancelled lines.",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "description": "EHR request id, e.g. PA-2026-0001.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Required. The changed request (requestId in the body may be empty or must match the URL).",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriorAuthRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The payer's new decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriorAuthDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, ids do not match, or patient / payer changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown requestId, or data not found at the FHIR API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request is cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The payer rejected the update (body = decision with errors).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriorAuthDecision"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer or the FHIR API failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The payer did not answer in time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Pas"
+        ],
+        "summary": "Latest stored decision (no payer call).",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "description": "EHR request id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriorAuthDecision"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown requestId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pas/requests/{requestId}/cancel": {
+      "post": {
+        "tags": [
+          "Pas"
+        ],
+        "summary": "Cancels the whole request (every line sent to the payer as cancelled).",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "description": "EHR request id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Optional. The reason for cancelling; the body may be left out.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelPriorAuthRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelPriorAuthRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelPriorAuthRequest"
+              }
+            },
+            "application/fhir+json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelPriorAuthRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The cancelled decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriorAuthDecision"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown requestId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request's data can no longer be read, or the payer rejected the cancel.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The payer did not answer in time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pas/requests/{requestId}/inquire": {
+      "post": {
+        "tags": [
+          "Pas"
+        ],
+        "summary": "Asks the payer for the latest decision now (Claim/$inquire).",
+        "description": "The background job also does this every Workflow:PollMinutes for pended requests.",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "description": "EHR request id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The latest decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriorAuthDecision"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown requestId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The payer did not answer in time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pas/notifications/{payerName}": {
+      "post": {
+        "tags": [
+          "Pas"
+        ],
+        "summary": "Called BY THE PAYER (PAS Subscription rest-hook) when a decision changes.",
+        "description": "The gateway then inquires every open request of that payer and saves the new decisions.",
+        "parameters": [
+          {
+            "name": "payerName",
+            "in": "path",
+            "description": "Payer name (part of the Subscription endpoint the gateway registered).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "Subscription notification Bundle.",
+          "content": {
+            "application/fhir+json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonNode"
+                }
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonNode"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Handled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The payer is not configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payers": {
+      "get": {
+        "tags": [
+          "Payers"
+        ],
+        "summary": "Lists the configured payers (table PA_PAYER in the EHR database; appsettings \"Payers\" in memory mode).",
+        "description": "Use a payerName from this list in every other request.",
+        "responses": {
+          "200": {
+            "description": "The configured payers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PayerSummary"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The EHR data API is not available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payers/{payerName}/discover": {
+      "post": {
+        "tags": [
+          "Payers"
+        ],
+        "summary": "Tests a payer connection: GET {payer}/cds-services (CDS Hooks discovery).",
+        "description": "Shows which hooks the payer supports (look for \"order-sign\") and its prefetch templates,\nand refreshes the gateway's 12-hour cache. Use it when a new payer is onboarded.",
+        "parameters": [
+          {
+            "name": "payerName",
+            "in": "path",
+            "description": "Payer name from GET /api/v1/payers, e.g. MockPayer.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The payer's CDS services.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CdsDiscoveryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The payer is not configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The payer answered with an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "The payer did not answer in time.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "WellKnown"
+        ],
+        "summary": "Simple \"is the gateway running\" check.",
+        "responses": {
+          "200": {
+            "description": "The gateway is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "What went wrong, in one sentence.",
+            "example": "Payer 'UnknownPayer' is not configured. Configured payers: MockPayer."
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra messages (validation problems, payer OperationOutcome issues, missing required questions).",
+            "example": [ ]
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Id of this request in the gateway log (give it to support).",
+            "nullable": true,
+            "example": "0HN6Q2L3J7K1B:00000001"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Error body returned by every endpoint for 400 / 404 / 409 / 422 / 500 / 502 / 503 / 504."
+      },
+      "AttachmentResult": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "example": "PA-2026-0001"
+          },
+          "trackingId": {
+            "type": "string",
+            "example": "TRK-88421"
+          },
+          "status": {
+            "type": "string",
+            "description": "sent | rejected",
+            "example": "sent"
+          },
+          "attachmentCount": {
+            "type": "integer",
+            "format": "int32",
+            "example": 1
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Messages from the payer's OperationOutcome.",
+            "example": [ ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/PriorAuthDecision"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Response of POST /api/v1/cdex/requests/{requestId}/attachments."
+      },
+      "AttachmentSubmitRequest": {
+        "type": "object",
+        "properties": {
+          "trackingId": {
+            "type": "string",
+            "description": "Tracking id of the payer's information request. Empty = the latest open one, or unsolicited.",
+            "nullable": true,
+            "example": "TRK-88421"
+          },
+          "documentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "EHR document ids (DocumentReference ids at the FHIR API).",
+            "example": [
+              "doc-1-labs"
+            ]
+          },
+          "questionnaireResponseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "QuestionnaireResponse ids (from POST /api/v1/dtr/forms/{formId}/answers).",
+            "example": [ ]
+          },
+          "lineNumbers": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "description": "Claim line numbers the attachments support. Empty = the whole request.",
+            "example": [
+              1
+            ]
+          },
+          "final": {
+            "type": "boolean",
+            "description": "true (default) = nothing more will be sent; the payer re-reviews now.",
+            "default": true,
+            "example": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Body of POST /api/v1/cdex/requests/{requestId}/attachments: additional documents and DTR forms for a pended\nprior auth (CDex $submit-attachment), usually to answer a payer information request."
+      },
+      "CancelPriorAuthRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Why the request is cancelled (sent to the payer as a note).",
+            "nullable": true,
+            "example": "Order cancelled by the physician."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Body of POST /api/v1/pas/requests/{requestId}/cancel (optional)."
+      },
+      "CdsDiscoveryResponse": {
+        "type": "object",
+        "properties": {
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CdsServiceDefinition"
+            }
+          }
+        },
+        "additionalProperties": false,
+        "description": "Response of GET {payer}/cds-services: the CDS services (one per hook) the payer offers."
+      },
+      "CdsServiceDefinition": {
+        "type": "object",
+        "properties": {
+          "hook": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "prefetch": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "key -> FHIR query template, e.g. \"coverage\": \"Coverage?patient={{context.patientId}}\".",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "One CDS service: which hook it handles, its id (used in the URL) and its prefetch templates."
+      },
+      "CoverageDecision": {
+        "type": "object",
+        "properties": {
+          "orderId": {
+            "type": "string",
+            "example": "ord-1-hd"
+          },
+          "payerName": {
+            "type": "string",
+            "nullable": true,
+            "example": "MockPayer"
+          },
+          "coverageId": {
+            "type": "string",
+            "nullable": true,
+            "example": "cov-1"
+          },
+          "covered": {
+            "type": "string",
+            "description": "covered | not-covered | conditional | unknown (unknown = the payer could not be asked).",
+            "example": "covered"
+          },
+          "priorAuthNeeded": {
+            "type": "string",
+            "description": "no-auth | auth-needed | satisfied | performpa | conditional (payer \"pa-needed\").",
+            "nullable": true,
+            "example": "auth-needed"
+          },
+          "documentationNeeded": {
+            "type": "string",
+            "description": "no-doc | clinical | admin | both | conditional (payer \"doc-needed\").",
+            "nullable": true,
+            "example": "clinical"
+          },
+          "callDtr": {
+            "type": "boolean",
+            "description": "true = fill in the payer's questionnaire (DTR) before submitting.",
+            "example": true
+          },
+          "callPas": {
+            "type": "boolean",
+            "description": "true = submit a prior authorization request (PAS).",
+            "example": true
+          },
+          "documentationPurpose": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "withpa | withclaim | withorder | retain-doc",
+            "example": [
+              "withpa"
+            ]
+          },
+          "informationNeeded": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "performer | location | timeframe | contract-window (information the payer needs to decide).",
+            "example": [ ]
+          },
+          "questionnaireUrls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Payer questionnaires to fill in (pass them to POST /api/v1/dtr/forms).",
+            "example": [
+              "http://example.org/fhir/Questionnaire/dialysis-incenter-hd"
+            ]
+          },
+          "coverageAssertionId": {
+            "type": "string",
+            "description": "Payer id of this CRD answer. Pass it to DTR as coverageAssertionId.",
+            "nullable": true,
+            "example": "CA-20260929-0001"
+          },
+          "satisfiedAuthorizationNumber": {
+            "type": "string",
+            "description": "Existing authorization that already covers the order (priorAuthNeeded = satisfied).",
+            "nullable": true
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EhrMessage"
+            },
+            "description": "Payer cards and reasons. A SMART (DTR app) link appears here when the payer offers one."
+          },
+          "decidedAt": {
+            "type": "string",
+            "nullable": true,
+            "example": "2026-09-29T07:30:00Z"
+          }
+        },
+        "additionalProperties": false,
+        "description": "CRD answer for one order. Also written to the EHR (PUT api/orders/{orderId}/coverage-decision).\nWhat to do next:\n  callDtr = true  -> DTR: POST /api/v1/dtr/forms with questionnaireUrls, then POST .../answers\n  callPas = true  -> PAS: POST /api/v1/pas/requests (after DTR when both are true)\n  both false      -> nothing more for this order (see covered / priorAuthNeeded)"
+      },
+      "DocumentNeeded": {
+        "type": "object",
+        "properties": {
+          "loincCode": {
+            "type": "string",
+            "example": "11506-3"
+          },
+          "display": {
+            "type": "string",
+            "nullable": true,
+            "example": "Progress note"
+          },
+          "lineNumber": {
+            "type": "integer",
+            "description": "Claim line it is for, if the payer said.",
+            "format": "int32",
+            "nullable": true,
+            "example": 1
+          }
+        },
+        "additionalProperties": false,
+        "description": "A document type the payer needs, as a LOINC code."
+      },
+      "DtrAnswerInput": {
+        "required": [
+          "linkId",
+          "values"
+        ],
+        "type": "object",
+        "properties": {
+          "linkId": {
+            "minLength": 1,
+            "type": "string",
+            "description": "linkId of the question.",
+            "example": "egfr"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The answer(s). Normally one value; several only when the question has repeats = true.",
+            "example": [
+              "12"
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "description": "The answer to one question, as text. Write values like this (the question \"type\" in GET /api/v1/dtr/forms/{formId}):\n  boolean: \"true\" / \"false\"          integer: \"12\"            decimal: \"12.5\"\n  date: \"2026-08-10\"                 dateTime: \"2026-08-10T09:30:00Z\"   time: \"09:30:00\"\n  string / text / url: any text      choice / open-choice: the option code (open-choice also free text)\n  quantity: \"12 mL/min\" (number, space, unit)"
+      },
+      "DtrAnswersRequest": {
+        "required": [
+          "answers"
+        ],
+        "type": "object",
+        "properties": {
+          "answers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DtrAnswerInput"
+            },
+            "description": "One entry per answered question. Questions not listed stay unanswered."
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "true = the form is finished (status \"completed\"): every required question must be answered, otherwise 422.\nfalse = save as \"in-progress\" and finish later.",
+            "default": true,
+            "example": true
+          },
+          "authorPractitionerId": {
+            "type": "string",
+            "description": "Clinician who answered (QuestionnaireResponse.author).",
+            "nullable": true,
+            "example": "prac-1"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Body of POST /api/v1/dtr/forms/{formId}/answers: the provider's answers in plain JSON.\nThe gateway builds the FHIR QuestionnaireResponse (same tree as the payer's Questionnaire) and saves it at the\nFHIR API, where PAS picks it up. Can be sent several times; the latest answers replace the earlier ones."
+      },
+      "DtrAnswersResult": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string",
+            "example": "frm-6f1c2a9e"
+          },
+          "status": {
+            "type": "string",
+            "description": "in-progress | completed",
+            "example": "completed"
+          },
+          "questionnaireResponseId": {
+            "type": "string",
+            "description": "Id of the QuestionnaireResponse saved at the FHIR API. PAS attaches it automatically.",
+            "example": "qr-frm-6f1c2a9e"
+          },
+          "answeredCount": {
+            "type": "integer",
+            "format": "int32",
+            "example": 5
+          },
+          "missingRequired": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required questions still unanswered (only shown when saving as in-progress).",
+            "example": [ ]
+          },
+          "adaptive": {
+            "type": "boolean",
+            "description": "true = adaptive questionnaire.",
+            "example": false
+          },
+          "newQuestions": {
+            "type": "integer",
+            "description": "Adaptive only: questions the payer added after these answers. Read the form again and answer them.",
+            "format": "int32",
+            "example": 0
+          },
+          "moreQuestionsExpected": {
+            "type": "boolean",
+            "description": "Adaptive only: true while the payer may still add questions.",
+            "example": false
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Answers that were ignored (unknown linkId, display-only question, unsupported type).",
+            "example": [ ]
+          }
+        },
+        "additionalProperties": false,
+        "description": "Response of POST /api/v1/dtr/forms/{formId}/answers."
+      },
+      "DtrCondition": {
+        "type": "object",
+        "properties": {
+          "questionLinkId": {
+            "type": "string",
+            "description": "linkId of the question to look at.",
+            "example": "on-dialysis"
+          },
+          "operator": {
+            "type": "string",
+            "description": "exists | = | != | > | < | >= | <=",
+            "example": "="
+          },
+          "value": {
+            "type": "string",
+            "description": "Value to compare with (for \"exists\": \"true\" or \"false\").",
+            "example": "true"
+          }
+        },
+        "additionalProperties": false,
+        "description": "\"Show this question when question X operator value\" (from the Questionnaire enableWhen)."
+      },
+      "DtrForm": {
+        "type": "object",
+        "properties": {
+          "formId": {
+            "type": "string",
+            "description": "Gateway id of this form. Use it to read the form and to send the answers.",
+            "example": "frm-6f1c2a9e"
+          },
+          "payerName": {
+            "type": "string",
+            "example": "MockPayer"
+          },
+          "patientId": {
+            "type": "string",
+            "example": "pat-1"
+          },
+          "orderIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "ord-1-hd"
+            ]
+          },
+          "coverageId": {
+            "type": "string",
+            "nullable": true,
+            "example": "cov-1"
+          },
+          "questionnaireUrl": {
+            "type": "string",
+            "description": "Canonical URL of the payer Questionnaire.",
+            "example": "http://example.org/fhir/Questionnaire/dialysis-incenter-hd"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "example": "Hemodialysis prior authorization"
+          },
+          "status": {
+            "type": "string",
+            "description": "new | in-progress | completed",
+            "example": "new"
+          },
+          "questionnaireResponseId": {
+            "type": "string",
+            "description": "Id of the saved QuestionnaireResponse at the FHIR API (after answers were sent).",
+            "nullable": true,
+            "example": "qr-frm-6f1c2a9e"
+          },
+          "adaptive": {
+            "type": "boolean",
+            "description": "true = adaptive questionnaire: the payer sends new questions after each set of answers.",
+            "example": false
+          },
+          "moreQuestionsExpected": {
+            "type": "boolean",
+            "description": "Adaptive only: true while the payer may still add questions (send the answers to get them).",
+            "example": false
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DtrQuestion"
+            },
+            "description": "The questions in display order (groups are flattened; groupText tells which section a question is in)."
+          }
+        },
+        "additionalProperties": false,
+        "description": "One payer questionnaire as simple questions (no FHIR needed to show it).\nShow the questions, then send the answers to POST /api/v1/dtr/forms/{formId}/answers."
+      },
+      "DtrFormRequest": {
+        "required": [
+          "orderIds",
+          "patientId",
+          "payerName"
+        ],
+        "type": "object",
+        "properties": {
+          "payerName": {
+            "minLength": 1,
+            "type": "string",
+            "description": "Payer to ask, as configured in table PA_PAYER (PAYER_NAME).",
+            "example": "MockPayer"
+          },
+          "patientId": {
+            "minLength": 1,
+            "type": "string",
+            "description": "EHR patient id.",
+            "example": "pat-1"
+          },
+          "orderIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Orders the documentation is for.",
+            "example": [
+              "ord-1-hd"
+            ]
+          },
+          "coverageId": {
+            "type": "string",
+            "description": "Insurance to use. Empty = the order's insurance, else the patient's first active coverage.",
+            "nullable": true,
+            "example": "cov-1"
+          },
+          "questionnaireUrls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Questionnaire URLs from the order-sign decision (questionnaireUrls). Empty = the payer decides from the orders.",
+            "example": [
+              "http://example.org/fhir/Questionnaire/dialysis-incenter-hd"
+            ]
+          },
+          "coverageAssertionId": {
+            "type": "string",
+            "description": "coverageAssertionId from the order-sign decision (DTR \"context\"), or a CDex tracking id.",
+            "nullable": true,
+            "example": "CA-20260929-0001"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Body of POST /api/v1/dtr/forms: get the payer's questionnaire(s) for these orders as simple questions.\nUse it when the order-sign decision has callDtr = true (or a CDex information request lists questionnaires)."
+      },
+      "DtrOption": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Send this value as the answer.",
+            "example": "in-center"
+          },
+          "display": {
+            "type": "string",
+            "example": "In-center hemodialysis"
+          },
+          "system": {
+            "type": "string",
+            "description": "Code system of the option (null for plain text options).",
+            "nullable": true,
+            "example": "http://payer.example.org/codes"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One allowed answer of a choice question."
+      },
+      "DtrQuestion": {
+        "type": "object",
+        "properties": {
+          "linkId": {
+            "type": "string",
+            "description": "Send this back as linkId with the answer.",
+            "example": "egfr"
+          },
+          "text": {
+            "type": "string",
+            "example": "Most recent eGFR (mL/min/1.73m2)"
+          },
+          "type": {
+            "type": "string",
+            "description": "boolean | decimal | integer | date | dateTime | time | string | text | url | choice | open-choice | quantity |\ndisplay (text only, no answer) | attachment | reference (not supported by the gateway; answer via the payer's process).",
+            "example": "integer"
+          },
+          "required": {
+            "type": "boolean",
+            "example": true
+          },
+          "repeats": {
+            "type": "boolean",
+            "description": "true = several answers allowed.",
+            "example": false
+          },
+          "readOnly": {
+            "type": "boolean",
+            "description": "true = show only; the payer fills it.",
+            "example": false
+          },
+          "maxLength": {
+            "type": "integer",
+            "description": "Maximum text length, when the payer set one.",
+            "format": "int32",
+            "nullable": true
+          },
+          "groupLinkId": {
+            "type": "string",
+            "description": "linkId of the group (section) this question belongs to, or null.",
+            "nullable": true,
+            "example": "clinical"
+          },
+          "groupText": {
+            "type": "string",
+            "description": "Title of the group (section), or null.",
+            "nullable": true,
+            "example": "Clinical information"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DtrOption"
+            },
+            "description": "Allowed answers for choice / open-choice questions. Send the option's code."
+          },
+          "optionsValueSet": {
+            "type": "string",
+            "description": "Name of the payer ValueSet with the allowed answers, when the options are not listed.",
+            "nullable": true
+          },
+          "defaultValues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Default answers set by the payer (already filled in if you send nothing else).",
+            "example": [ ]
+          },
+          "currentValues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Answers saved so far for this form.",
+            "example": [ ]
+          },
+          "showWhen": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DtrCondition"
+            },
+            "description": "Show (and answer) this question only when these conditions match. Empty = always shown."
+          },
+          "showWhenBehavior": {
+            "type": "string",
+            "description": "all | any: how several showWhen conditions combine.",
+            "example": "all"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One question of a payer form, in plain JSON."
+      },
+      "EhrMessage": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "description": "info | warning | critical",
+            "example": "info"
+          },
+          "summary": {
+            "type": "string",
+            "example": "Prior authorization required; clinical documentation needed"
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
+          },
+          "link": {
+            "$ref": "#/components/schemas/EhrMessageLink"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A message for the clinician, built from a payer card or a coverage-information reason."
+      },
+      "EhrMessageLink": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "absolute | smart"
+          },
+          "opensPayerApp": {
+            "type": "boolean",
+            "description": "type \"smart\" only. true = the payer works with its own SMART DTR app (PA_PAYER.DTR_MODE = SmartApp): open Url in\na browser window and the payer's app starts. false = the payer's questionnaire is filled in through the gateway\nforms (POST /api/v1/dtr/forms); Url still opens the app when the payer's card names one.",
+            "example": false
+          }
+        },
+        "additionalProperties": false,
+        "description": "A link on a message. type \"smart\" = a payer DTR app: a plain gateway URL (/api/v1/dtr/launch/{linkId}) the EHR\nopens in a browser; the gateway then starts the SMART app. type \"absolute\" = a normal web page."
+      },
+      "HealthStatus": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          },
+          "time": {
+            "type": "string",
+            "example": "2026-09-29T07:30:00Z"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Response of GET /health."
+      },
+      "InformationRequest": {
+        "type": "object",
+        "properties": {
+          "trackingId": {
+            "type": "string",
+            "description": "Payer tracking id. Send it back with the attachments.",
+            "example": "TRK-88421"
+          },
+          "taskId": {
+            "type": "string",
+            "nullable": true,
+            "example": "task-501"
+          },
+          "dueDate": {
+            "type": "string",
+            "nullable": true,
+            "example": "2026-10-05"
+          },
+          "status": {
+            "type": "string",
+            "description": "requested | in-progress | completed | cancelled ...",
+            "example": "requested"
+          },
+          "documentsNeeded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DocumentNeeded"
+            },
+            "description": "Document types needed (LOINC)."
+          },
+          "questionnairesNeeded": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Payer questionnaires to complete: POST /api/v1/dtr/forms with these URLs, answer, then send the form here.",
+            "example": [ ]
+          }
+        },
+        "additionalProperties": false,
+        "description": "One payer request for more information (a CDex / PAS Task)."
+      },
+      "JsonNode": {
+        "type": "object",
+        "properties": {
+          "options": {
+            "$ref": "#/components/schemas/JsonNodeOptions"
+          },
+          "parent": {
+            "$ref": "#/components/schemas/JsonNode"
+          },
+          "root": {
+            "$ref": "#/components/schemas/JsonNode"
+          }
+        },
+        "additionalProperties": false
+      },
+      "JsonNodeOptions": {
+        "type": "object",
+        "properties": {
+          "propertyNameCaseInsensitive": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NotificationResult": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "2 open request(s) checked"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "example": 2
+          }
+        },
+        "additionalProperties": false,
+        "description": "Response to a payer callback (PAS notification or pushed CDex Task)."
+      },
+      "OrderSignRequest": {
+        "required": [
+          "eventId",
+          "orderIds",
+          "patientId",
+          "payerName"
+        ],
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "minLength": 1,
+            "type": "string",
+            "description": "Unique id of this signing event in the EHR. Sending the same id again returns the stored answer (no second payer call).",
+            "example": "evt-20260929-0001"
+          },
+          "payerName": {
+            "minLength": 1,
+            "type": "string",
+            "description": "Payer to ask, exactly as configured in table PA_PAYER (PAYER_NAME, case does not matter).",
+            "example": "MockPayer"
+          },
+          "patientId": {
+            "minLength": 1,
+            "type": "string",
+            "description": "EHR patient id.",
+            "example": "pat-1"
+          },
+          "orderIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "EHR order ids being signed (ServiceRequest, DeviceRequest or MedicationRequest ids at the FHIR API).",
+            "example": [
+              "ord-1-hd"
+            ]
+          },
+          "coverageId": {
+            "type": "string",
+            "description": "Insurance to use. Empty = the order's insurance, else the patient's first active coverage.",
+            "nullable": true,
+            "example": "cov-1"
+          },
+          "encounterId": {
+            "type": "string",
+            "description": "Current encounter, if any (CDS Hooks encounterId).",
+            "nullable": true,
+            "example": "enc-1"
+          },
+          "userPractitionerId": {
+            "type": "string",
+            "description": "Clinician signing the order (CDS Hooks userId). Empty = the order's requester.",
+            "nullable": true,
+            "example": "prac-1"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Body of POST /api/v1/crd/order-sign. Sent by the EHR when the clinician signs one or more orders.\nThe gateway sends the CDS Hooks \"order-sign\" call to the payer named in payerName."
+      },
+      "OrderSignResponse": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "example": "evt-20260929-0001"
+          },
+          "payerName": {
+            "type": "string",
+            "example": "MockPayer"
+          },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageDecision"
+            },
+            "description": "One decision per order. Read callDtr / callPas to know what to do next."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EhrMessage"
+            },
+            "description": "Messages not tied to one order (order not found, general payer cards)."
+          },
+          "payerCall": {
+            "$ref": "#/components/schemas/PayerCallSummary"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Response of POST /api/v1/crd/order-sign: one coverage decision per signed order."
+      },
+      "PayerCallSummary": {
+        "type": "object",
+        "properties": {
+          "payerName": {
+            "type": "string",
+            "example": "MockPayer"
+          },
+          "serviceId": {
+            "type": "string",
+            "description": "The payer's CDS service id used for order-sign.",
+            "nullable": true,
+            "example": "order-sign-crd"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "ok | skipped | timeout | error",
+            "example": "ok"
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int64",
+            "example": 412
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "How the payer call went (shown in the order-sign response for troubleshooting)."
+      },
+      "PayerSummary": {
+        "type": "object",
+        "properties": {
+          "payerName": {
+            "type": "string",
+            "description": "The value the EHR sends as payerName.",
+            "example": "MockPayer"
+          },
+          "displayName": {
+            "type": "string",
+            "example": "Mock Da Vinci Payer"
+          },
+          "enabled": {
+            "type": "boolean",
+            "example": true
+          },
+          "baseUrl": {
+            "type": "string",
+            "example": "http://localhost:5080"
+          },
+          "payerIdentifier": {
+            "type": "string",
+            "description": "The payer's own id (sent in PAS and CDex).",
+            "example": "PAYER001"
+          },
+          "fhirVersion": {
+            "type": "string",
+            "description": "FHIR release the payer works in: R4 or R5.",
+            "example": "R4"
+          },
+          "dtrMode": {
+            "type": "string",
+            "description": "Forms = the EHR shows the questionnaire (POST /api/v1/dtr/forms); SmartApp = open the link of the CRD message,\nwhich starts the payer's own SMART DTR app.",
+            "example": "Forms"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A configured payer, as shown by GET /api/v1/payers."
+      },
+      "PriorAuthDecision": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "example": "PA-2026-0001"
+          },
+          "payerName": {
+            "type": "string",
+            "nullable": true,
+            "example": "MockPayer"
+          },
+          "patientId": {
+            "type": "string",
+            "example": "pat-1"
+          },
+          "orderIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "ord-1-hd"
+            ]
+          },
+          "overallStatus": {
+            "type": "string",
+            "description": "approved | partially-approved | denied | pended | not-required | cancelled | contact-payer | error",
+            "example": "pended"
+          },
+          "authorizationNumber": {
+            "type": "string",
+            "description": "Payer's authorization number (put it on the claim later). Also the CDex tracking reference.",
+            "nullable": true,
+            "example": "PA-2026-000123"
+          },
+          "validFrom": {
+            "type": "string",
+            "nullable": true,
+            "example": "2026-10-01"
+          },
+          "validTo": {
+            "type": "string",
+            "nullable": true,
+            "example": "2027-03-31"
+          },
+          "decidedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "decisionDueBy": {
+            "type": "string",
+            "description": "When the payer must decide at the latest (CMS-0057-F: 72 hours urgent, 7 days standard).",
+            "nullable": true,
+            "example": "2026-10-06T07:30:00Z"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriorAuthLine"
+            },
+            "description": "One decision per order / claim line."
+          },
+          "informationRequests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InformationRequest"
+            },
+            "description": "Documents / forms the payer asked for (CDex). Answer with POST /api/v1/cdex/requests/{id}/attachments."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Errors returned by the payer (technical rejection).",
+            "example": [ ]
+          }
+        },
+        "additionalProperties": false,
+        "description": "The payer's prior authorization decision in plain JSON. Returned by every PAS endpoint and written to the EHR\n(PUT api/prior-auth-requests/{requestId})."
+      },
+      "PriorAuthLine": {
+        "type": "object",
+        "properties": {
+          "sequence": {
+            "type": "integer",
+            "description": "Claim.item.sequence. Stays the same for an order across updates.",
+            "format": "int32",
+            "example": 1
+          },
+          "orderId": {
+            "type": "string",
+            "nullable": true,
+            "example": "ord-1-hd"
+          },
+          "code": {
+            "type": "string",
+            "nullable": true,
+            "example": "90935"
+          },
+          "codeSystem": {
+            "type": "string",
+            "nullable": true,
+            "example": "http://www.ama-assn.org/go/cpt"
+          },
+          "decision": {
+            "type": "string",
+            "description": "approved | partially-approved | denied | pended | not-required | cancelled | contact-payer | modified",
+            "example": "pended"
+          },
+          "x12ActionCode": {
+            "type": "string",
+            "description": "X12 306 code from the payer: A1, A2, A3, A4, A6, C, CT, NA.",
+            "nullable": true,
+            "example": "A4"
+          },
+          "requestedQuantity": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "approvedQuantity": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "validFrom": {
+            "type": "string",
+            "nullable": true
+          },
+          "validTo": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false,
+        "description": "Decision for one claim line (one order)."
+      },
+      "PriorAuthRequest": {
+        "required": [
+          "orderIds",
+          "patientId",
+          "payerName",
+          "requestingOrganizationId"
+        ],
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "description": "Required for POST. EHR id of the request; becomes Claim.identifier and is used for update, cancel, inquire and CDex. May be empty on PUT (taken from the URL).",
+            "example": "PA-2026-0001"
+          },
+          "payerName": {
+            "minLength": 1,
+            "type": "string",
+            "description": "Payer to send the request to, as configured in table PA_PAYER (PAYER_NAME).",
+            "example": "MockPayer"
+          },
+          "patientId": {
+            "minLength": 1,
+            "type": "string",
+            "description": "EHR patient id.",
+            "example": "pat-1"
+          },
+          "coverageId": {
+            "type": "string",
+            "description": "Insurance to use. Empty = the orders' insurance, else the patient's first active coverage.",
+            "nullable": true,
+            "example": "cov-1"
+          },
+          "requestingOrganizationId": {
+            "minLength": 1,
+            "type": "string",
+            "description": "Provider organization asking for the authorization (must have an NPI).",
+            "example": "org-1"
+          },
+          "requestingPractitionerId": {
+            "type": "string",
+            "description": "Requesting clinician. Empty = the first order's ordering practitioner.",
+            "nullable": true,
+            "example": "prac-1"
+          },
+          "orderIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Orders to authorize - one claim line each.",
+            "example": [
+              "ord-1-hd"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "description": "routine | urgent (urgent = expedited review, 72 hours under CMS-0057-F).",
+            "default": "routine",
+            "example": "routine"
+          },
+          "requestType": {
+            "type": "string",
+            "description": "new (default) | renewal. Renewal lines are sent with X12 certification type R and need previousAuthorizationNumber.",
+            "default": "new",
+            "example": "new"
+          },
+          "previousAuthorizationNumber": {
+            "type": "string",
+            "description": "Authorization number being renewed (sent as Claim.related, relationship \"prior\").",
+            "nullable": true,
+            "example": "PA20260706123456"
+          },
+          "previousServiceStart": {
+            "type": "string",
+            "description": "First date of service of the previous authorization (yyyy-MM-dd).",
+            "nullable": true,
+            "example": "2026-07-06"
+          },
+          "previousServiceEnd": {
+            "type": "string",
+            "description": "Last date of service of the previous authorization (yyyy-MM-dd).",
+            "nullable": true,
+            "example": "2026-10-04"
+          },
+          "previousTreatments": {
+            "type": "integer",
+            "description": "Number of treatments given under the previous authorization.",
+            "format": "int32",
+            "nullable": true,
+            "example": 39
+          },
+          "patientType": {
+            "type": "string",
+            "description": "permanent (default) | transient (patient visiting the facility, e.g. while traveling).",
+            "default": "permanent",
+            "example": "permanent"
+          },
+          "referringPractitionerId": {
+            "type": "string",
+            "description": "Physician who referred the patient (sent as a second care team member).",
+            "nullable": true,
+            "example": "prac-4"
+          },
+          "questionnaireResponseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Extra DTR forms to attach. Completed forms saved for these orders are attached automatically.",
+            "example": [ ]
+          },
+          "documentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "EHR documents (DocumentReference ids) to attach now; the file content is embedded.",
+            "example": [
+              "doc-1-note"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "description": "Free-text note for the reviewer (max 264 characters are sent).",
+            "nullable": true,
+            "example": "Patient started hemodialysis on 2026-09-01."
+          }
+        },
+        "additionalProperties": false,
+        "description": "Body of POST /api/v1/pas/requests (submit) and PUT /api/v1/pas/requests/{requestId} (update).\nThe gateway turns it into a PAS request Bundle and calls the payer's Claim/$submit.\nCompleted DTR forms for these orders are attached automatically."
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true
+          },
+          "instance": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": { }
+      },
+      "SavedForm": {
+        "type": "object",
+        "properties": {
+          "questionnaireResponseId": {
+            "type": "string",
+            "description": "Use in PAS / CDex requests (questionnaireResponseIds).",
+            "example": "qr-8c1d2e"
+          },
+          "questionnaire": {
+            "type": "string",
+            "description": "Canonical URL of the payer's questionnaire.",
+            "nullable": true,
+            "example": "http://example.org/Questionnaire/home-dialysis"
+          },
+          "status": {
+            "type": "string",
+            "description": "in-progress | completed | amended | stopped | entered-in-error. Only completed / amended go to PAS automatically.",
+            "example": "completed"
+          },
+          "authored": {
+            "type": "string",
+            "description": "When the form was last saved.",
+            "nullable": true,
+            "example": "2026-10-08T10:15:00Z"
+          },
+          "orderId": {
+            "type": "string",
+            "description": "The order the form belongs to (qr-context), when the form names one.",
+            "nullable": true,
+            "example": "ord-1-hd"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A DTR form (QuestionnaireResponse) saved at the FHIR API - by the gateway forms (our questionnaire app) or by a\npayer's SMART DTR app. Returned by GET /api/v1/dtr/saved-forms."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Cdex",
+      "description": "STEP 4 - CDex (additional documents for a pended prior auth). What the payer asked for, sending documents / forms,\nand the endpoint a payer uses to push its information requests (Tasks)."
+    },
+    {
+      "name": "Crd",
+      "description": "STEP 1 - CRD order-sign: does the signed order need prior authorization and / or documentation?"
+    },
+    {
+      "name": "DTR 1 - Forms (our questionnaire app or EHR screen)",
+      "description": "STEP 2 - DTR, group 1: our forms (PA_PAYER.DTR_MODE = Forms). For payers without their own questionnaire app.\nThe gateway gets the payer's questionnaire and returns it as simple questions; our questionnaire app (demo) or an\nEHR screen shows them and sends the answers back. saved-forms is used by both groups."
+    },
+    {
+      "name": "DTR 2 - Payer SMART app",
+      "description": "STEP 2 - DTR, group 2: the payer's own SMART DTR app (PA_PAYER.DTR_MODE = SmartApp). The EHR opens the launch link;\nthe app then works against the FHIR API (launch context, chart, saving the form). The two relay endpoints are only\nfor apps that reach their payer through the gateway."
+    },
+    {
+      "name": "Pas",
+      "description": "STEP 3 - PAS (prior authorization requests): submit, update, cancel, read, inquire, plus the endpoint the payer\ncalls when a pended decision changes."
+    },
+    {
+      "name": "Payers",
+      "description": "STEP 0 - Connected payers: which payerName values the EHR can send, and a connection test (CDS Hooks discovery)."
+    },
+    {
+      "name": "WellKnown",
+      "description": "Public endpoints: a health check, and \"/\" -> Swagger."
+    }
+  ]
+}

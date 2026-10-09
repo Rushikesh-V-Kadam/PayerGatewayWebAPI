@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Payer Gateway Web API
+    Runs the Da Vinci prior authorization workflow (CRD order-sign -> DTR -> PAS -> CDex) for the EHR.
+    The EHR sends the payer name; the gateway finds that payer in table PA_PAYER and calls it.
+    EHR data is read as FHIR from the FHIR API. Gateway data is stored in the EHR's Oracle database through
+    the EHR data API (or in memory for testing); the gateway has no database connection of its own.
+    All FHIR / CDS Hooks classes are written in this project (Models) - no FHIR SDK package is used.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>PayerGatewayWebAPI</RootNamespace>
+    <!-- XML comments are shown in Swagger UI (descriptions and example values) -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Swagger UI: API documentation and testing -->
+    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+  </ItemGroup>
+
+</Project>

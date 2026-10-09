@@ -1,0 +1,127 @@
+# Payer Gateway Web API (simple version)
+
+Runs the Da Vinci prior authorization flow for the EHR against any connected payer:
+
+| Step | EHR calls | Gateway calls the payer | When |
+| --- | --- | --- | --- |
+| 1 CRD | `POST /api/v1/crd/order-sign` | CDS Hooks `order-sign` | Every signed order |
+| 2 DTR | `POST /api/v1/dtr/forms` → `POST /api/v1/dtr/forms/{formId}/answers` | `Questionnaire/$questionnaire-package` | Decision has `callDtr = true` |
+| 3 PAS | `POST /api/v1/pas/requests` (+ PUT / cancel / GET / inquire) | `Claim/$submit`, `Claim/$inquire` | Decision has `callPas = true` |
+| 4 CDex | `GET .../information-requests`, `POST .../attachments` | `Task` search, `$submit-attachment` | PAS is `pended` and the payer asks for more |
+
+Full request / response specs with examples: run the API and open **http://localhost:5200/swagger**.
+`PayerGatewayWebAPI.http` has every call in order.
+
+## Where the data is stored
+
+The gateway has **no database of its own and no database connection**. Everything it needs to remember is kept in the
+EHR's Oracle database, in tables named `PA_...`, and is read and saved through a Web API the EHR team provides
+(the **EHR data API**):
+
+| What | Where |
+| --- | --- |
+| Tables (the EHR team runs this once) | `PayerGatewayWebAPI/Database/01_create_tables.sql` |
+| The API the EHR team builds (19 endpoints: one row of one table each) | `docs/EHR-Data-API.md` |
+| The gateway code that calls it | `Clients/EhrDataClient.cs` and `Repositories/Database/EhrApi*Repository.cs` |
+| Settings | `Storage:Provider = EhrApi`, `Ehr:BaseUrl`, `Ehr:DataPath` |
+
+**No write-back.** The EHR reads the decisions from the same tables (`PA_COVERAGE_DECISION`, `PA_PRIOR_AUTH`), so the
+gateway does not send a second copy to the EHR. The `writeBack` request fields and the `EHR_SYNC_STATUS` column no
+longer exist.
+
+**Background job.** `PendingRequestPoller` still runs every `Workflow:PollMinutes`: for requests the payer has pended
+it looks for payer information requests (CDex Tasks) and asks the payer for the latest decision (`$inquire`), then
+saves the result in `PA_PRIOR_AUTH`. It no longer retries write-backs, because there are none.
+
+`Storage:Provider = InMemory` keeps everything in memory instead (lost on restart) and reads the payers from
+`appsettings.json` → `Payers`. Use it only to run the gateway without the EHR.
+
+**Repository folders.** The services use only the interfaces; `Startup.cs` picks the implementation from `Storage:Provider`:
+
+| Folder | Namespace | What is in it |
+| --- | --- | --- |
+| `Repositories/Interfaces` | `PayerGatewayWebAPI.Repositories.Interfaces` | `I...Repository`: what the services call |
+| `Repositories/Database` | `PayerGatewayWebAPI.Repositories.Database` | `EhrApi...Repository`: saves to the EHR database through the EHR data API (`Storage:Provider = EhrApi`) |
+| `Repositories/InMemory` | `PayerGatewayWebAPI.Repositories.InMemory` | `InMemory...Repository`: keeps data in memory for local testing (`Storage:Provider = InMemory`) |
+
+## How the payer is chosen
+
+Every EHR request carries `payerName`. The gateway looks it up in table `PA_PAYER` (`PAYER_NAME`, not case-sensitive),
+read through the EHR data API, and uses that row's base URL, paths and timeouts. The list is kept for
+`Storage:PayerCacheMinutes` (default 5); a name that is not in the kept list is looked up again right away.
+To onboard a payer, the EHR team inserts a row; nothing changes in the gateway and no restart is needed.
+An unknown or disabled name returns 400 with the list of configured payers.
+
+## How the questionnaire is filled
+
+**Payers without their own app (`PA_PAYER.DTR_MODE = Forms`, the default):** the gateway does the DTR work itself and
+exposes it as plain JSON:
+
+1. **Get the form.** `POST /api/v1/dtr/forms` with `payerName`, `patientId`, `orderIds` and the `questionnaireUrls` /
+   `coverageAssertionId` from the order-sign decision. The gateway calls the payer's `$questionnaire-package` and returns each
+   Questionnaire as a list of questions: `linkId`, `text`, `type`, `required`, `options`, `defaultValues`, `showWhen`.
+2. **Answer it.** The EHR team shows those questions on an existing EHR screen (a simple form: one field per question).
+   During testing the answers can be typed into Swagger or Postman.
+3. **Save the answers.** `POST /api/v1/dtr/forms/{formId}/answers` with `{ "linkId": "...", "values": ["..."] }` per question.
+   The gateway checks each value against the question type, skips questions hidden by `showWhen`, uses payer defaults
+   for questions left empty, and (with `complete = true`) rejects the save with 422 when a required question is missing.
+   It then builds the FHIR QuestionnaireResponse (same tree as the payer's Questionnaire, with `qr-context` for the orders
+   and coverage) and saves it at the FHIR API (table `PA_QUESTIONNAIRE_RESPONSE`).
+4. **Submit.** `POST /api/v1/pas/requests` attaches every completed form of the same orders automatically.
+
+**Payers with their own SMART DTR app (`PA_PAYER.DTR_MODE = SmartApp`):** order-sign returns a message link of type `smart`
+with `opensPayerApp = true` (`/api/v1/dtr/launch/{linkId}`). The EHR opens it in a browser window; nothing else changes for the EHR.
+
+1. The gateway creates the SMART launch at the FHIR API in the
+   payer's FHIR release (`FHIR_VERSION`: `iss` = `/fhir/r4` or `/fhir/r5`), and redirects to the app
+   (`DTR_APP_LAUNCH_URL`, or the URL on the payer's card).
+2. The app gets its launch context from the FHIR API (SMART App Launch), reads the patient data, gets the questionnaire from its payer (directly, or through
+   `/api/v1/dtr/{payerName}/Questionnaire/$questionnaire-package`), and saves the QuestionnaireResponse
+   at the FHIR API.
+3. `GET /api/v1/dtr/saved-forms?patientId=...&orderId=...` shows the EHR that the form is completed.
+4. PAS attaches it automatically, as for step 4 above.
+
+With `DTR_MODE = Forms` (default) the link has `opensPayerApp = false` and the EHR keeps using steps 1 to 4 above.
+
+**R5 payers (`PA_PAYER.FHIR_VERSION = R5`):** the CRD call sends `fhirServer` = our `/fhir/r5` URL, and `draftOrders`
+and prefetch as R5; `$questionnaire-package` gets the R5 coverage and orders, and the payer's R5 Questionnaire is read
+(`coding` items become choices); the payer's SMART app is launched on `/fhir/r5`. PAS and CDex stay R4: the Da Vinci PAS
+and CDex guides exist only for R4.
+
+## Authentication
+
+None is built in. The EHR calls the gateway, the gateway calls payers, the FHIR API and the EHR data API, and payers
+call the notification endpoints, all without keys, tokens or signatures. Authentication is added outside this code.
+The one token kept is CDS Hooks `fhirAuthorization`: the gateway gets it from the FHIR API (`/internal/access-tokens`)
+and sends it to the payer in the order-sign call, as before.
+
+## Errors
+
+Every error has the same body: `{ "error": "...", "details": ["..."], "traceId": "..." }`.
+
+| Status | Meaning |
+| --- | --- |
+| 400 | Invalid body / missing field / unknown payerName / wrong answer format |
+| 404 | Patient, order, form, document or request not found |
+| 409 | Request already submitted (use PUT), or it is cancelled |
+| 422 | Cannot be processed: no active insurance, no NPI, required questions missing, payer rejected (PAS returns the decision with errors) |
+| 502 | Payer or FHIR API failed |
+| 503 | EHR data API not available (gateway data could not be read or saved; `details` has the failing call) |
+| 504 | Payer did not answer in time |
+| 500 | Unexpected error (look up the traceId in the log) |
+
+## Run locally
+
+1. Start the FHIR API (5100), the mock EHR (5090) and the mock payer (5080).
+2. `dotnet run --project PayerGatewayWebAPI` → http://localhost:5200/swagger
+3. `Storage:Provider` is `EhrApi` and `Ehr:BaseUrl` points to the mock EHR, which implements the EHR data API
+   (`MockEhr.Api/Controllers/PriorAuthDataController.cs`) and adds the mock payer to its payer list by itself.
+   The saved rows are in the mock EHR's `Data/ehr-data.json` under `gatewayTables`.
+4. For the real EHR: the EHR team runs `Database/01_create_tables.sql`, inserts the payers into `PA_PAYER` and
+   provides the API of `docs/EHR-Data-API.md`. Then set `Ehr:BaseUrl` and `Ehr:DataPath`.
+
+## Code rules used
+
+- Controllers only (no minimal API endpoints); `Program.cs` uses top-level statements and calls `Startup`.
+- No lambdas: plain loops and named methods (option setup uses named methods such as `ConfigureSwagger`).
+- One class per file, a comment on every class and method, all FHIR / CDS Hooks models written in the project.
