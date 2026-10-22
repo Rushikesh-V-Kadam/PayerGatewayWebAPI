@@ -251,15 +251,11 @@ public class PasBundleBuilder
             item.ServicedDate = order.OccurrenceDateTime.Length > 10 ? order.OccurrenceDateTime.Substring(0, 10) : order.OccurrenceDateTime;
         }
 
-        // Place of service (CMS code) from the order's locationCode
-        foreach (CodeableConcept location in order.LocationCode)
+        // Place of service (CMS code) of the facility of orderLocationCode (Location.type); optional (0..1).
+        // CLIENT-EHR: taken from the location of the PAS request, not from the orders (they carry no location).
+        if (!string.IsNullOrWhiteSpace(input.PlaceOfServiceCode))
         {
-            Coding? placeOfService = location.CodingWithSystem(CodeSystems.PlaceOfService);
-            if (placeOfService != null && placeOfService.Code != null)
-            {
-                item.LocationCodeableConcept = new CodeableConcept(CodeSystems.PlaceOfService, placeOfService.Code);
-                break;
-            }
+            item.LocationCodeableConcept = new CodeableConcept(CodeSystems.PlaceOfService, input.PlaceOfServiceCode);
         }
 
         foreach (CodeableConcept diagnosis in order.ReasonCode)
@@ -522,7 +518,12 @@ public class PasBundleBuilder
         }
         if (input.RequestType == PasCodes.RequestTypeRenewal)
         {
-            string text = "Renewal of authorization " + (input.PreviousAuthorizationNumber ?? "(number not given)");
+            // the previous authorization number is optional (Claim.related 0..*): left out of the text when not given
+            string text = "Renewal of a previous authorization";
+            if (!string.IsNullOrWhiteSpace(input.PreviousAuthorizationNumber))
+            {
+                text = "Renewal of authorization " + input.PreviousAuthorizationNumber;
+            }
             if (!string.IsNullOrWhiteSpace(input.PreviousServiceStart) || !string.IsNullOrWhiteSpace(input.PreviousServiceEnd))
             {
                 text = text + ", previous DOS " + (input.PreviousServiceStart ?? "?") + " to " + (input.PreviousServiceEnd ?? "?");

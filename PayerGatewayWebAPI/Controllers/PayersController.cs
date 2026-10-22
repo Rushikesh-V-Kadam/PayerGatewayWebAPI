@@ -40,7 +40,6 @@ public class PayersController : ControllerBase
             summary.DisplayName = payer.GetDisplayName();
             summary.Enabled = payer.Enabled;
             summary.BaseUrl = payer.BaseUrl;
-            summary.FhirVersion = payer.IsR5() ? "R5" : "R4";
             summary.DtrMode = payer.UsesSmartApp() ? "SmartApp" : "Forms";
             result.Add(summary);
         }

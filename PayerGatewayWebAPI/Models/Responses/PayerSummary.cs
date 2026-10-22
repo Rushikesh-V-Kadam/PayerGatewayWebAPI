@@ -16,10 +16,6 @@ public class PayerSummary
     /// <example>http://localhost:5080</example>
     public string BaseUrl { get; set; } = string.Empty;
 
-    /// <summary>FHIR release the payer works in: R4 or R5.</summary>
-    /// <example>R4</example>
-    public string FhirVersion { get; set; } = "R4";
-
     /// <summary>
     /// Forms = the EHR shows the questionnaire (POST /api/v1/dtr/forms); SmartApp = open the link of the CRD message,
     /// which starts the payer's own SMART DTR app.

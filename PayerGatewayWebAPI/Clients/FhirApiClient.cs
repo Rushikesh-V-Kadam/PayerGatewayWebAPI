@@ -36,24 +36,12 @@ public class FhirApiClient
         return _settings.GetBaseUrl();
     }
 
-    /// <summary>R4 or R5 base URL. The gateway itself always works in R4; R5 copies are only sent to R5 payers.</summary>
-    public string GetBaseUrl(bool r5)
-    {
-        return r5 ? _settings.GetBaseUrlR5() : _settings.GetBaseUrl();
-    }
-
     // ================================================================== reads
 
     /// <summary>GET {fhir}/{type}/{id}. Null when the resource does not exist.</summary>
     public async Task<JsonObject?> ReadAsync(string resourceType, string id, CancellationToken ct)
     {
-        return await ReadAsync(resourceType, id, false, ct);
-    }
-
-    /// <summary>GET {fhir}/{type}/{id} from the R4 or R5 base URL. Null when the resource does not exist.</summary>
-    public async Task<JsonObject?> ReadAsync(string resourceType, string id, bool r5, CancellationToken ct)
-    {
-        string url = GetBaseUrl(r5) + "/" + resourceType + "/" + Uri.EscapeDataString(id);
+        string url = GetBaseUrl() + "/" + resourceType + "/" + Uri.EscapeDataString(id);
         JsonNode? node = await GetJsonAsync(url, ct);
         return node as JsonObject;
     }
@@ -61,13 +49,7 @@ public class FhirApiClient
     /// <summary>GET {fhir}/{query}, e.g. "Coverage?patient=pat-1&amp;status=active". Returns the searchset Bundle.</summary>
     public async Task<Bundle> SearchAsync(string query, CancellationToken ct)
     {
-        return await SearchAsync(query, false, ct);
-    }
-
-    /// <summary>Search on the R4 or R5 base URL. Returns the searchset Bundle.</summary>
-    public async Task<Bundle> SearchAsync(string query, bool r5, CancellationToken ct)
-    {
-        string url = GetBaseUrl(r5) + "/" + query.TrimStart('/');
+        string url = GetBaseUrl() + "/" + query.TrimStart('/');
         JsonNode? node = await GetJsonAsync(url, ct);
         Bundle? bundle = FhirJson.Read<Bundle>(node);
         if (bundle == null)
@@ -78,13 +60,32 @@ public class FhirApiClient
     }
 
     /// <summary>Runs a filled-in CRD prefetch query and returns whatever came back (a resource or a Bundle).</summary>
-    public async Task<JsonNode?> PrefetchAsync(string query, bool r5, CancellationToken ct)
+    public async Task<JsonNode?> PrefetchAsync(string query, CancellationToken ct)
     {
-        string url = GetBaseUrl(r5) + "/" + query.TrimStart('/');
+        string url = GetBaseUrl() + "/" + query.TrimStart('/');
         return await GetJsonAsync(url, ct);
     }
 
-    /// <summary>The patient's active coverages.</summary>
+    /// <summary>
+    /// GET {fhir}/Coverage/{id}: the insurance the EHR sent in the request (coverageId). Null when it does not exist.
+    /// The EHR's coverage id is unique in the EHR, so the insurance is read by its id alone.
+    /// </summary>
+    // CLIENT-EHR: the EHR sends the patient's active insurance (coverageId); the orders carry no insurance.
+    public async Task<Coverage?> ReadCoverageAsync(string coverageId, CancellationToken ct)
+    {
+        JsonObject? raw = await ReadAsync("Coverage", coverageId, ct);
+        if (raw == null)
+        {
+            return null;
+        }
+        return FhirJson.Read<Coverage>(raw);
+    }
+
+    /// <summary>
+    /// The patient's active coverages (GET {fhir}/Coverage?patient={id}&amp;status=active).
+    /// NOT USED in the current flow: the EHR sends the active insurance (coverageId) and the gateway reads it with
+    /// ReadCoverageAsync. Kept for later, e.g. a request without coverageId or a check of the patient's other insurances.
+    /// </summary>
     public async Task<List<Coverage>> GetActiveCoveragesAsync(string patientId, CancellationToken ct)
     {
         Bundle bundle = await SearchAsync("Coverage?patient=" + Uri.EscapeDataString(patientId) + "&status=active", ct);
@@ -107,12 +108,6 @@ public class FhirApiClient
     /// </summary>
     public async Task<List<JsonObject>> ReadOrdersAsync(List<string> orderIds, CancellationToken ct)
     {
-        return await ReadOrdersAsync(orderIds, false, ct);
-    }
-
-    /// <summary>Reads orders from the R4 or R5 base URL (R5 copies are sent to R5 payers).</summary>
-    public async Task<List<JsonObject>> ReadOrdersAsync(List<string> orderIds, bool r5, CancellationToken ct)
-    {
         List<JsonObject> orders = new List<JsonObject>();
         List<string> escaped = new List<string>();
         foreach (string orderId in TextHelper.Distinct(orderIds))
@@ -127,7 +122,7 @@ public class FhirApiClient
         string ids = string.Join(",", escaped);
         foreach (string orderType in OrderResource.SupportedTypes)
         {
-            Bundle bundle = await SearchAsync(orderType + "?_id=" + ids, r5, ct);
+            Bundle bundle = await SearchAsync(orderType + "?_id=" + ids, ct);
             orders.AddRange(bundle.ResourcesOfType(orderType));
         }
         return orders;
@@ -252,11 +247,10 @@ public class FhirApiClient
     }
 
     /// <summary>
-    /// Creates a SMART launch for a payer DTR app. Returns the launch id and iss (FHIR base URL).
-    /// <paramref name="fhirVersion"/> "r4" / "r5" chooses the iss.
+    /// Creates a SMART launch for a payer DTR app. Returns the launch id and iss (the FHIR R4 base URL).
     /// </summary>
     public async Task<SmartLaunchResult> CreateSmartLaunchAsync(string patientId, string? userPractitionerId,
-        string? encounterId, List<string> fhirContext, string? appContext, string fhirVersion, CancellationToken ct)
+        string? encounterId, List<string> fhirContext, string? appContext, CancellationToken ct)
     {
         JsonArray contextArray = new JsonArray();
         foreach (string reference in fhirContext)
@@ -270,7 +264,6 @@ public class FhirApiClient
         body["encounterId"] = encounterId;
         body["fhirContext"] = contextArray;
         body["appContext"] = appContext;
-        body["fhirVersion"] = fhirVersion;
 
         JsonObject? result = await PostInternalAsync("internal/smart-launches", body, ct);
         string? launchId = FhirJson.GetString(result, "launchId");

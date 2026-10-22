@@ -136,7 +136,7 @@ GET /api/v1/dtr/launch/3a3df604a18c4d479f4ed4f05b9a1896
 #### What the gateway does
 
 1. Reads the link from `PA_DTR_LINK` and checks that it has not expired.
-2. Reads the payer's current settings to get its FHIR release (`PA_PAYER.FHIR_VERSION`).
+2. Checks that the payer is still configured and enabled.
 3. Creates the launch at the FHIR API:
 
 ```http
@@ -148,8 +148,7 @@ Content-Type: application/json
   "userPractitionerId": "prac-3",
   "encounterId": "enc-2",
   "fhirContext": ["ServiceRequest/ord-2-home-pd", "Coverage/cov-2"],
-  "appContext": "{\"coverage-assertion-id\":\"eeea1400...\",\"questionnaire\":[\"http://example.org/fhir/Questionnaire/home-dialysis-adaptive\"], ...}",
-  "fhirVersion": "r4"
+  "appContext": "{\"coverage-assertion-id\":\"eeea1400...\",\"questionnaire\":[\"http://example.org/fhir/Questionnaire/home-dialysis-adaptive\"], ...}"
 }
 ```
 
@@ -323,14 +322,10 @@ If `saved-forms` shows the form with an empty `orderId`, the app did not name th
 
 ---
 
-## 6. R4 and R5 payers
+## 6. FHIR release
 
-| `PA_PAYER.FHIR_VERSION` | `fhirVersion` sent to the FHIR API | `iss` the app gets |
-|---|---|---|
-| `R4` (default) | `r4` | `{FHIR API}/fhir/r4` |
-| `R5` | `r5` | `{FHIR API}/fhir/r5` |
-
-The payer's current setting is read at launch time, so changing `FHIR_VERSION` works for links that were already given out.
+The payer's app is always launched on FHIR R4: `iss` = `{FHIR API}/fhir/r4`. The gateway and the FHIR API have no R5
+support.
 
 ---
 
@@ -340,7 +335,6 @@ The payer's current setting is read at launch time, so changing `FHIR_VERSION` w
 |---|---|
 | `PA_PAYER.DTR_MODE` | `SmartApp` |
 | `PA_PAYER.DTR_APP_LAUNCH_URL` | Empty (use the URL on the payer's card), or the payer's fixed launch URL |
-| `PA_PAYER.FHIR_VERSION` | `R4` or `R5`, as the payer's app expects |
 | `Workflow:DtrAppUrl` | Normally empty |
 | `Workflow:GatewayPublicBaseUrl` | The gateway URL the clinician's browser can reach |
 | `Workflow:DtrLinkHours` | 72 |
@@ -388,7 +382,6 @@ Content-Type: application/json
   "useSubscriptions": true,
   "crdTimeoutSeconds": 300,
   "timeoutSeconds": 300,
-  "fhirVersion": "R4",
   "dtrMode": "SmartApp",
   "dtrAppLaunchUrl": null
 }

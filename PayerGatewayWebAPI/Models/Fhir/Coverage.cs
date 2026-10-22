@@ -3,6 +3,8 @@ using System.Text.Json.Serialization;
 
 namespace PayerGatewayWebAPI.Models.Fhir;
 
+// FHIR R4 cardinality of each property: Coverage, https://hl7.org/fhir/R4/coverage.html
+// 1..1 / 1..* = required by FHIR; 0..1 / 0..* = optional (left out when there is no data).
 /// <summary>
 /// FHIR Coverage (CRD profile) read from the FHIR API = the patient's insurance in the EHR. The gateway reads the
 /// member id and the payer id from it and re-points Coverage.payor before sending it to a payer. Properties that are
@@ -11,17 +13,28 @@ namespace PayerGatewayWebAPI.Models.Fhir;
 public class Coverage
 {
     public string ResourceType { get; set; } = "Coverage";
+    // R4: Coverage.id 0..1 - optional
     public string? Id { get; set; }
+    // R4: Coverage.meta 0..1 - optional
     public Meta? Meta { get; set; }
+    // R4: Coverage.identifier 0..* - optional
     public List<Identifier> Identifier { get; set; } = new();
+    // R4: Coverage.status 1..1 - required
     public string? Status { get; set; }
+    // R4: Coverage.type 0..1 - optional
     public CodeableConcept? Type { get; set; }
+    // R4: Coverage.subscriberId 0..1 - optional
     public string? SubscriberId { get; set; }
+    // R4: Coverage.beneficiary 1..1 - required
     public ResourceReference? Beneficiary { get; set; }
+    // R4: Coverage.relationship 0..1 - optional
     public CodeableConcept? Relationship { get; set; }
+    // R4: Coverage.period 0..1 - optional
     public Period? Period { get; set; }
+    // R4: Coverage.payor 1..* - required
     /// <summary>The payer organization (display name and identifier).</summary>
     public List<ResourceReference> Payor { get; set; } = new();
+    // R4: Coverage.class 0..* - optional
     public List<CoverageClass> Class { get; set; } = new();
 
     /// <summary>

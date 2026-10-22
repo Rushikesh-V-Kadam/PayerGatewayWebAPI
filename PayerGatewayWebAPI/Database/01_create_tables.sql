@@ -36,8 +36,6 @@
 --
 -- The payer's own id and the member id are NOT columns of this table. They belong to the patient's insurance in
 -- the EHR (payer id and member id of the insurance) and reach the gateway through the FHIR API (Coverage).
--- (Earlier versions of this script had PAYER_IDENTIFIER, MEMBER_ID_SYSTEM and PAYER_ID_SYSTEM here; they are
--- removed - see 03_alter_pa_payer_drop_id_columns.sql for a database that was created with them.)
 CREATE TABLE PA_PAYER (
     PAYER_NAME               VARCHAR2(64)   NOT NULL,               -- REQUIRED
     DISPLAY_NAME             VARCHAR2(200),                         -- friendly name for messages and logs; empty = PAYER_NAME is shown
@@ -55,8 +53,7 @@ CREATE TABLE PA_PAYER (
     NOTIFICATION_SECRET      VARCHAR2(200),                         -- auth layer only: secret the payer sends on notifications. SENSITIVE
     CRD_TIMEOUT_SECONDS      NUMBER(4),                             -- empty or 0 = gateway default (5)
     TIMEOUT_SECONDS          NUMBER(4),                             -- empty or 0 = gateway default (30)
-    -- FHIR release and DTR (questionnaire) settings
-    FHIR_VERSION             VARCHAR2(5)    DEFAULT 'R4' NOT NULL,  -- R4 | R5: release the payer works in
+    -- DTR (questionnaire) settings. Every payer works in FHIR R4.
     DTR_MODE                 VARCHAR2(10)   DEFAULT 'Forms' NOT NULL, -- Forms = EHR shows the questions | SmartApp = payer's own SMART DTR app
     DTR_APP_LAUNCH_URL       VARCHAR2(500),                         -- payer app launch URL; empty = the URL on the payer's CRD card
     CONSTRAINT PK_PA_PAYER PRIMARY KEY (PAYER_NAME),
@@ -64,7 +61,6 @@ CREATE TABLE PA_PAYER (
     CONSTRAINT CK_PA_PAYER_SIGN CHECK (SIGN_CDS_HOOKS_REQUESTS IN (0, 1)),
     CONSTRAINT CK_PA_PAYER_SUBS CHECK (USE_SUBSCRIPTIONS IN (0, 1)),
     CONSTRAINT CK_PA_PAYER_AUTH CHECK (AUTH_TYPE IN ('none', 'client-secret', 'smart-backend')),
-    CONSTRAINT CK_PA_PAYER_FHIR CHECK (FHIR_VERSION IN ('R4', 'R5')),
     CONSTRAINT CK_PA_PAYER_DTR CHECK (DTR_MODE IN ('Forms', 'SmartApp'))
 );
 -- The name must be unique without regard to upper / lower case
@@ -78,8 +74,8 @@ CREATE UNIQUE INDEX UX_PA_PAYER_NAME ON PA_PAYER (UPPER(PAYER_NAME));
 -- INSERT INTO PA_PAYER (PAYER_NAME, BASE_URL) VALUES ('AcmeHealth', 'https://api.acmehealth.example');
 
 -- Example: a payer with its own SMART DTR app
--- INSERT INTO PA_PAYER (PAYER_NAME, DISPLAY_NAME, BASE_URL, FHIR_VERSION, DTR_MODE)
--- VALUES ('AcmeHealth', 'Acme Health Plan', 'https://api.acmehealth.example', 'R4', 'SmartApp');
+-- INSERT INTO PA_PAYER (PAYER_NAME, DISPLAY_NAME, BASE_URL, DTR_MODE)
+-- VALUES ('AcmeHealth', 'Acme Health Plan', 'https://api.acmehealth.example', 'SmartApp');
 
 -- Example: the local mock payer used for testing
 -- INSERT INTO PA_PAYER (PAYER_NAME, DISPLAY_NAME, BASE_URL, AUTH_TYPE)

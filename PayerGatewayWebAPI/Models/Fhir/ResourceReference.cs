@@ -3,12 +3,18 @@ using System.Text.Json.Serialization;
 
 namespace PayerGatewayWebAPI.Models.Fhir;
 
+// FHIR R4 cardinality of each property: Reference (data type), https://hl7.org/fhir/R4/references.html#Reference
+// 1..1 / 1..* = required by FHIR; 0..1 / 0..* = optional (left out when there is no data).
 /// <summary>FHIR Reference, e.g. { "reference": "Patient/pat-1" } or a reference by identifier.</summary>
 public class ResourceReference
 {
+    // R4: Reference.reference 0..1 - optional
     public string? Reference { get; set; }
+    // R4: Reference.type 0..1 - optional
     public string? Type { get; set; }
+    // R4: Reference.identifier 0..1 - optional
     public Identifier? Identifier { get; set; }
+    // R4: Reference.display 0..1 - optional
     public string? Display { get; set; }
 
     /// <summary>

@@ -6,10 +6,14 @@ using PayerGatewayWebAPI.Models.Fhir;
 namespace PayerGatewayWebAPI.Services;
 
 /// <summary>
-/// Checks shared by CRD, DTR and PAS: every requested order exists and belongs to the patient, and which Coverage to use.
+/// Checks shared by CRD, DTR and PAS: every requested order exists and belongs to the patient, and the insurance
+/// (Coverage) sent by the EHR can be used.
 /// </summary>
 public static class OrderHelper
 {
+    /// <summary>FHIR R4 Coverage.status of an insurance in force.</summary>
+    private const string CoverageActiveStatus = "active";
+
     /// <summary>Typed view of a raw order (never null: an empty OrderResource when it cannot be read).</summary>
     public static OrderResource ReadOrder(JsonObject raw)
     {
@@ -55,79 +59,42 @@ public static class OrderHelper
         }
     }
 
-    /// <summary>The first order's Coverage id (Order.insurance), or null.</summary>
-    public static string? CoverageIdOfOrders(List<JsonObject> orders)
-    {
-        foreach (JsonObject raw in orders)
-        {
-            string? coverageId = ReadOrder(raw).GetCoverageId();
-            if (coverageId != null)
-            {
-                return coverageId;
-            }
-        }
-        return null;
-    }
-
-    /// <summary>The first order's requester (ordering practitioner) id, or null.</summary>
-    public static string? RequesterOfOrders(List<JsonObject> orders)
-    {
-        foreach (JsonObject raw in orders)
-        {
-            string? requesterId = ReadOrder(raw).GetRequesterId();
-            if (requesterId != null)
-            {
-                return requesterId;
-            }
-        }
-        return null;
-    }
-
     /// <summary>
-    /// Which Coverage (insurance) to use, in this order:
-    ///   1. the one asked for in the request (coverageId)
-    ///   2. the one on the orders (Order.insurance)
-    ///   3. the patient's only active insurance
-    /// Returns null when the patient has no active insurance, or the one asked for is not active.
-    /// When the patient has several active insurances and neither the request nor the orders say which one, the
-    /// gateway does not pick one (it could send the member id of the wrong plan to the payer): 422, with the ids to
-    /// choose from.
+    /// Why the insurance the EHR sent (coverageId) cannot be used, or "" when it can be used.
+    /// It must exist at the FHIR API, belong to the patient (Coverage.beneficiary) and be active (Coverage.status).
+    /// The EHR sends the active insurance; the check still runs (the insurance is read anyway) because it catches a
+    /// wrong id, an insurance of another patient, or an insurance that ended between order-sign and prior auth.
     /// </summary>
-    public static Coverage? ChooseCoverage(List<Coverage> activeCoverages, string? requestedCoverageId, List<JsonObject> orders)
+    // CLIENT-EHR: the EHR sends the patient's active insurance (coverageId); the orders carry no insurance, so the
+    // gateway no longer picks one from the patient's insurances.
+    public static string CoverageProblem(Coverage? coverage, string coverageId, string patientId)
     {
-        string? coverageId = requestedCoverageId;
-        if (string.IsNullOrWhiteSpace(coverageId))
+        if (coverage == null)
         {
-            coverageId = CoverageIdOfOrders(orders);
+            return "Insurance " + coverageId + " was not found at the FHIR API.";
         }
 
-        if (!string.IsNullOrWhiteSpace(coverageId))
+        // Coverage.beneficiary is 1..1 in FHIR R4: the patient the insurance is for
+        string? beneficiaryId = null;
+        if (coverage.Beneficiary != null)
         {
-            foreach (Coverage coverage in activeCoverages)
+            beneficiaryId = coverage.Beneficiary.GetId();
+        }
+        if (beneficiaryId != patientId)
+        {
+            return "Insurance " + coverageId + " does not belong to patient " + patientId + ".";
+        }
+
+        // Coverage.status is 1..1 in FHIR R4: active | cancelled | draft | entered-in-error
+        if (coverage.Status != CoverageActiveStatus)
+        {
+            string status = "missing";
+            if (!string.IsNullOrEmpty(coverage.Status))
             {
-                if (coverage.Id == coverageId.Trim())
-                {
-                    return coverage;
-                }
+                status = coverage.Status;
             }
-            return null;
+            return "Insurance " + coverageId + " is not active (status: " + status + ").";
         }
-
-        if (activeCoverages.Count == 0)
-        {
-            return null;
-        }
-        if (activeCoverages.Count == 1)
-        {
-            return activeCoverages[0];
-        }
-
-        List<string> ids = new List<string>();
-        foreach (Coverage coverage in activeCoverages)
-        {
-            ids.Add(coverage.Id ?? "(no id)");
-        }
-        throw new ApiException(422, "The patient has " + activeCoverages.Count + " active insurances (" + string.Join(", ", ids)
-            + ") and the orders do not say which one to use. Send coverageId.");
+        return string.Empty;
     }
 }

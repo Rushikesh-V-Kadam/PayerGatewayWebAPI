@@ -99,6 +99,7 @@ public class Startup
         services.AddScoped<DtrService>();
         services.AddScoped<PasBundleBuilder>();
         services.AddScoped<PasSubscriptionService>();
+        services.AddScoped<FacilityResolver>();
         services.AddScoped<PasService>();
         services.AddScoped<CdexService>();
 

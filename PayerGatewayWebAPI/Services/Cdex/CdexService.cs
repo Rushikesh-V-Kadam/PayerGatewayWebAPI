@@ -282,9 +282,17 @@ public class CdexService
         {
             throw new ApiException(400, "Send at least one documentId or questionnaireResponseId.");
         }
+        // CDex $submit-attachment: MemberId is 1..1, so it cannot be left out (unlike PAS, where Coverage.subscriberId is 0..1).
         if (string.IsNullOrWhiteSpace(record.MemberId))
         {
             throw new ApiException(422, "Request " + requestId + " has no member id (PA_PRIOR_AUTH.MEMBER_ID), so the attachments cannot be sent: the payer needs it to find the member.");
+        }
+        // CDex $submit-attachment: OrganizationId and ProviderId are each 0..1, but one of them SHALL be present.
+        // CLIENT-EHR: OrganizationId is the facility NPI (the client's organization has no NPI; each facility has one).
+        if (record.OrganizationNpi == null && record.PractitionerNpi == null)
+        {
+            throw new ApiException(422, "Request " + requestId + " has neither a facility NPI nor a practitioner NPI (PA_PRIOR_AUTH.ORGANIZATION_NPI / PRACTITIONER_NPI), "
+                + "so the attachments cannot be sent: CDex needs at least one of them. Add the NPI to the facility (location) or the practitioner in the EHR.");
         }
         PayerSettings? payer = await _payers.FindAsync(record.PayerName, ct);
         if (payer == null)
@@ -433,6 +441,7 @@ public class CdexService
         {
             parameters.Parameter.Add(IdentifierParameter(CdexCodes.PayerId, new Identifier(SystemOrNull(payerId.System), payerId.Value)));
         }
+        // CLIENT-EHR: the "organization" is the facility of the request, so OrganizationId carries the facility NPI.
         if (record.OrganizationNpi != null)
         {
             parameters.Parameter.Add(IdentifierParameter(CdexCodes.OrganizationId, new Identifier(CodeSystems.Npi, record.OrganizationNpi)));

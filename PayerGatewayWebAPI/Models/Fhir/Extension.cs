@@ -3,30 +3,47 @@ using System.Text.Json.Serialization;
 
 namespace PayerGatewayWebAPI.Models.Fhir;
 
+// FHIR R4 cardinality of each property: Extension, https://hl7.org/fhir/R4/extensibility.html
+// 1..1 / 1..* = required by FHIR; 0..1 / 0..* = optional (left out when there is no data).
 /// <summary>
 /// FHIR Extension. Only one value[x] is set; a complex extension has child extensions instead.
 /// Used to read CRD coverage-information, PAS review actions and CDex line numbers, and to write PAS / DTR extensions.
 /// </summary>
 public class Extension
 {
+    // R4: Extension.url 1..1 - required
     public string Url { get; set; } = string.Empty;
 
+    // R4: Extension.extension 0..* - optional
     /// <summary>Child extensions. Named Children because a member cannot share the class name; written as "extension".</summary>
     [JsonPropertyName("extension")]
     public List<Extension> Children { get; set; } = new();
 
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public string? ValueString { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public string? ValueCode { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public bool? ValueBoolean { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public int? ValueInteger { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public int? ValuePositiveInt { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public string? ValueDate { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public string? ValueUrl { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public string? ValueCanonical { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public CodeableConcept? ValueCodeableConcept { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public ResourceReference? ValueReference { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public Identifier? ValueIdentifier { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public Period? ValuePeriod { get; set; }
+    // R4: Extension.value[x] 0..1 (only one value* is used) - optional
     public Quantity? ValueQuantity { get; set; }
 
     /// <summary>

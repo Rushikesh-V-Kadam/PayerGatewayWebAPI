@@ -18,7 +18,6 @@ namespace PayerGatewayWebAPI.Repositories.Database;
 ///   enabled, useSubscriptions                true / false; empty = true
 ///   cdsServicesPath, fhirPath                text; empty = "cds-services" / "fhir"; "/" = no extra path
 ///   crdTimeoutSeconds, timeoutSeconds        whole number; empty or 0 = 5 / 30
-///   fhirVersion                              R4 | R5; empty = R4
 ///   dtrMode                                  Forms | SmartApp; empty = Forms
 ///   dtrAppLaunchUrl                          text; empty = the URL on the payer's CRD card
 /// PA_PAYER also has login columns (AUTH_*, SIGN_CDS_HOOKS_REQUESTS, NOTIFICATION_SECRET). The gateway does not
@@ -103,11 +102,6 @@ public class EhrApiPayerRepository : IPayerRepository
             payer.TimeoutSeconds = timeoutSeconds.Value;
         }
 
-        string? fhirVersion = ReadText(row, "fhirVersion");
-        if (!string.IsNullOrWhiteSpace(fhirVersion))
-        {
-            payer.FhirVersion = fhirVersion;
-        }
         string? dtrMode = ReadText(row, "dtrMode");
         if (!string.IsNullOrWhiteSpace(dtrMode))
         {

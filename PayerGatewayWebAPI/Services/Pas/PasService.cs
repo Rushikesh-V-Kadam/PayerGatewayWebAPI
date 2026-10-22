@@ -44,19 +44,21 @@ public class PasService
     private readonly PayerClient _payerClient;
     private readonly PasBundleBuilder _builder;
     private readonly PasSubscriptionService _subscriptions;
+    private readonly FacilityResolver _facilities;
     private readonly IPriorAuthRepository _repository;
     private readonly WorkflowSettings _workflow;
     private readonly ILogger<PasService> _logger;
 
     /// <summary>Created by dependency injection.</summary>
     public PasService(FhirApiClient fhir, PayerRegistry payers, PayerClient payerClient, PasBundleBuilder builder,
-        PasSubscriptionService subscriptions, IPriorAuthRepository repository, IOptions<WorkflowSettings> workflow, ILogger<PasService> logger)
+        PasSubscriptionService subscriptions, FacilityResolver facilities, IPriorAuthRepository repository, IOptions<WorkflowSettings> workflow, ILogger<PasService> logger)
     {
         _fhir = fhir;
         _payers = payers;
         _payerClient = payerClient;
         _builder = builder;
         _subscriptions = subscriptions;
+        _facilities = facilities;
         _repository = repository;
         _workflow = workflow.Value;
         _logger = logger;
@@ -113,50 +115,64 @@ public class PasService
         OrderHelper.CheckOrders(orderIds, orders, request.PatientId);
         CheckOrdersHaveCode(orders);
 
-        string? coverageId = request.CoverageId;
-        if (string.IsNullOrWhiteSpace(coverageId) && existing != null)
+        // CLIENT-EHR: the insurance is the one the EHR sends (coverageId), read by its id at the FHIR API; the orders
+        // carry no insurance. An update without coverageId keeps the insurance of the request.
+        string? requestedCoverageId = request.CoverageId;
+        if (string.IsNullOrWhiteSpace(requestedCoverageId) && existing != null)
         {
-            coverageId = existing.CoverageId;
+            requestedCoverageId = existing.CoverageId;
         }
-        List<Coverage> coverages = await _fhir.GetActiveCoveragesAsync(request.PatientId, ct);
-        Coverage? coverage = OrderHelper.ChooseCoverage(coverages, coverageId, orders);
-        if (coverage == null || coverage.Id == null)
+        if (string.IsNullOrWhiteSpace(requestedCoverageId))
         {
-            throw new ApiException(422, "Patient " + request.PatientId + " has no active insurance for this request.");
+            throw new ApiException(400, "The request is not valid.", new List<string> { "coverageId is required." });
         }
+        string coverageId = requestedCoverageId.Trim();
+        Coverage? coverage = await _fhir.ReadCoverageAsync(coverageId, ct);
+        string coverageProblem = OrderHelper.CoverageProblem(coverage, coverageId, request.PatientId);
+        if (coverage == null || coverageProblem.Length > 0)
+        {
+            throw new ApiException(422, coverageProblem);
+        }
+        // CLIENT-EHR: the member id may be missing in the client's EHR.
+        // The member id (Coverage.subscriberId) is optional in FHIR R4 (0..1): the request is sent without it when the
+        // insurance has none. A real payer will most likely need it to find the member (good to have).
         if (string.IsNullOrWhiteSpace(coverage.MemberId()))
         {
-            // the payer finds the member by this id; without it no payer can process the request
-            throw new ApiException(422, "Insurance " + coverage.Id + " of patient " + request.PatientId
-                + " has no member id (Coverage.subscriberId, or a Coverage.identifier of type MB). Add the member id to the insurance in the EHR.");
+            _logger.LogWarning("Insurance {CoverageId} of patient {PatientId} has no member id: request {RequestId} is sent without it",
+                coverage.Id, request.PatientId, request.RequestId);
         }
 
-        JsonObject? organization = await _fhir.ReadAsync("Organization", request.RequestingOrganizationId, ct);
+        // CLIENT-EHR: the client's organization has no NPI, each facility (location) has one, so Claim.provider is the
+        // facility, not the parent organization.
+        // Claim.provider (1..1 in FHIR) is the facility of orderLocationCode, with its own NPI (see FacilityResolver).
+        // CLIENT-EHR: the place of service also comes from orderLocationCode (the location), not from the orders.
+        PasFacility facility = await _facilities.ResolveAsync(request, ct);
+        string organizationId = facility.OrganizationId;
+        JsonObject? organization = await _fhir.ReadAsync("Organization", organizationId, ct);
         if (organization == null)
         {
-            throw new ApiException(404, "Organization " + request.RequestingOrganizationId + " was not found at the FHIR API.");
+            throw new ApiException(404, "Organization " + organizationId + " was not found at the FHIR API.");
         }
+
+        // The NPI is optional in the PAS Requestor profile (identifier:NPI 0..*, must support): it is sent when the
+        // organization has one. Without it the payer cannot be asked to notify us (PAS Subscription) and cannot be
+        // searched for information requests (CDex Task?owner=NPI); the background $inquire still finds the decision.
         string? organizationNpi = ReadNpi(organization);
         if (organizationNpi == null)
         {
-            throw new ApiException(422, "Organization " + request.RequestingOrganizationId + " has no NPI (PAS requires it).");
+            _logger.LogWarning("Organization {OrganizationId} has no NPI: request {RequestId} is sent without it; PAS Subscription and CDex Task search are skipped",
+                organizationId, request.RequestId);
         }
 
-        string? practitionerId = request.RequestingPractitionerId;
-        if (string.IsNullOrWhiteSpace(practitionerId))
+        // The requesting clinician: always the one in the request (required, checked in CheckRequest).
+        string practitionerId = request.RequestingPractitionerId.Trim();
+        JsonObject? practitioner = await _fhir.ReadAsync("Practitioner", practitionerId, ct);
+        if (practitioner == null)
         {
-            practitionerId = OrderHelper.RequesterOfOrders(orders);
+            throw new ApiException(404, "Requesting practitioner " + practitionerId + " was not found at the FHIR API.");
         }
-        JsonObject? practitioner = null;
-        string? practitionerNpi = null;
-        if (!string.IsNullOrWhiteSpace(practitionerId))
-        {
-            practitioner = await _fhir.ReadAsync("Practitioner", practitionerId, ct);
-            if (practitioner != null)
-            {
-                practitionerNpi = ReadNpi(practitioner);
-            }
-        }
+        // the practitioner NPI is optional (Practitioner.identifier 0..*): sent when the practitioner has one
+        string? practitionerNpi = ReadNpi(practitioner);
 
         JsonObject? referring = null;
         if (!string.IsNullOrWhiteSpace(request.ReferringPractitionerId))
@@ -206,6 +222,7 @@ public class PasService
         input.Patient = patient;
         input.Coverage = coverage;
         input.Organization = organization;
+        input.PlaceOfServiceCode = facility.PlaceOfServiceCode;
         input.Practitioner = practitioner;
         input.Orders = orders;
         input.CancelledOrders = removedOrders;
@@ -248,9 +265,9 @@ public class PasService
         }
         record.PayerName = payer.PayerName;
         record.PatientId = request.PatientId;
-        record.CoverageId = coverage.Id;
+        record.CoverageId = coverageId;
         record.MemberId = coverage.MemberId();
-        record.OrganizationId = request.RequestingOrganizationId;
+        record.OrganizationId = organizationId;
         record.OrganizationNpi = organizationNpi;
         record.PractitionerId = practitionerId;
         record.PractitionerNpi = practitionerNpi;
@@ -260,8 +277,12 @@ public class PasService
         record.LineNumbers = lineNumbers;
         await ApplyResponseAsync(record, bundle, result, claimResponse, false);
 
-        // never fails the request: a subscription problem is only logged (see PasSubscriptionService)
-        await _subscriptions.EnsureSubscribedAsync(payer, organizationNpi, ct);
+        // never fails the request: a subscription problem is only logged (see PasSubscriptionService).
+        // The payer filters notifications by organization NPI, so there is no subscription without one.
+        if (organizationNpi != null)
+        {
+            await _subscriptions.EnsureSubscribedAsync(payer, organizationNpi, ct);
+        }
         return record.Decision;
     }
 
@@ -278,14 +299,12 @@ public class PasService
         PayerSettings payer = await GetPayerAsync(record, ct);
 
         JsonObject? patient = await _fhir.ReadAsync("Patient", record.PatientId, ct);
-        List<Coverage> coverages = await _fhir.GetActiveCoveragesAsync(record.PatientId, ct);
-        Coverage? coverage = null;
-        foreach (Coverage candidate in coverages)
+        // CLIENT-EHR: the insurance of the request is read by its id (the EHR's coverageId); it must still be active.
+        Coverage? coverage = await _fhir.ReadCoverageAsync(record.CoverageId, ct);
+        string coverageProblem = OrderHelper.CoverageProblem(coverage, record.CoverageId, record.PatientId);
+        if (coverageProblem.Length > 0)
         {
-            if (candidate.Id == record.CoverageId)
-            {
-                coverage = candidate;
-            }
+            throw new ApiException(422, coverageProblem);
         }
         JsonObject? organization = await _fhir.ReadAsync("Organization", record.OrganizationId, ct);
         List<JsonObject> orders = await _fhir.ReadOrdersAsync(record.OrderIds, ct);
@@ -546,14 +565,21 @@ public class PasService
             problems.Add("patientId is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.RequestingOrganizationId))
-        {
-            problems.Add("requestingOrganizationId is required.");
-        }
-
         if (TextHelper.Distinct(request.OrderIds).Count == 0)
         {
             problems.Add("orderIds must contain at least one order id.");
+        }
+
+        // CLIENT-EHR: required by the gateway: the order location (facility) is Claim.provider (1..1) and gives the NPI
+        if (string.IsNullOrWhiteSpace(request.OrderLocationCode))
+        {
+            problems.Add("orderLocationCode is required.");
+        }
+
+        // required by the gateway (Claim.careTeam is 0..* in FHIR R4) so every request names its clinician
+        if (string.IsNullOrWhiteSpace(request.RequestingPractitionerId))
+        {
+            problems.Add("requestingPractitionerId is required.");
         }
 
         if (request.Priority != PasCodes.PriorityRoutine && request.Priority != PasCodes.PriorityUrgent)
@@ -566,11 +592,6 @@ public class PasService
             problems.Add("requestType must be 'new' or 'renewal'.");
         }
 
-        if (request.RequestType == PasCodes.RequestTypeRenewal && string.IsNullOrWhiteSpace(request.PreviousAuthorizationNumber))
-        {
-            problems.Add("previousAuthorizationNumber is required for a renewal.");
-        }
-
         if (request.PatientType != PasCodes.PatientTypePermanent && request.PatientType != PasCodes.PatientTypeTransient)
         {
             problems.Add("patientType must be 'permanent' or 'transient'.");
@@ -579,6 +600,12 @@ public class PasService
         if (request.PreviousTreatments != null && request.PreviousTreatments.Value < 0)
         {
             problems.Add("previousTreatments cannot be negative.");
+        }
+
+        // includeDtr = false means "no DTR forms": naming forms at the same time is a contradiction, not something to guess
+        if (!request.IncludeDtr && TextHelper.Distinct(request.QuestionnaireResponseIds).Count > 0)
+        {
+            problems.Add("questionnaireResponseIds cannot be sent when includeDtr is false.");
         }
 
         if (problems.Count > 0)
@@ -626,6 +653,12 @@ public class PasService
     {
         List<JsonObject> forms = new List<JsonObject>();
         List<string> added = new List<string>();
+
+        // The EHR said the orders need no DTR (CRD callDtr = false): no QuestionnaireResponse read or search at all.
+        if (!request.IncludeDtr)
+        {
+            return forms;
+        }
 
         foreach (string formId in TextHelper.Distinct(request.QuestionnaireResponseIds))
         {

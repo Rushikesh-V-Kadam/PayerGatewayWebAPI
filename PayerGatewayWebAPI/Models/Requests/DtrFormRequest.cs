@@ -24,9 +24,11 @@ public class DtrFormRequest
     [MinLength(1, ErrorMessage = "orderIds must contain at least one order id.")]
     public List<string> OrderIds { get; set; } = new();
 
-    /// <summary>Insurance to use. Empty = the order's insurance, else the patient's only active insurance. Required when the patient has several active insurances and the order names none.</summary>
+    /// <summary>Required. The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it at the FHIR API (GET Coverage/{coverageId}); the orders carry no insurance.</summary>
     /// <example>cov-1</example>
-    public string? CoverageId { get; set; }
+    // CLIENT-EHR: the EHR sends the active insurance; the gateway no longer picks one from the patient's insurances.
+    [Required]
+    public string CoverageId { get; set; } = string.Empty;
 
     /// <summary>Questionnaire URLs from the order-sign decision (questionnaireUrls). Empty = the payer decides from the orders.</summary>
     /// <example>["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"]</example>

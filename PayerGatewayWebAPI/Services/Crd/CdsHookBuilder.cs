@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using PayerGatewayWebAPI.Clients;
 using PayerGatewayWebAPI.Exceptions;
 using PayerGatewayWebAPI.Helpers;
+using PayerGatewayWebAPI.Models.Fhir;
 using PayerGatewayWebAPI.Models.Requests;
 
 namespace PayerGatewayWebAPI.Services.Crd;
@@ -12,7 +13,7 @@ namespace PayerGatewayWebAPI.Services.Crd;
 /// Builds the two data parts of the CDS Hooks order-sign request:
 ///  - context: patientId, userId, encounterId and draftOrders (a Bundle of the signed orders), per CRD 2.0.1
 ///  - prefetch: the payer's prefetch templates (from discovery) filled in and run against the FHIR API
-/// For a payer with FhirVersion = R5 the orders and prefetch results are the R5 copies (/fhir/r5).
+/// Everything is FHIR R4.
 /// </summary>
 public class CdsHookBuilder
 {
@@ -52,7 +53,7 @@ public class CdsHookBuilder
     /// the payer can still query with fhirAuthorization).
     /// </summary>
     public async Task<Dictionary<string, JsonNode?>> BuildPrefetchAsync(Dictionary<string, string> templates,
-        OrderSignRequest request, List<JsonObject> orders, string? userPractitionerId, bool r5, CancellationToken ct)
+        OrderSignRequest request, List<JsonObject> orders, string? userPractitionerId, CancellationToken ct)
     {
         Dictionary<string, string> values = PlaceholderValues(request, orders, userPractitionerId);
         Dictionary<string, JsonNode?> prefetch = new Dictionary<string, JsonNode?>();
@@ -68,7 +69,7 @@ public class CdsHookBuilder
 
             try
             {
-                JsonNode? result = await _fhir.PrefetchAsync(query, r5, ct);
+                JsonNode? result = await _fhir.PrefetchAsync(query, ct);
                 if (result != null)
                 {
                     prefetch[template.Key] = result;

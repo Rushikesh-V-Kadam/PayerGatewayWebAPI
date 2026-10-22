@@ -37,13 +37,13 @@ public class PasController : ControllerBase
     /// send the same requestId again. The payer can reject with an HTTP error or with an answer that only carries errors
     /// (for example "member not found") - both give 422.
     /// </remarks>
-    /// <param name="request">Required. The prior authorization request: requestId, payerName, patientId, requestingOrganizationId and orderIds must be filled.</param>
+    /// <param name="request">Required. The prior authorization request: requestId, payerName, patientId and orderIds must be filled. orderLocationCode and requestingPractitionerId are required too.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="201">Accepted by the payer; the decision (may be pended).</response>
-    /// <response code="400">Invalid body, missing field, unknown payerName, or an order of another patient.</response>
-    /// <response code="404">Patient, order, organization, form or document not found at the FHIR API.</response>
+    /// <response code="400">Invalid body, missing field, unknown payerName, an order of another patient, or orderLocationCode / requestingPractitionerId missing.</response>
+    /// <response code="404">Patient, order, facility (orderLocationCode), organization, requesting practitioner, form or document not found at the FHIR API.</response>
     /// <response code="409">requestId was already submitted (use PUT to change it).</response>
-    /// <response code="422">No active insurance (or several and none chosen: send coverageId), insurance without member id, order without code, organization without NPI, or the payer rejected the request (body = decision with errors).</response>
+    /// <response code="422">The insurance (coverageId) is not found, belongs to another patient or is not active, order without code, the facility of orderLocationCode has no organization at the FHIR API, or the payer rejected the request (body = decision with errors).</response>
     /// <response code="502">The payer or the FHIR API failed, the payer's answer could not be read, or the file of a document could not be read.</response>
     /// <response code="504">The payer did not answer in time.</response>
     [HttpPost("requests")]
@@ -70,7 +70,7 @@ public class PasController : ControllerBase
     /// <response code="400">Invalid body, ids do not match, or patient / payer changed.</response>
     /// <response code="404">Unknown requestId, or data not found at the FHIR API.</response>
     /// <response code="409">The request is cancelled.</response>
-    /// <response code="422">Insurance without member id, order without code, organization without NPI, or the payer rejected the update (body = decision with errors). The stored request is unchanged.</response>
+    /// <response code="422">Order without code, or the payer rejected the update (body = decision with errors). The stored request is unchanged.</response>
     /// <response code="502">The payer or the FHIR API failed, the payer's answer could not be read, or the file of a document could not be read.</response>
     /// <response code="504">The payer did not answer in time.</response>
     [HttpPut("requests/{requestId}")]

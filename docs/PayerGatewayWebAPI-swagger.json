@@ -131,7 +131,7 @@
             }
           },
           "422": {
-            "description": "No member id, or the payer rejected the attachments (body = result with messages).",
+            "description": "No member id, no facility NPI and no practitioner NPI, or the payer rejected the attachments (body = result with messages).",
             "content": {
               "application/json": {
                 "schema": {
@@ -275,7 +275,7 @@
             }
           },
           "400": {
-            "description": "Invalid body, missing field, unknown payerName, an order of another patient, or no signing clinician (userPractitionerId is empty and the orders have no ordering practitioner).",
+            "description": "Invalid body, missing field (coverageId / userPractitionerId included), unknown payerName, or an order of another patient.",
             "content": {
               "application/json": {
                 "schema": {
@@ -285,17 +285,7 @@
             }
           },
           "404": {
-            "description": "Patient or orders not found at the FHIR API.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "The patient has several active insurances and neither coverageId nor the orders say which one to use.",
+            "description": "Patient or orders not found at the FHIR API. (An insurance that cannot be used is not an error: the decisions are \"unknown\" with the reason.)",
             "content": {
               "application/json": {
                 "schema": {
@@ -421,7 +411,7 @@
             }
           },
           "422": {
-            "description": "No active insurance (or several and none chosen: send coverageId), or the payer refused / returned no questionnaire.",
+            "description": "The insurance (coverageId) is not found, belongs to another patient or is not active; or the payer refused / returned no questionnaire.",
             "content": {
               "application/json": {
                 "schema": {
@@ -645,7 +635,7 @@
           "DTR 2 - Payer SMART app"
         ],
         "summary": "Opens a payer's SMART DTR app (link from an order-sign message, type \"smart\").",
-        "description": "Opened in the clinician's browser. Creates the SMART launch at the FHIR API - with the\npayer's FHIR release (R4 / R5) - and redirects (302) to the\npayer's DTR app with iss and launch. Shows a short HTML page when the link is invalid or expired.",
+        "description": "Opened in the clinician's browser. Creates the SMART launch at the FHIR API (FHIR R4) and redirects (302) to the\npayer's DTR app with iss and launch. Shows a short HTML page when the link is invalid or expired.",
         "parameters": [
           {
             "name": "linkId",
@@ -729,7 +719,7 @@
             "description": "The payer's FHIR answer (the payer's own status code is passed through).",
             "content": {
               "application/fhir+json": {
-                "schema": { }
+                "schema": {}
               }
             }
           },
@@ -810,7 +800,7 @@
             "description": "The payer's FHIR answer (the payer's own status code is passed through).",
             "content": {
               "application/fhir+json": {
-                "schema": { }
+                "schema": {}
               }
             }
           },
@@ -855,7 +845,7 @@
         "summary": "Submits a new prior authorization request (Claim/$submit).",
         "description": "Call when order-sign returned callPas = true (after DTR when callDtr was also true).\nThe gateway builds the PAS Bundle with the Claim, patient, coverage, organization, practitioner and orders,\nattaches **completed DTR forms of these orders automatically**, plus the documents in documentIds (file embedded).\n            \noverallStatus in the answer: approved | partially-approved | denied | pended | not-required | contact-payer.\nWhen pended, the payer may ask for more (informationRequests) → CDex attachments.\nNothing is saved when the payer rejects the request (422 / 502 with the payer's errors); correct the data and\nsend the same requestId again. The payer can reject with an HTTP error or with an answer that only carries errors\n(for example \"member not found\") - both give 422.",
         "requestBody": {
-          "description": "Required. The prior authorization request: requestId, payerName, patientId, requestingOrganizationId and orderIds must be filled.",
+          "description": "Required. The prior authorization request: requestId, payerName, patientId and orderIds must be filled. orderLocationCode and requestingPractitionerId are required too.",
           "content": {
             "application/json": {
               "schema": {
@@ -877,7 +867,7 @@
             }
           },
           "400": {
-            "description": "Invalid body, missing field, unknown payerName, or an order of another patient.",
+            "description": "Invalid body, missing field, unknown payerName, an order of another patient, or orderLocationCode / requestingPractitionerId missing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -887,7 +877,7 @@
             }
           },
           "404": {
-            "description": "Patient, order, organization, form or document not found at the FHIR API.",
+            "description": "Patient, order, facility (orderLocationCode), organization, requesting practitioner, form or document not found at the FHIR API.",
             "content": {
               "application/json": {
                 "schema": {
@@ -907,7 +897,7 @@
             }
           },
           "422": {
-            "description": "No active insurance (or several and none chosen: send coverageId), insurance without member id, order without code, organization without NPI, or the payer rejected the request (body = decision with errors).",
+            "description": "The insurance (coverageId) is not found, belongs to another patient or is not active, order without code, the facility of orderLocationCode has no organization at the FHIR API, or the payer rejected the request (body = decision with errors).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1010,7 +1000,7 @@
             }
           },
           "422": {
-            "description": "Insurance without member id, order without code, organization without NPI, or the payer rejected the update (body = decision with errors). The stored request is unchanged.",
+            "description": "Order without code, or the payer rejected the update (body = decision with errors). The stored request is unchanged.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1445,7 +1435,7 @@
               "type": "string"
             },
             "description": "Extra messages (validation problems, payer OperationOutcome issues, missing required questions).",
-            "example": [ ]
+            "example": []
           },
           "traceId": {
             "type": "string",
@@ -1484,7 +1474,7 @@
               "type": "string"
             },
             "description": "Messages from the payer's OperationOutcome.",
-            "example": [ ]
+            "example": []
           },
           "decision": {
             "$ref": "#/components/schemas/PriorAuthDecision"
@@ -1518,7 +1508,7 @@
               "type": "string"
             },
             "description": "QuestionnaireResponse ids (from POST /api/v1/dtr/forms/{formId}/answers).",
-            "example": [ ]
+            "example": []
           },
           "lineNumbers": {
             "type": "array",
@@ -1656,7 +1646,7 @@
               "type": "string"
             },
             "description": "performer | location | timeframe | contract-window (information the payer needs to decide).",
-            "example": [ ]
+            "example": []
           },
           "questionnaireUrls": {
             "type": "array",
@@ -1802,7 +1792,7 @@
               "type": "string"
             },
             "description": "Required questions still unanswered (only shown when saving as in-progress).",
-            "example": [ ]
+            "example": []
           },
           "adaptive": {
             "type": "boolean",
@@ -1826,7 +1816,7 @@
               "type": "string"
             },
             "description": "Answers that were ignored (unknown linkId, display-only question, unsupported type).",
-            "example": [ ]
+            "example": []
           }
         },
         "additionalProperties": false,
@@ -1928,6 +1918,7 @@
       },
       "DtrFormRequest": {
         "required": [
+          "coverageId",
           "orderIds",
           "patientId",
           "payerName"
@@ -1958,9 +1949,9 @@
             ]
           },
           "coverageId": {
+            "minLength": 1,
             "type": "string",
-            "description": "Insurance to use. Empty = the order's insurance, else the patient's only active insurance. Required when the patient has several active insurances and the order names none.",
-            "nullable": true,
+            "description": "Required. The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it at the FHIR API (GET Coverage/{coverageId}); the orders carry no insurance.",
             "example": "cov-1"
           },
           "questionnaireUrls": {
@@ -2072,7 +2063,7 @@
               "type": "string"
             },
             "description": "Default answers set by the payer (already filled in if you send nothing else).",
-            "example": [ ]
+            "example": []
           },
           "currentValues": {
             "type": "array",
@@ -2080,7 +2071,7 @@
               "type": "string"
             },
             "description": "Answers saved so far for this form.",
-            "example": [ ]
+            "example": []
           },
           "showWhen": {
             "type": "array",
@@ -2197,7 +2188,7 @@
               "type": "string"
             },
             "description": "Payer questionnaires to complete: POST /api/v1/dtr/forms with these URLs, answer, then send the form here.",
-            "example": [ ]
+            "example": []
           }
         },
         "additionalProperties": false,
@@ -2245,10 +2236,12 @@
       },
       "OrderSignRequest": {
         "required": [
+          "coverageId",
           "eventId",
           "orderIds",
           "patientId",
-          "payerName"
+          "payerName",
+          "userPractitionerId"
         ],
         "type": "object",
         "properties": {
@@ -2282,9 +2275,9 @@
             ]
           },
           "coverageId": {
+            "minLength": 1,
             "type": "string",
-            "description": "Insurance to use. Empty = the order's insurance, else the patient's only active insurance. Required when the patient has several active insurances and the order names none.",
-            "nullable": true,
+            "description": "Required. The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it at the FHIR API (GET Coverage/{coverageId}); the orders carry no insurance.",
             "example": "cov-1"
           },
           "encounterId": {
@@ -2295,9 +2288,9 @@
           },
           "userPractitionerId": {
             "type": "string",
-            "description": "Clinician signing the order (CDS Hooks userId, required by the payer). Empty = the order's ordering practitioner; when the order has none either, the request is refused (400).",
-            "nullable": true,
-            "example": "prac-1"
+            "description": "Required. Clinician signing the order (CDS Hooks context.userId, 1..1). The order's ordering practitioner is not used instead.",
+            "example": "prac-1",
+            "minLength": 1
           }
         },
         "additionalProperties": false,
@@ -2387,11 +2380,6 @@
             "type": "string",
             "example": "http://localhost:5080"
           },
-          "fhirVersion": {
-            "type": "string",
-            "description": "FHIR release the payer works in: R4 or R5.",
-            "example": "R4"
-          },
           "dtrMode": {
             "type": "string",
             "description": "Forms = the EHR shows the questionnaire (POST /api/v1/dtr/forms); SmartApp = open the link of the CRD message,\nwhich starts the payer's own SMART DTR app.",
@@ -2478,7 +2466,7 @@
               "type": "string"
             },
             "description": "Errors returned by the payer (technical rejection).",
-            "example": [ ]
+            "example": []
           }
         },
         "additionalProperties": false,
@@ -2553,9 +2541,10 @@
       "PriorAuthRequest": {
         "required": [
           "orderIds",
+          "orderLocationCode",
           "patientId",
           "payerName",
-          "requestingOrganizationId"
+          "requestingPractitionerId"
         ],
         "type": "object",
         "properties": {
@@ -2578,21 +2567,21 @@
           },
           "coverageId": {
             "type": "string",
-            "description": "Insurance to use. Empty = the orders' insurance, else the patient's only active insurance. Required when the patient has several active insurances and the orders name none.",
+            "description": "The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR), read at the FHIR API (GET Coverage/{coverageId}). Required on submit; on an update, empty = keep the insurance of the request.",
             "nullable": true,
             "example": "cov-1"
           },
-          "requestingOrganizationId": {
-            "minLength": 1,
+          "orderLocationCode": {
             "type": "string",
-            "description": "Provider organization asking for the authorization (must have an NPI).",
-            "example": "org-1"
+            "description": "Required. Order location code: the id of the location (facility) in the EHR that asks for the authorization. The facility, with its own NPI, becomes Claim.provider. When the orders name a facility it must be the same one (400 otherwise).",
+            "example": "loc-main",
+            "minLength": 1
           },
           "requestingPractitionerId": {
             "type": "string",
-            "description": "Requesting clinician. Empty = the first order's ordering practitioner.",
-            "nullable": true,
-            "example": "prac-1"
+            "description": "Required. Requesting clinician (Claim.careTeam, role primary). Must exist at the FHIR API (404 otherwise). The order's ordering practitioner is not used instead.",
+            "example": "prac-1",
+            "minLength": 1
           },
           "orderIds": {
             "minItems": 1,
@@ -2613,13 +2602,13 @@
           },
           "requestType": {
             "type": "string",
-            "description": "new (default) | renewal. Renewal lines are sent with X12 certification type R and need previousAuthorizationNumber.",
+            "description": "new (default) | renewal. Renewal lines are sent with X12 certification type R; previousAuthorizationNumber is sent when given.",
             "default": "new",
             "example": "new"
           },
           "previousAuthorizationNumber": {
             "type": "string",
-            "description": "Authorization number being renewed (sent as Claim.related, relationship \"prior\").",
+            "description": "Optional. Authorization number being renewed (sent as Claim.related, relationship \"prior\"). Empty = not sent (Claim.related is 0..* in FHIR R4).",
             "nullable": true,
             "example": "PA20260706123456"
           },
@@ -2654,13 +2643,19 @@
             "nullable": true,
             "example": "prac-4"
           },
+          "includeDtr": {
+            "type": "boolean",
+            "description": "Optional, default true. true: completed DTR forms of these orders are found and attached (plus questionnaireResponseIds). false: no DTR form is read or attached and no DTR call is made; send false when CRD answered callDtr = false.",
+            "default": true,
+            "example": true
+          },
           "questionnaireResponseIds": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Extra DTR forms to attach. Completed forms saved for these orders are attached automatically.",
-            "example": [ ]
+            "description": "Extra DTR forms to attach. Completed forms saved for these orders are attached automatically. Not allowed when includeDtr is false.",
+            "example": []
           },
           "documentIds": {
             "type": "array",
@@ -2707,7 +2702,7 @@
             "nullable": true
           }
         },
-        "additionalProperties": { }
+        "additionalProperties": {}
       },
       "SavedForm": {
         "type": "object",

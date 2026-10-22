@@ -57,7 +57,7 @@ public class CdexController : ControllerBase
     /// <response code="200">Sent to the payer.</response>
     /// <response code="400">Nothing to send, or unknown tracking id.</response>
     /// <response code="404">Unknown requestId, document or form.</response>
-    /// <response code="422">No member id, or the payer rejected the attachments (body = result with messages).</response>
+    /// <response code="422">No member id, no facility NPI and no practitioner NPI, or the payer rejected the attachments (body = result with messages).</response>
     /// <response code="502">The payer or the FHIR API failed, or the file of a document could not be read.</response>
     /// <response code="504">The payer did not answer in time.</response>
     [HttpPost("requests/{requestId}/attachments")]

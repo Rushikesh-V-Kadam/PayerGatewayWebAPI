@@ -24,18 +24,32 @@ public class PriorAuthRequest
     [Required]
     public string PatientId { get; set; } = string.Empty;
 
-    /// <summary>Insurance to use. Empty = the orders' insurance, else the patient's only active insurance. Required when the patient has several active insurances and the orders name none.</summary>
+    /// <summary>The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR), read at the FHIR API (GET Coverage/{coverageId}). Required on submit; on an update, empty = keep the insurance of the request.</summary>
     /// <example>cov-1</example>
+    // CLIENT-EHR: the EHR sends the active insurance; the orders carry no insurance.
     public string? CoverageId { get; set; }
 
-    /// <summary>Provider organization asking for the authorization (must have an NPI).</summary>
-    /// <example>org-1</example>
+    /// <summary>
+    /// Required. Order location code: the id of the location (facility) in the EHR that asks for the authorization. The
+    /// facility, with its own NPI, becomes Claim.provider. When the orders name a facility it must be the same one
+    /// (400 otherwise).
+    /// </summary>
+    /// <example>loc-main</example>
+    // CLIENT-EHR: the client's organization has no NPI; the order location code gives the facility NPI.
+    // Required by the gateway: the facility is Claim.provider (1..1), so every request names it.
     [Required]
-    public string RequestingOrganizationId { get; set; } = string.Empty;
+    public string OrderLocationCode { get; set; } = string.Empty;
 
-    /// <summary>Requesting clinician. Empty = the first order's ordering practitioner.</summary>
+    /// <summary>
+    /// Required. Requesting clinician (Claim.careTeam, role primary). Must exist at the FHIR API (404 otherwise).
+    /// The order's ordering practitioner is not used instead.
+    /// The client's EHR has no practitioner id and sends the practitioner's NPI here, the same value as userPractitionerId of order-sign.
+    /// </summary>
     /// <example>prac-1</example>
-    public string? RequestingPractitionerId { get; set; }
+    // CLIENT-EHR: the value is the practitioner's NPI (the client's EHR has no practitioner id).
+    // Required by the gateway (Claim.careTeam is 0..* in FHIR R4), so every request names its clinician.
+    [Required]
+    public string RequestingPractitionerId { get; set; } = string.Empty;
 
     /// <summary>Orders to authorize - one claim line each.</summary>
     /// <example>["ord-1-hd"]</example>
@@ -48,12 +62,12 @@ public class PriorAuthRequest
     [DefaultValue("routine")]
     public string Priority { get; set; } = "routine";
 
-    /// <summary>new (default) | renewal. Renewal lines are sent with X12 certification type R and need previousAuthorizationNumber.</summary>
+    /// <summary>new (default) | renewal. Renewal lines are sent with X12 certification type R; previousAuthorizationNumber is sent when given.</summary>
     /// <example>new</example>
     [DefaultValue("new")]
     public string RequestType { get; set; } = "new";
 
-    /// <summary>Authorization number being renewed (sent as Claim.related, relationship "prior").</summary>
+    /// <summary>Optional. Authorization number being renewed (sent as Claim.related, relationship "prior"). Empty = not sent (Claim.related is 0..* in FHIR R4).</summary>
     /// <example>PA20260706123456</example>
     public string? PreviousAuthorizationNumber { get; set; }
 
@@ -78,7 +92,15 @@ public class PriorAuthRequest
     /// <example>prac-4</example>
     public string? ReferringPractitionerId { get; set; }
 
-    /// <summary>Extra DTR forms to attach. Completed forms saved for these orders are attached automatically.</summary>
+    /// <summary>
+    /// Optional, default true. true: completed DTR forms of these orders are found and attached (plus questionnaireResponseIds).
+    /// false: no DTR form is read or attached and no DTR call is made; send false when CRD answered callDtr = false.
+    /// </summary>
+    /// <example>true</example>
+    [DefaultValue(true)]
+    public bool IncludeDtr { get; set; } = true;
+
+    /// <summary>Extra DTR forms to attach. Completed forms saved for these orders are attached automatically. Not allowed when includeDtr is false.</summary>
     /// <example>[]</example>
     public List<string> QuestionnaireResponseIds { get; set; } = new();
 

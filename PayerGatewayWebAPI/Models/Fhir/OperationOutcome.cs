@@ -1,9 +1,12 @@
 namespace PayerGatewayWebAPI.Models.Fhir;
 
+// FHIR R4 cardinality of each property: OperationOutcome, https://hl7.org/fhir/R4/operationoutcome.html
+// 1..1 / 1..* = required by FHIR; 0..1 / 0..* = optional (left out when there is no data).
 /// <summary>FHIR OperationOutcome: errors / warnings returned by a payer.</summary>
 public class OperationOutcome
 {
     public string ResourceType { get; set; } = "OperationOutcome";
+    // R4: OperationOutcome.issue 1..* - required
     public List<OperationOutcomeIssue> Issue { get; set; } = new();
 
     /// <summary>Human-readable messages of all issues.</summary>

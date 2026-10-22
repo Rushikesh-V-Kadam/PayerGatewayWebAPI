@@ -13,6 +13,7 @@ using PayerGatewayWebAPI.Models.Fhir;
 using PayerGatewayWebAPI.Models.Requests;
 using PayerGatewayWebAPI.Models.Responses;
 using PayerGatewayWebAPI.Repositories.Interfaces;
+using PayerGatewayWebAPI.Services.Pas;
 using PayerGatewayWebAPI.Services.Payers;
 
 namespace PayerGatewayWebAPI.Services.Crd;
@@ -79,6 +80,18 @@ public class CrdService
             problems.Add("orderIds must contain at least one order id.");
         }
 
+        // CDS Hooks order-sign context.userId is 1..1
+        if (string.IsNullOrWhiteSpace(request.UserPractitionerId))
+        {
+            problems.Add("userPractitionerId is required.");
+        }
+
+        // CLIENT-EHR: the EHR sends the patient's active insurance; the orders carry no insurance.
+        if (string.IsNullOrWhiteSpace(request.CoverageId))
+        {
+            problems.Add("coverageId is required.");
+        }
+
         if (problems.Count > 0)
         {
             throw new ApiException(400, "The request is not valid.", problems);
@@ -116,33 +129,24 @@ public class CrdService
             throw new ApiException(404, "None of the orders in orderIds were found at the FHIR API.");
         }
 
-        // The signing clinician is a required part of the order-sign call (CDS Hooks context.userId):
-        // the one in the request, else the practitioner who ordered.
-        string? userPractitionerId = request.UserPractitionerId;
-        if (string.IsNullOrWhiteSpace(userPractitionerId))
-        {
-            userPractitionerId = OrderHelper.RequesterOfOrders(orders);
-        }
-        if (string.IsNullOrWhiteSpace(userPractitionerId))
-        {
-            throw new ApiException(400, "userPractitionerId is required: the orders have no ordering practitioner that could be used instead.");
-        }
-        userPractitionerId = userPractitionerId.Trim();
+        // The signing clinician (CDS Hooks context.userId, 1..1): always the one in the request (checked above).
+        string userPractitionerId = request.UserPractitionerId.Trim();
 
-        List<Coverage> coverages = await _fhir.GetActiveCoveragesAsync(request.PatientId, ct);
-        Coverage? coverage = OrderHelper.ChooseCoverage(coverages, request.CoverageId, orders);
+        // CLIENT-EHR: no facility is sent in order-sign. The request has no facility field and the client's orders carry
+        // none (the facility / performer is not required by CDS Hooks or FHIR R4); the orders go to the payer as they are.
+
+        // CLIENT-EHR: the insurance is the one the EHR sends (coverageId), read by its id at the FHIR API.
+        string coverageId = request.CoverageId.Trim();
+        Coverage? coverage = await _fhir.ReadCoverageAsync(coverageId, ct);
+        string coverageProblem = OrderHelper.CoverageProblem(coverage, coverageId, request.PatientId);
 
         // ---- 3-5. ask the payer (or explain why it could not be asked)
-        if (coverage == null)
+        // An insurance that cannot be used does not stop the signing: every order gets "unknown" with the reason.
+        if (coverage == null || coverageProblem.Length > 0)
         {
-            string reason = "No active insurance on file for this patient.";
-            if (!string.IsNullOrWhiteSpace(request.CoverageId))
-            {
-                reason = "Insurance " + request.CoverageId.Trim() + " is not an active insurance of this patient.";
-            }
             response.PayerCall.Outcome = "skipped";
-            response.PayerCall.Error = reason;
-            AddUnknownDecisions(response, orders, payer, null, reason + " Coverage requirements could not be checked.");
+            response.PayerCall.Error = coverageProblem;
+            AddUnknownDecisions(response, orders, payer, coverageId, coverageProblem + " Coverage requirements could not be checked.");
         }
         else
         {
@@ -258,33 +262,13 @@ public class CrdService
             // ---- 4. the hook call
             CdsHookRequest hookRequest = new CdsHookRequest();
             hookRequest.Hook = CrdCodes.OrderSignHook;
-            // R5 payer: fhirServer, draftOrders and prefetch are R5 (/fhir/r5); the gateway keeps working with the R4 orders
-            bool r5 = payer.IsR5();
             List<JsonObject> sentOrders = orders;
-            if (r5)
-            {
-                List<string> ids = new List<string>();
-                foreach (JsonObject raw in orders)
-                {
-                    ids.Add(FhirJson.Id(raw) ?? string.Empty);
-                }
-                sentOrders = await _fhir.ReadOrdersAsync(ids, true, ct);
-                if (sentOrders.Count != orders.Count)
-                {
-                    // the payer works in R5 and must get every order as R5; an incomplete hook is not sent
-                    response.PayerCall.Outcome = "skipped";
-                    response.PayerCall.Error = "The FHIR API did not return the R5 copy of every order (" + _fhir.GetBaseUrl(true) + "); "
-                        + payer.GetDisplayName() + " works in FHIR R5.";
-                    AddUnknownDecisions(response, orders, payer, coverage.Id, response.PayerCall.Error);
-                    return;
-                }
-            }
-            hookRequest.FhirServer = _fhir.GetBaseUrl(r5);
+            hookRequest.FhirServer = _fhir.GetBaseUrl();
             hookRequest.FhirAuthorization = await TryGetFhirAuthorizationAsync(payer, request.PatientId, ct);
             hookRequest.Context = _builder.BuildContext(request, sentOrders, user);
             if (service.Prefetch != null && service.Prefetch.Count > 0)
             {
-                hookRequest.Prefetch = await _builder.BuildPrefetchAsync(service.Prefetch, request, sentOrders, user, r5, ct);
+                hookRequest.Prefetch = await _builder.BuildPrefetchAsync(service.Prefetch, request, sentOrders, user, ct);
             }
 
             CdsHookResponse hookResponse = await _payerClient.CallHookAsync(payer, service.Id, hookRequest, ct);

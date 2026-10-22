@@ -3,11 +3,16 @@ using System.Text.Json.Serialization;
 
 namespace PayerGatewayWebAPI.Models.Fhir;
 
+// FHIR R4 cardinality of each property: Coverage.class (each entry), https://hl7.org/fhir/R4/coverage.html
+// 1..1 / 1..* = required by FHIR; 0..1 / 0..* = optional (left out when there is no data).
 /// <summary>Plan / group of a Coverage.</summary>
 public class CoverageClass
 {
+    // R4: Coverage.class.type 1..1 - required
     public CodeableConcept? Type { get; set; }
+    // R4: Coverage.class.value 1..1 - required
     public string Value { get; set; } = string.Empty;
+    // R4: Coverage.class.name 0..1 - optional
     public string? Name { get; set; }
 
     /// <summary>

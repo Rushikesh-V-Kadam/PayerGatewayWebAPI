@@ -2,9 +2,8 @@
 
 **For the EHR team.** This is what the Payer Gateway needs from the EHR so that all prior authorization data is kept in the EHR's own Oracle database.
 
-- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (9 tables, all named `PA_...`).
-  A database that was created from an earlier version of that script: run `03_alter_pa_payer_drop_id_columns.sql`
-  (it removes three `PA_PAYER` columns the gateway no longer uses; see 4.1).
+- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (9 tables, all named `PA_...`). It is the only
+  script: no script has been run yet, so there are no ALTER scripts.
 - Web API to build: 19 small endpoints, described below. Each one reads or saves **one row of one table**.
 - A working example of the whole API (in memory, for testing): `MockEhr.Api/Controllers/PriorAuthDataController.cs`.
 - Swagger file of the API (every endpoint and every property, with its meaning, column, example and required mark):
@@ -109,7 +108,6 @@ complete `http` / `https` address in `baseUrl`, is left out (also with a warning
 | notificationSecret | text | *Not read by the gateway (kept for the authentication layer).* Secret the payer sends with notifications. **Sensitive.** |
 | crdTimeoutSeconds | int | Seconds to wait for the payer at order-sign. Empty or 0 = 5. |
 | timeoutSeconds | int | Seconds to wait for every other payer call. Empty or 0 = 30. |
-| fhirVersion | text | `R4` or `R5`: FHIR release the payer works in. Empty = `R4`. |
 | dtrMode | text | `Forms` (the EHR shows the payer's questions) or `SmartApp` (the payer's own SMART DTR app). Empty = `Forms`. |
 | dtrAppLaunchUrl | text | Launch URL of the payer's DTR app. Empty = the URL on the payer's CRD card. |
 
@@ -137,7 +135,7 @@ A row with every property:
     "authType": "none", "authTokenUrl": null, "authClientId": null, "authClientSecret": null, "authScope": null,
     "signCdsHooksRequests": true, "useSubscriptions": true, "notificationSecret": null,
     "crdTimeoutSeconds": 10, "timeoutSeconds": 30,
-    "fhirVersion": "R4", "dtrMode": "Forms", "dtrAppLaunchUrl": null
+    "dtrMode": "Forms", "dtrAppLaunchUrl": null
   }
 ]
 ```
@@ -242,7 +240,7 @@ gateway does not know yet is looked up again immediately.
 ```json
 {
   "requestId": "PA-2026-0001", "payerName": "MockPayer", "patientId": "pat-1", "coverageId": "cov-1",
-  "memberId": "MBR-1001", "organizationId": "org-1", "organizationNpi": "1999999992",
+  "memberId": "MBR-1001", "organizationId": "facility-loc-main", "organizationNpi": "1999999992",
   "practitionerId": "prac-1", "practitionerNpi": "1111111112",
   "priority": "routine", "status": "pended", "authorizationNumber": null, "versionNo": 1,
   "orderIdsJson": "[\"ord-1-hd\"]",

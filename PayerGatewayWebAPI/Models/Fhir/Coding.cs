@@ -3,11 +3,16 @@ using System.Text.Json.Serialization;
 
 namespace PayerGatewayWebAPI.Models.Fhir;
 
+// FHIR R4 cardinality of each property: Coding (data type), https://hl7.org/fhir/R4/datatypes.html#Coding
+// 1..1 / 1..* = required by FHIR; 0..1 / 0..* = optional (left out when there is no data).
 /// <summary>FHIR Coding: one code from one code system (e.g. LOINC 18748-4).</summary>
 public class Coding
 {
+    // R4: Coding.system 0..1 - optional
     public string? System { get; set; }
+    // R4: Coding.code 0..1 - optional
     public string? Code { get; set; }
+    // R4: Coding.display 0..1 - optional
     public string? Display { get; set; }
 
     /// <summary>

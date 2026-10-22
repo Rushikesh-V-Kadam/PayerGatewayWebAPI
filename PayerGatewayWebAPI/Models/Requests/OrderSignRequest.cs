@@ -29,15 +29,22 @@ public class OrderSignRequest
     [MinLength(1, ErrorMessage = "orderIds must contain at least one order id.")]
     public List<string> OrderIds { get; set; } = new();
 
-    /// <summary>Insurance to use. Empty = the order's insurance, else the patient's only active insurance. Required when the patient has several active insurances and the order names none.</summary>
+    /// <summary>Required. The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it at the FHIR API (GET Coverage/{coverageId}); the orders carry no insurance.</summary>
     /// <example>cov-1</example>
-    public string? CoverageId { get; set; }
+    // CLIENT-EHR: the EHR sends the active insurance; the gateway no longer picks one from the patient's insurances.
+    [Required]
+    public string CoverageId { get; set; } = string.Empty;
 
     /// <summary>Current encounter, if any (CDS Hooks encounterId).</summary>
     /// <example>enc-1</example>
     public string? EncounterId { get; set; }
 
-    /// <summary>Clinician signing the order (CDS Hooks userId, required by the payer). Empty = the order's ordering practitioner; when the order has none either, the request is refused (400).</summary>
+    /// <summary>
+    /// Required. Clinician signing the order (CDS Hooks context.userId, 1..1). The order's ordering practitioner is not used instead.
+    /// The client's EHR has no practitioner id and sends the practitioner's NPI here; the FHIR API reads the practitioner by it.
+    /// </summary>
     /// <example>prac-1</example>
-    public string? UserPractitionerId { get; set; }
+    // CLIENT-EHR: the value is the practitioner's NPI (the client's EHR has no practitioner id).
+    [Required]
+    public string UserPractitionerId { get; set; } = string.Empty;
 }

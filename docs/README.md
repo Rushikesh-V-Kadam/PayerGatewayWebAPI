@@ -20,7 +20,7 @@ EHR's Oracle database, in tables named `PA_...`, and is read and saved through a
 
 | What | Where |
 | --- | --- |
-| Tables (the EHR team runs this once) | `PayerGatewayWebAPI/Database/01_create_tables.sql`. For a database created from an earlier version: `02_alter_pa_payer.sql` (adds the FHIR release and DTR columns) and `03_alter_pa_payer_drop_id_columns.sql` (removes the three payer id columns that are no longer used) |
+| Tables (the EHR team runs this once) | `PayerGatewayWebAPI/Database/01_create_tables.sql` (the only script; no ALTER scripts) |
 | The API the EHR team builds (19 endpoints: one row of one table each) | `docs/EHR-Data-API.md` |
 | The gateway code that calls it | `Clients/EhrDataClient.cs` and `Repositories/Database/EhrApi*Repository.cs` |
 | Settings | `Storage:Provider = EhrApi`, `Ehr:BaseUrl`, `Ehr:DataPath` |
@@ -85,8 +85,7 @@ exposes it as plain JSON:
 **Payers with their own SMART DTR app (`PA_PAYER.DTR_MODE = SmartApp`):** order-sign returns a message link of type `smart`
 with `opensPayerApp = true` (`/api/v1/dtr/launch/{linkId}`). The EHR opens it in a browser window; nothing else changes for the EHR.
 
-1. The gateway creates the SMART launch at the FHIR API in the
-   payer's FHIR release (`FHIR_VERSION`: `iss` = `/fhir/r4` or `/fhir/r5`), and redirects to the app
+1. The gateway creates the SMART launch at the FHIR API (`iss` = `/fhir/r4`), and redirects to the app
    (`DTR_APP_LAUNCH_URL`, or the URL on the payer's card).
 2. The app gets its launch context from the FHIR API (SMART App Launch), reads the patient data, gets the questionnaire from its payer (directly, or through
    `/api/v1/dtr/{payerName}/Questionnaire/$questionnaire-package`), and saves the QuestionnaireResponse
@@ -96,10 +95,9 @@ with `opensPayerApp = true` (`/api/v1/dtr/launch/{linkId}`). The EHR opens it in
 
 With `DTR_MODE = Forms` (default) the link has `opensPayerApp = false` and the EHR keeps using steps 1 to 4 above.
 
-**R5 payers (`PA_PAYER.FHIR_VERSION = R5`):** the CRD call sends `fhirServer` = our `/fhir/r5` URL, and `draftOrders`
-and prefetch as R5; `$questionnaire-package` gets the R5 coverage and orders, and the payer's R5 Questionnaire is read
-(`coding` items become choices); the payer's SMART app is launched on `/fhir/r5`. PAS and CDex stay R4: the Da Vinci PAS
-and CDex guides exist only for R4.
+**Client EHR adaptations and required fields:** see `Client-EHR-Adaptations.md` (what stops a request in CRD, DTR, PAS and CDex, and every `CLIENT-EHR:` workaround in the code).
+
+**FHIR release:** everything is FHIR R4 (CRD, DTR, PAS, CDex and the FHIR API). There is no R5 support.
 
 ## Authentication
 
@@ -117,7 +115,7 @@ Every error has the same body: `{ "error": "...", "details": ["..."], "traceId":
 | 400 | Invalid body / missing field / unknown payerName / wrong answer format / order-sign without a signing clinician |
 | 404 | Patient, order, form, document or request not found |
 | 409 | Request already submitted (use PUT), or it is cancelled |
-| 422 | Cannot be processed: no active insurance, more than one active insurance and none chosen, insurance without member id, order without code, no NPI, required questions missing, payer rejected (PAS returns the decision with errors) |
+| 422 | Cannot be processed: the insurance (`coverageId`) is not found, belongs to another patient or is not active, insurance without member id, order without code, no NPI, required questions missing, payer rejected (PAS returns the decision with errors) |
 | 502 | Payer or FHIR API failed, or data received from them could not be read |
 | 503 | EHR data API not available (gateway data could not be read or saved; `details` has the failing call) |
 | 504 | Payer did not answer in time |

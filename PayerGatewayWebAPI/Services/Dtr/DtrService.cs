@@ -25,7 +25,7 @@ namespace PayerGatewayWebAPI.Services.Dtr;
 ///      and saves it at the FHIR API. PAS attaches completed forms of the orders automatically.
 ///
 /// PAYERS WITH THEIR OWN SMART DTR APP (PA_PAYER.DTR_MODE = SmartApp):
-///   LaunchAsync opens the payer app from the CRD message link (SMART EHR launch at the FHIR API, R4 or R5 per payer);
+///   LaunchAsync opens the payer app from the CRD message link (SMART EHR launch at the FHIR API, FHIR R4);
 ///   the app saves its QuestionnaireResponse at the FHIR API; GetSavedFormsAsync lets the EHR see it;
 ///   RelayToPayerAsync passes the app's calls to the payer when the app calls the payer through the gateway.
 /// </summary>
@@ -71,6 +71,12 @@ public class DtrService
             problems.Add("orderIds must contain at least one order id.");
         }
 
+        // CLIENT-EHR: the EHR sends the patient's active insurance; the orders carry no insurance.
+        if (string.IsNullOrWhiteSpace(request.CoverageId))
+        {
+            problems.Add("coverageId is required.");
+        }
+
         if (problems.Count > 0)
         {
             throw new ApiException(400, "The request is not valid.", problems);
@@ -83,11 +89,14 @@ public class DtrService
         List<JsonObject> orders = await _fhir.ReadOrdersAsync(orderIds, ct);
         OrderHelper.CheckOrders(orderIds, orders, request.PatientId);
 
-        List<Coverage> coverages = await _fhir.GetActiveCoveragesAsync(request.PatientId, ct);
-        Coverage? coverage = OrderHelper.ChooseCoverage(coverages, request.CoverageId, orders);
-        if (coverage == null)
+        // CLIENT-EHR: the insurance is the one the EHR sends (coverageId), read by its id at the FHIR API.
+        // REQUIRED (not optional): the coverage input of $questionnaire-package is 1..1, so an active insurance is needed.
+        string coverageId = request.CoverageId.Trim();
+        Coverage? coverage = await _fhir.ReadCoverageAsync(coverageId, ct);
+        string coverageProblem = OrderHelper.CoverageProblem(coverage, coverageId, request.PatientId);
+        if (coverage == null || coverageProblem.Length > 0)
         {
-            throw new ApiException(422, "Patient " + request.PatientId + " has no active insurance (or coverage " + request.CoverageId + " is not active).");
+            throw new ApiException(422, coverageProblem);
         }
 
         // ---- $questionnaire-package input
@@ -95,28 +104,14 @@ public class DtrService
         input.Meta = new Meta();
         input.Meta.Profile.Add(DtrCodes.InputParametersProfile);
 
-        // R5 payer: send the R5 copies of the coverage and orders (/fhir/r5)
-        bool r5 = payer.IsR5();
         JsonObject? sentCoverage = FhirJson.ToNode(coverage) as JsonObject;
-        List<JsonObject> sentOrders = orders;
-        if (r5)
-        {
-            sentCoverage = await _fhir.ReadAsync("Coverage", coverage.Id ?? string.Empty, true, ct);
-            sentOrders = await _fhir.ReadOrdersAsync(orderIds, true, ct);
-            if (sentCoverage == null || sentOrders.Count != orders.Count)
-            {
-                // the payer works in R5, so it must get R5 resources; an incomplete request is not sent
-                throw new ApiException(502, "The FHIR API did not return the R5 copy of the insurance or of every order ("
-                    + _fhir.GetBaseUrl(true) + "). " + payer.GetDisplayName() + " works in FHIR R5.");
-            }
-        }
 
         ParametersParameter coverageParameter = new ParametersParameter();
         coverageParameter.Name = DtrCodes.ParamCoverage;
         coverageParameter.Resource = sentCoverage;
         input.Parameter.Add(coverageParameter);
 
-        foreach (JsonObject order in sentOrders)
+        foreach (JsonObject order in orders)
         {
             ParametersParameter orderParameter = new ParametersParameter();
             orderParameter.Name = DtrCodes.ParamOrder;
@@ -145,11 +140,6 @@ public class DtrService
             int status = result.StatusCode >= 400 && result.StatusCode < 500 ? 422 : 502;
             throw new ApiException(status, payer.GetDisplayName() + " did not return the questionnaire package.", result.Messages());
         }
-        if (r5)
-        {
-            R5QuestionnaireNormalizer.Normalize(result.Body);
-        }
-
         List<Questionnaire> questionnaires = ReadQuestionnaires(result.Body);
         if (questionnaires.Count == 0)
         {
@@ -303,11 +293,6 @@ public class DtrService
                 int status = result.StatusCode >= 400 && result.StatusCode < 500 ? 422 : 502;
                 throw new ApiException(status, payer.GetDisplayName() + " did not return the next question.", result.Messages());
             }
-            if (payer.IsR5())
-            {
-                R5QuestionnaireNormalizer.Normalize(result.Body);
-            }
-
             JsonObject? returned = ReturnedResponse(result.Body);
             Questionnaire? next = ContainedQuestionnaire(returned);
             if (returned == null || next == null)
@@ -483,7 +468,7 @@ public class DtrService
             throw new ApiException(422, "No DTR app URL is known for this link (PA_PAYER.DTR_APP_LAUNCH_URL, Workflow:DtrAppUrl, or the payer's card).");
         }
 
-        // the payer's current settings: FHIR release of its app (iss)
+        // the payer must still be configured and enabled
         PayerSettings? payer = await _payers.FindAsync(link.PayerName, ct);
         if (payer == null)
         {
@@ -491,10 +476,10 @@ public class DtrService
         }
 
         SmartLaunchResult launch = await _fhir.CreateSmartLaunchAsync(link.PatientId, link.UserPractitionerId, link.EncounterId,
-            link.FhirContext, link.AppContext, payer.GetFhirReleaseName(), ct);
+            link.FhirContext, link.AppContext, ct);
 
-        _logger.LogInformation("DTR launch {LaunchId} for patient {PatientId}: {Payer}, FHIR {Release}",
-            launch.LaunchId, link.PatientId, payer.PayerName, payer.GetFhirReleaseName());
+        _logger.LogInformation("DTR launch {LaunchId} for patient {PatientId}: {Payer}",
+            launch.LaunchId, link.PatientId, payer.PayerName);
         string separator = link.AppUrl.Contains('?') ? "&" : "?";
         return link.AppUrl + separator + "iss=" + Uri.EscapeDataString(launch.Iss) + "&launch=" + Uri.EscapeDataString(launch.LaunchId);
     }

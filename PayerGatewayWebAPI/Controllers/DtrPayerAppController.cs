@@ -31,8 +31,7 @@ public class DtrPayerAppController : ControllerBase
 
     /// <summary>Opens a payer's SMART DTR app (link from an order-sign message, type "smart").</summary>
     /// <remarks>
-    /// Opened in the clinician's browser. Creates the SMART launch at the FHIR API - with the
-    /// payer's FHIR release (R4 / R5) - and redirects (302) to the
+    /// Opened in the clinician's browser. Creates the SMART launch at the FHIR API (FHIR R4) and redirects (302) to the
     /// payer's DTR app with iss and launch. Shows a short HTML page when the link is invalid or expired.
     /// </remarks>
     /// <param name="linkId">Id at the end of the link.</param>

@@ -101,7 +101,6 @@ GET /api/v1/payers
     "displayName": "Mock Da Vinci Payer",
     "enabled": true,
     "baseUrl": "http://localhost:5080",
-    "fhirVersion": "R4",
     "dtrMode": "Forms"
   }
 ]
@@ -111,7 +110,6 @@ GET /api/v1/payers
 |---|---|
 | `payerName` | The value to send as `payerName` in every other request |
 | `enabled` | `false` = the payer is in the list but switched off; requests for it get "not configured or not enabled" |
-| `fhirVersion` | `R4` or `R5` (section 6) |
 | `dtrMode` | `Forms` = questionnaire through the gateway forms. `SmartApp` = the payer's own SMART DTR app |
 
 The list comes from table `PA_PAYER` (read through the EHR data API) and is kept for `Storage:PayerCacheMinutes` (5 minutes). A name that is not in the kept list is looked up again right away, so a new payer row works without a restart.
@@ -180,9 +178,9 @@ The gateway uses the first service whose `hook` is `order-sign`. Its `id` become
 | `payerName` | Yes | Payer to ask (`PA_PAYER.PAYER_NAME`) |
 | `patientId` | Yes | EHR patient id |
 | `orderIds` | Yes, at least one | EHR order ids being signed. An order is a ServiceRequest (service order) or a MedicationRequest (medication order) at the FHIR API. Device orders are not used |
-| `coverageId` | No | Insurance to use. Empty = the order's insurance, else the patient's only active insurance. With more than one active insurance and none named by the order: 422 |
+| `coverageId` | Yes | The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it with `GET Coverage/{coverageId}` at the FHIR API. The orders carry no insurance |
 | `encounterId` | No | Current encounter (CDS Hooks `encounterId`) |
-| `userPractitionerId` | No, when the order has an ordering practitioner | Clinician signing (CDS Hooks `userId`, required by the payer). Empty = the first order's ordering practitioner; 400 when the order has none |
+| `userPractitionerId` | Yes | Clinician signing (CDS Hooks `context.userId`, 1..1). The order's ordering practitioner is not used instead |
 
 ```http
 POST /api/v1/crd/order-sign
@@ -203,8 +201,8 @@ Content-Type: application/json
 1. **Checks the input.** All problems are returned together (400).
 2. **Finds the payer** by `payerName`.
 3. **Same `eventId` seen before?** Returns the stored answer. The payer is not called again.
-4. **Reads from the FHIR API:** `Patient/{patientId}`, the orders (`ServiceRequest?_id=...`, `MedicationRequest?_id=...`) and `Coverage?patient=...&status=active`.
-5. **Chooses the coverage:** `coverageId` from the request, else the order's insurance, else the patient's only active insurance. With more than one active insurance and none chosen the answer is 422.
+4. **Reads from the FHIR API:** `Patient/{patientId}`, the orders (`ServiceRequest?_id=...`, `MedicationRequest?_id=...`) and the insurance `Coverage/{coverageId}`.
+5. **Checks the coverage:** it must exist, belong to the patient and be active. Otherwise the payer is not called and every order gets `unknown` with the reason (see below).
 6. **Discovery:** `GET {payer}/cds-services`, kept 12 hours. Picks the `order-sign` service.
 7. **Gets a `fhirAuthorization` token** from the FHIR API (`POST /internal/access-tokens`, valid `Workflow:FhirAuthorizationMinutes`). If this fails, the hook is sent without it.
 8. **Fills the prefetch templates** and runs each query against the FHIR API. A template that cannot be filled, or a query that fails, is left out.
@@ -361,7 +359,7 @@ A `smart` link is always a gateway URL (`/api/v1/dtr/launch/{linkId}`). The paye
 |---|---|
 | The payer does not answer in time | `payerCall.outcome = "timeout"`. Every order gets `covered = "unknown"`, `callDtr = false`, `callPas = false` and a warning message |
 | The payer returns an error or cannot be reached | `payerCall.outcome = "error"`, `payerCall.error` has the reason. Decisions as above |
-| No active insurance | `payerCall.outcome = "skipped"`. Decisions are `unknown` with "No active insurance on file" |
+| The insurance (`coverageId`) is not found, belongs to another patient, or is not active | `payerCall.outcome = "skipped"`, `payerCall.error` has the reason. Decisions are `unknown` with the reason |
 | The payer has no `order-sign` service | `payerCall.outcome = "skipped"`. Decisions are `unknown` |
 | One of several orders is not found | A warning in top-level `messages`; the other orders get their decisions |
 | The payer returns no coverage information for an order | That order gets `covered = "unknown"` with a message |
@@ -416,7 +414,7 @@ Example when the payer times out:
 
 | HTTP | When |
 |---|---|
-| 400 | A required field is missing or `orderIds` is empty (`details` lists each problem); unknown or disabled `payerName`; an order belongs to another patient; invalid JSON |
+| 400 | A required field is missing (`coverageId` and `userPractitionerId` included) or `orderIds` is empty (`details` lists each problem); unknown or disabled `payerName`; an order belongs to another patient; invalid JSON |
 | 404 | The patient is not found at the FHIR API, or none of the orders are found |
 | 502 | The FHIR API failed or timed out |
 | 503 | The EHR data API is not available (the stored answer could not be read or saved) |
@@ -482,13 +480,10 @@ Which DTR app a `smart` link opens, in this order: `PA_PAYER.DTR_APP_LAUNCH_URL`
 
 ---
 
-## 6. R5 payers
+## 6. FHIR release
 
-For a payer with `PA_PAYER.FHIR_VERSION = R5`:
-
-- `fhirServer` is the FHIR API's R5 URL (`FhirApi:BaseUrlR5`, `/fhir/r5`).
-- `draftOrders` and the prefetch results are the R5 copies of the same data.
-- The gateway itself keeps working with the R4 orders, so the EHR request and response do not change.
+Every payer is called in FHIR R4: `fhirServer` is the FHIR API's R4 URL (`FhirApi:BaseUrl`), and `draftOrders` and the
+prefetch results are R4. The gateway and the FHIR API have no R5 support.
 
 ---
 
@@ -514,14 +509,13 @@ The EHR can read the decision straight from `PA_COVERAGE_DECISION`. The gateway 
 | `PA_PAYER.BASE_URL` + `CDS_SERVICES_PATH` | `cds-services` | Where the payer's CDS services are |
 | `PA_PAYER.CRD_TIMEOUT_SECONDS` | 5 | Seconds to wait for the hook call. The clinician is waiting, so keep it short |
 | `PA_PAYER.TIMEOUT_SECONDS` | 30 | Seconds to wait for discovery |
-| `PA_PAYER.FHIR_VERSION` | `R4` | `R4` or `R5` |
 | `PA_PAYER.DTR_MODE` | `Forms` | Sets `opensPayerApp` on `smart` links |
 | `PA_PAYER.DTR_APP_LAUNCH_URL` | empty | Fixed launch URL of the payer's DTR app |
 | `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the `/api/v1/dtr/launch/{linkId}` links |
 | `Workflow:DtrLinkHours` | 72 | How long a launch link stays valid |
 | `Workflow:FhirAuthorizationMinutes` | 5 | Lifetime of the `fhirAuthorization` token |
 | `Storage:PayerCacheMinutes` | 5 | How long the payer list is kept |
-| `FhirApi:BaseUrl`, `BaseUrlR5`, `InternalBaseUrl` | localhost:5100 | The FHIR API |
+| `FhirApi:BaseUrl`, `InternalBaseUrl` | localhost:5100 | The FHIR API (FHIR R4) |
 
 ---
 

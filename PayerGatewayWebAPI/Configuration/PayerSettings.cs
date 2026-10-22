@@ -68,13 +68,6 @@ public class PayerSettings
     public int TimeoutSeconds { get; set; } = DefaultTimeoutSeconds;
 
     /// <summary>
-    /// Optional. FHIR release the payer works in: "R4" (default; all Da Vinci guides today) or "R5". Decides which FHIR
-    /// base URL the payer's SMART DTR app is launched with (iss = /fhir/r4 or /fhir/r5 of the FHIR API).
-    /// Any other value, or an empty one, is treated as R4.
-    /// </summary>
-    public string FhirVersion { get; set; } = "R4";
-
-    /// <summary>
     /// Optional. How the clinician fills in the payer's questionnaires:
     ///   "Forms"    the gateway gets the questionnaire and the EHR shows it (POST /api/v1/dtr/forms; our questionnaire app)
     ///   "SmartApp" the payer's own SMART DTR app is opened from the CRD message link (/api/v1/dtr/launch/{linkId})
@@ -118,15 +111,6 @@ public class PayerSettings
             TimeoutSeconds = DefaultTimeoutSeconds;
         }
 
-        if (IsR5())
-        {
-            FhirVersion = "R5";
-        }
-        else
-        {
-            FhirVersion = "R4";
-        }
-
         if (UsesSmartApp())
         {
             DtrMode = "SmartApp";
@@ -168,24 +152,6 @@ public class PayerSettings
             return "baseUrl (BASE_URL) '" + BaseUrl + "' is not a complete http or https address";
         }
         return null;
-    }
-
-    /// <summary>True when the payer works in FHIR R5.</summary>
-    public bool IsR5()
-    {
-        string version = (FhirVersion ?? string.Empty).Trim();
-        return string.Equals(version, "R5", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(version, "5.0.0", StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>"r4" or "r5", as the FHIR API's /internal/smart-launches expects it.</summary>
-    public string GetFhirReleaseName()
-    {
-        if (IsR5())
-        {
-            return "r5";
-        }
-        return "r4";
     }
 
     /// <summary>True when the payer's own SMART DTR app is used (DtrMode = "SmartApp").</summary>

@@ -20,6 +20,7 @@ Content-Type: application/json
   "payerName": "MockPayer",
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
+  "orderLocationCode": "loc-main",
   "userPractitionerId": "prac-1"
 }
 
@@ -60,7 +61,8 @@ Content-Type: application/json
   "requestId": "PA-2026-0001",
   "payerName": "MockPayer",
   "patientId": "pat-1",
-  "requestingOrganizationId": "org-1",
+  "requestingPractitionerId": "prac-1",
+  "orderLocationCode": "loc-main",
   "orderIds": ["ord-1-hd"],
   "priority": "routine",
   "documentIds": ["doc-1-note"],

@@ -22,6 +22,12 @@ public class PasBuildInput
     public Coverage Coverage { get; set; } = new Coverage();
     /// <summary>Requesting provider organization (Claim.provider).</summary>
     public JsonObject Organization { get; set; } = new JsonObject();
+    /// <summary>
+    /// CMS place-of-service code of the facility of orderLocationCode (Location.type), sent on every line
+    /// (Claim.item.locationCodeableConcept). Null = not sent (0..1). Not set for a cancel.
+    /// </summary>
+    // CLIENT-EHR: taken from the location of the PAS request (orderLocationCode), not from the orders.
+    public string? PlaceOfServiceCode { get; set; }
     /// <summary>Requesting clinician (raw FHIR Practitioner), when known.</summary>
     public JsonObject? Practitioner { get; set; }
 

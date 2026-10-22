@@ -202,7 +202,7 @@ The shortest request that works:
 
 #### What the gateway does
 
-1. Reads the stored request (`PA_PRIOR_AUTH`). It needs the member id, the organization NPI and the practitioner NPI that were saved at the PAS submit.
+1. Reads the stored request (`PA_PRIOR_AUTH`). It needs the member id saved at the PAS submit (`MemberId` is 1..1), and the facility NPI or the practitioner NPI (`OrganizationId` / `ProviderId`: one of them SHALL be present); each NPI is sent when it was saved.
 2. Chooses the tracking id.
 3. Reads each document from the FHIR API **with its file embedded**, and each QuestionnaireResponse.
 4. Calls `POST {payer BASE_URL}/{FHIR_PATH}/$submit-attachment`.
@@ -250,7 +250,7 @@ The request does not have to be `pended`: the gateway sends attachments for any 
 | `TrackingId` | See the table above |
 | `AttachTo` | Always `preauthorization` |
 | `PayerId` | The payer id of the patient's insurance, as sent in the PAS request. Left out when the insurance has none |
-| `OrganizationId` | NPI of the requesting organization (saved at the PAS submit) |
+| `OrganizationId` | NPI of the requesting organization (saved at the PAS submit). Left out when the organization has no NPI |
 | `ProviderId` | NPI of the requesting practitioner, when known |
 | `MemberId` | The member id of the patient's insurance, as sent in the PAS request. No identifier system is added |
 | `Attachment` | One per document and one per form |
@@ -345,7 +345,7 @@ When `decision` is `null` or still `pended`, read it later with `GET /api/v1/pas
 | 200 | Sent to the payer |
 | 400 | No `documentIds` and no `questionnaireResponseIds`; or `trackingId` is not an information request of this request |
 | 404 | Unknown `requestId`; a document or a form was not found at the FHIR API |
-| 422 | The request has no member id; the payer is no longer configured; or the payer rejected the attachments (result body) |
+| 422 | The request has no member id, or neither a facility NPI nor a practitioner NPI; the payer is no longer configured; or the payer rejected the attachments (result body) |
 | 502 | The payer or the FHIR API failed |
 | 503 | The EHR data API is not available |
 | 504 | The payer did not answer in time |
@@ -524,7 +524,7 @@ Both are in the EHR's Oracle database, through the EHR data API (`docs/EHR-Data-
 | `Workflow:PollMinutes` | 5 | How often the payer's Tasks are searched. 0 = off |
 | `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the push URL given to payers |
 
-CDex always uses FHIR R4, also for a payer with `FHIR_VERSION = R5`.
+CDex uses FHIR R4, like every other step.
 
 ---
 

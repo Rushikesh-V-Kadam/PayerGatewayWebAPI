@@ -87,7 +87,7 @@ The payer wants a questionnaire filled in before it decides. In this flow the **
 | `payerName` | Yes | Payer to ask |
 | `patientId` | Yes | EHR patient id |
 | `orderIds` | Yes, at least one | Orders the documentation is for |
-| `coverageId` | No | Insurance to use. Empty = the order's insurance, else the patient's only active insurance. With more than one active insurance and none named by the order: 422 |
+| `coverageId` | Yes | The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it with `GET Coverage/{coverageId}` at the FHIR API. The orders carry no insurance |
 | `questionnaireUrls` | No | From the order-sign decision. Empty = the payer decides from the orders |
 | `coverageAssertionId` | No | From the order-sign decision (DTR `context`), or a CDex tracking id |
 
@@ -280,7 +280,7 @@ A list with one form per questionnaire (shortened: 5 of the questions).
 |---|---|
 | 400 | Missing field, empty `orderIds`, unknown `payerName`, or an order belongs to another patient |
 | 404 | An order was not found at the FHIR API |
-| 422 | No active insurance; the payer refused the request (HTTP 4xx, `details` has the payer's messages); or the payer returned no questionnaire |
+| 422 | The insurance (`coverageId`) is not found, belongs to another patient, or is not active; the payer refused the request (HTTP 4xx, `details` has the payer's messages); or the payer returned no questionnaire |
 | 502 | The payer answered with HTTP 5xx or could not be reached; or the FHIR API failed |
 | 503 | The EHR data API is not available |
 | 504 | The payer did not answer within `TIMEOUT_SECONDS` |
@@ -610,7 +610,7 @@ The mock EHR UI (`mock-ehr-ui`) calls `POST /api/v1/dtr/forms` and then opens th
 - **No automatic pre-fill from the chart.** A payer Questionnaire can carry CQL expressions that fill answers from patient data. The gateway forms do not run them. Only the payer's fixed default values (`defaultValues`) are filled in. A SMART DTR app does run them (see `DTR-SmartApp-API-Guide.md`).
 - **`attachment` and `reference` questions** cannot be answered. An answer sent for them is ignored with a warning.
 - **Choice options from a ValueSet** are not expanded. The form shows `optionsValueSet` and accepts any code.
-- **R5 payers** (`PA_PAYER.FHIR_VERSION = R5`): the gateway sends the R5 coverage and orders, and converts the payer's R5 Questionnaire so the form looks the same (`coding` becomes `choice` or `open-choice`; `question` becomes `display`).
+- **FHIR R4 only.** The coverage and orders are sent in R4, and the payer's Questionnaire must be R4.
 
 ---
 
@@ -669,7 +669,6 @@ GET http://localhost:5200/api/v1/dtr/saved-forms?patientId=pat-1&orderId=ord-1-h
 | `Services/Dtr/QuestionnaireReader.cs` | FHIR Questionnaire to simple questions |
 | `Services/Dtr/QuestionnaireResponseBuilder.cs` | Text answers to FHIR answers: type checks, `showWhen`, defaults, required questions |
 | `Services/Dtr/AnswerText.cs` | FHIR values to text (defaults, conditions) |
-| `Services/Dtr/R5QuestionnaireNormalizer.cs` | R5 Questionnaire to the R4 form shape |
 | `Repositories/Database/EhrApiDtrFormRepository.cs` | `PA_DTR_FORM` through the EHR data API |
 | `Models/Requests/DtrFormRequest.cs`, `DtrAnswersRequest.cs`, `DtrAnswerInput.cs` | Request JSON |
 | `Models/Responses/DtrForm.cs`, `DtrQuestion.cs`, `DtrOption.cs`, `DtrCondition.cs`, `DtrAnswersResult.cs`, `SavedForm.cs` | Response JSON |

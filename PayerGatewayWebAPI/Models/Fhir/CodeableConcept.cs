@@ -3,10 +3,14 @@ using System.Text.Json.Serialization;
 
 namespace PayerGatewayWebAPI.Models.Fhir;
 
+// FHIR R4 cardinality of each property: CodeableConcept (data type), https://hl7.org/fhir/R4/datatypes.html#CodeableConcept
+// 1..1 / 1..* = required by FHIR; 0..1 / 0..* = optional (left out when there is no data).
 /// <summary>FHIR CodeableConcept: one or more codings plus optional text.</summary>
 public class CodeableConcept
 {
+    // R4: CodeableConcept.coding 0..* - optional
     public List<Coding> Coding { get; set; } = new();
+    // R4: CodeableConcept.text 0..1 - optional
     public string? Text { get; set; }
 
     /// <summary>

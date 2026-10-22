@@ -71,6 +71,30 @@ Every endpoint 1 to 5 returns the same object: the **decision** (section 5).
 - **Authentication:** none is built in. It is added outside this code.
 - **Errors:** `{ "error": "...", "details": ["..."], "traceId": "..." }`. One exception: when the **payer rejects** a request, the body is a decision with `overallStatus = "error"` and the payer's messages in `errors` (section 4.1).
 - **`requestId`** is the EHR's own id of the request. It becomes `Claim.identifier` and is the key for update, cancel, inquire and CDex.
+- **The requesting facility (`Claim.provider`).** The client has many facilities, each with its own NPI; the parent organization has only a tax id. The EHR keeps each facility as a location (name, address, NPI). The FHIR API serves every location also as an Organization, `Organization/facility-{locationId}`, with the facility NPI, the parent's tax id and `partOf` = the parent organization. The gateway takes the facility from
+  `orderLocationCode` (required): `Location/{orderLocationCode}` → `managingOrganization`. The client's orders carry no facility, so the orders' location is not read or compared. The payer subscription and the CDex Task search run per payer and facility NPI.
+
+
+### What is required (FHIR R4 cardinality)
+
+The gateway requires only what FHIR R4 itself requires ([resource list](https://hl7.org/fhir/R4/resourcelist.html): minimum cardinality 1). Everything optional (0..1 or 0..*) is **sent when the EHR has it and left out (null) when it does not**; a missing optional value never rejects a request. The client has no real payer yet; when one is onboarded, its own rules (the PAS profiles, X12 278) may make some optional fields necessary, and the code is changed then.
+
+| Required in FHIR R4 | Comes from | Missing → |
+|---|---|---|
+| `Claim.status`, `use`, `type`, `created` | Set by the gateway (`active`, `preauthorization`, `professional`, now) | — |
+| `Claim.patient` (1..1) | `patientId` | 400 empty, 404 not found |
+| `Claim.provider` (1..1) | The facility of `orderLocationCode` | 400 / 404 |
+| `Claim.priority` (1..1) | `priority` (default `routine`) | — |
+| `Claim.insurance` (1..*) with `coverage` (1..1) | The patient's active insurance | 422 |
+| `Claim.item.sequence`, `productOrService` (1..1 per item) | Line number; the order's CPT / HCPCS / drug code | 422 order without code |
+| `Coverage.status`, `beneficiary` (1..1), `payor` (1..*) | The insurance; `payor` = the payer of `payerName` | — |
+| `Claim.careTeam.sequence`, `provider` / `diagnosis.sequence`, `diagnosis[x]` / `supportingInfo.sequence`, `category` | Only when such an entry is sent; the gateway fills them | — |
+
+Optional, sent only when present (null otherwise): member id (`Coverage.subscriberId`), facility NPI and tax id (`Organization.identifier`), referring practitioner (`Claim.careTeam`), practitioner NPI, diagnoses (`Claim.diagnosis`), the renewed authorization number (`Claim.related`), quantity, service dates, place of service, forms, documents and notes.
+
+Not FHIR fields, but needed to run the gateway: `requestId` (the key for update, cancel, inquire and CDex), `payerName` (which payer to call), at least one `orderIds` entry (a request without lines has nothing to authorize), `orderLocationCode` (the facility, see above) and `requestingPractitionerId` (`Claim.careTeam` is 0..* in R4, but the gateway requires the requesting clinician).
+
+Two values are worked out by the gateway rather than taken from the EHR: `Claim.type` = `professional`, and `Claim.item.category` (X12 service type) from the order's code (e.g. CPT 90935-90999 = 76 dialysis, medication = 88 pharmacy, otherwise 1 medical care). Both are listed here so they can be changed when a real payer asks for other values.
 
 ---
 
@@ -89,19 +113,20 @@ Every endpoint 1 to 5 returns the same object: the **decision** (section 5).
 | `requestId` | Yes | | EHR id of the request, for example `PA-2026-0001` |
 | `payerName` | Yes | | Payer to send the request to |
 | `patientId` | Yes | | EHR patient id |
-| `requestingOrganizationId` | Yes | | Provider organization asking for the authorization. It must have an NPI |
+| `orderLocationCode` | Yes | | Id of the location (facility) in the EHR that asks for the authorization. The facility, with its own NPI, becomes `Claim.provider` (section 3); its CMS place-of-service code becomes the place of service of every line |
 | `orderIds` | Yes, at least one | | Orders to authorize. One claim line per order |
-| `coverageId` | No | | Insurance to use. Empty = the orders' insurance, else the patient's only active insurance. With more than one active insurance and none named by the orders: 422 |
-| `requestingPractitionerId` | No | | Requesting clinician. Empty = the first order's ordering practitioner |
+| `coverageId` | Yes on submit | | The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR), read with `GET Coverage/{coverageId}` at the FHIR API. The orders carry no insurance. On an update, empty = the insurance of the request |
+| `requestingPractitionerId` | Yes | | Requesting clinician (`Claim.careTeam`, role `primary`). Must exist at the FHIR API (404 otherwise). The order's ordering practitioner is not used instead. Required by the gateway (`Claim.careTeam` is 0..* in FHIR R4) |
 | `priority` | No | `routine` | `routine` or `urgent`. `urgent` = expedited review (72 hours under CMS-0057-F) |
 | `requestType` | No | `new` | `new` or `renewal` |
-| `previousAuthorizationNumber` | For a renewal | | Authorization number being renewed |
+| `previousAuthorizationNumber` | No | | Authorization number being renewed. Sent as `Claim.related` when given; empty = not sent (`Claim.related` is 0..*) |
 | `previousServiceStart` | No | | First date of service of the previous authorization (`yyyy-MM-dd`) |
 | `previousServiceEnd` | No | | Last date of service of the previous authorization (`yyyy-MM-dd`) |
 | `previousTreatments` | No | | Number of treatments given under the previous authorization (0 or more) |
 | `patientType` | No | `permanent` | `permanent` or `transient` (a patient visiting the facility) |
 | `referringPractitionerId` | No | | Physician who referred the patient |
-| `questionnaireResponseIds` | No | `[]` | Extra DTR forms to attach. Completed forms of these orders are attached automatically |
+| `includeDtr` | No | `true` | `true`: completed DTR forms of the orders are found and attached. `false`: no DTR form is read or attached and no DTR call is made. Send `false` when CRD answered `callDtr = false` |
+| `questionnaireResponseIds` | No | `[]` | Extra DTR forms to attach. Completed forms of these orders are attached automatically. Not allowed with `includeDtr = false` (400) |
 | `documentIds` | No | `[]` | EHR documents (DocumentReference ids) to attach now. The file content is embedded |
 | `notes` | No | | Free-text note for the reviewer. The first 264 characters are sent |
 
@@ -115,7 +140,8 @@ Content-Type: application/json
   "requestId": "PA-ORD-2-HOME-PD-UAV6LK",
   "payerName": "MockPayer",
   "patientId": "pat-2",
-  "requestingOrganizationId": "org-1",
+  "requestingPractitionerId": "prac-3",
+  "orderLocationCode": "loc-main",
   "orderIds": ["ord-2-home-pd"],
   "priority": "routine",
   "referringPractitionerId": "prac-4",
@@ -131,7 +157,8 @@ A renewal for a transient patient:
   "requestId": "PA-2026-0102",
   "payerName": "MockPayer",
   "patientId": "pat-1",
-  "requestingOrganizationId": "org-1",
+  "orderLocationCode": "loc-main",
+  "requestingPractitionerId": "prac-1",
   "orderIds": ["ord-1-hd"],
   "priority": "routine",
   "requestType": "renewal",
@@ -148,13 +175,13 @@ A renewal for a transient patient:
 
 1. **Checks the input.** All problems are returned together (400).
 2. **Finds the payer.** Checks that `requestId` was not submitted before (409), unless that earlier request is cancelled.
-3. **Reads from the FHIR API:** the patient, the orders (each must exist and belong to the patient), the active coverage, the organization (with its NPI), the requesting practitioner and the referring practitioner.
+3. **Reads from the FHIR API:** the patient, the orders (each must exist and belong to the patient), the active coverage, the facility Organization of `orderLocationCode` (section 3; its NPI when it has one), the requesting practitioner and the referring practitioner.
 4. **Collects the forms:** the ones in `questionnaireResponseIds`, plus every form of the patient that is `completed` or `amended` and whose `qr-context` names one of the orders.
 5. **Collects the documents** in `documentIds` and downloads each file, so the content itself is in the Bundle.
 6. **Builds the PAS request Bundle** (section 6) and calls `POST {payer}/fhir/Claim/$submit`.
 7. **Reads the ClaimResponse** into the decision (section 5).
 8. **Saves** the request, both Bundles and the decision in `PA_PRIOR_AUTH`.
-9. **Subscribes** at the payer for decision updates, once per payer and organization (section 8).
+9. **Subscribes** at the payer for decision updates, once per payer and organization NPI (section 8). Skipped when the organization has no NPI: the background `$inquire` still finds the decision.
 
 Nothing is saved when the payer rejects the request. Fix the problem and send the same `requestId` again.
 
@@ -266,10 +293,10 @@ So for 502 the EHR should accept both bodies: look for `errors` first, then for 
 | HTTP | When |
 |---|---|
 | 201 | Accepted by the payer. The decision may be `pended` |
-| 400 | Missing field; `priority`, `requestType` or `patientType` has a wrong value; a renewal without `previousAuthorizationNumber`; negative `previousTreatments`; unknown `payerName`; an order of another patient |
-| 404 | Patient, order, organization, referring practitioner, form or document not found at the FHIR API |
+| 400 | Missing field (`orderLocationCode` and `requestingPractitionerId` included); `priority`, `requestType` or `patientType` has a wrong value; negative `previousTreatments`; unknown `payerName`; an order of another patient |
+| 404 | Patient, order, facility (`orderLocationCode`), organization, requesting or referring practitioner, form or document not found at the FHIR API |
 | 409 | `requestId` was already submitted. Use `PUT` to change it |
-| 422 | No active insurance; the organization has no NPI; or the payer rejected the request (decision body) |
+| 422 | The insurance (`coverageId`) is not found, belongs to another patient, or is not active; or the payer rejected the request (decision body) |
 | 502 | The payer or the FHIR API failed |
 | 503 | The EHR data API is not available |
 | 504 | The payer did not answer within `TIMEOUT_SECONDS` |
@@ -289,7 +316,8 @@ Content-Type: application/json
 {
   "payerName": "MockPayer",
   "patientId": "pat-1",
-  "requestingOrganizationId": "org-1",
+  "orderLocationCode": "loc-main",
+  "requestingPractitionerId": "prac-1",
   "orderIds": ["ord-1-hd", "ord-1-retacrit"],
   "priority": "routine",
   "documentIds": ["doc-1-labs"]
@@ -313,7 +341,7 @@ Content-Type: application/json
 | 400 | Invalid body; `requestId` in the body does not match the URL; `patientId` or the payer changed |
 | 404 | Unknown `requestId`; or data not found at the FHIR API |
 | 409 | The request is cancelled. Submit it again with `POST` |
-| 422 | No active insurance, no NPI, or the payer rejected the update (decision body) |
+| 422 | The insurance is not found, belongs to another patient, or is not active; no NPI; or the payer rejected the update (decision body) |
 | 502 / 503 / 504 | As for the submit |
 
 ---
@@ -526,7 +554,7 @@ Entries of a real request:
 | 2 | Patient | `pat-2` |
 | 3 | Coverage | `cov-2` |
 | 4 | Organization (the payer, `Claim.insurer`) | `payer-MockPayer` |
-| 5 | Organization (the provider) | `org-1` |
+| 5 | Organization (the provider: the facility) | `facility-loc-main` |
 | 6 | Practitioner (requesting) | `prac-3` |
 | 7 | Practitioner (referring) | `prac-4` |
 | 8 | ServiceRequest (one per order) | `ord-2-home-pd` |
@@ -544,12 +572,12 @@ Each `fullUrl` is `{FHIR API}/{type}/{id}`, for example `http://localhost:5100/f
 | | `status` = `active`, `use` = `preauthorization`, `type` = `professional` |
 | `patientId` | `Claim.patient` |
 | `payerName` | Chooses the payer to call. `Claim.insurer` = an Organization built from the patient's insurance (payer name and payer id, `Coverage.payor`); no identifier when the insurance has no payer id |
-| `requestingOrganizationId` | `Claim.provider` |
+| `orderLocationCode` (section 3) | `Claim.provider`, and the place of service of every line (`Claim.item.locationCodeableConcept`) |
 | `priority` | `Claim.priority`: `routine` = `normal`, `urgent` = `stat` |
 | coverage | `Claim.insurance[1]`, focal. The Coverage is sent as the FHIR API returns it; the gateway adds no identifier system |
 | `requestingPractitionerId` | `Claim.careTeam[1]`, role `primary` |
 | `referringPractitionerId` | `Claim.careTeam[2]`, role `other` ("Referring provider"). Left out when it is the same person as the requesting practitioner |
-| `requestType = renewal` | `Claim.related`: relationship `prior`, reference = `previousAuthorizationNumber`. Every line gets certification type `R` |
+| `requestType = renewal` | `Claim.related`: relationship `prior`, reference = `previousAuthorizationNumber` (only when given). Every line gets certification type `R` |
 | `previousServiceStart`, `previousServiceEnd`, `previousTreatments` | One `supportingInfo` text (`additionalInformation`): "Renewal of authorization PA20260706451203, previous DOS 2026-07-06 to 2026-10-04, 39 treatments." |
 | `patientType = transient` | The same `supportingInfo` text starts with "Transient patient (visiting this facility)." |
 | DTR forms | `supportingInfo` (`additionalInformation`) with a reference to the QuestionnaireResponse; linked to its order's line |
@@ -567,7 +595,7 @@ Each `fullUrl` is `{FHIR API}/{type}/{id}`, for example `http://localhost:5100/f
 | `productOrService` | The order's code |
 | `quantity` | The order's quantity |
 | `servicedPeriod` / `servicedDate` | The order's period, else its date |
-| `locationCodeableConcept` | The order's CMS place-of-service code |
+| `locationCodeableConcept` | The CMS place-of-service code of the facility of `orderLocationCode` (`Location.type`), the same on every line. Not taken from the orders. Left out when the location has none |
 | `careTeamSequence`, `diagnosisSequence`, `informationSequence` | Links to the care team, diagnoses and supporting information |
 | extension certificationType | X12 1322: `I` initial, `R` renewal, `3` cancel |
 | extension serviceItemRequestType | X12 1525: `HS` (health services review) |
@@ -601,7 +629,7 @@ The Claim of the real request (shortened):
   "patient": { "reference": "Patient/pat-2" },
   "created": "2026-10-08T19:12:01Z",
   "insurer": { "reference": "Organization/payer-MockPayer" },
-  "provider": { "reference": "Organization/org-1" },
+  "provider": { "reference": "Organization/facility-loc-main" },
   "priority": { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/processpriority", "code": "normal" } ] },
   "careTeam": [
     { "sequence": 1, "provider": { "reference": "Practitioner/prac-3" }, "role": { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/claimcareteamrole", "code": "primary", "display": "Primary provider" } ] } },
@@ -656,7 +684,7 @@ Built from the last request Bundle that was sent:
 
 Two ways, both automatic:
 
-**1. PAS Subscription (the fast way).** After every accepted submit, the gateway makes sure it has an active Subscription at the payer for the provider organization (`PA_PAYER.USE_SUBSCRIPTIONS = 1`). It sends this once per payer and organization NPI:
+**1. PAS Subscription (the fast way).** After every accepted submit, the gateway makes sure it has an active Subscription at the payer for the provider organization (`PA_PAYER.USE_SUBSCRIPTIONS = 1`). It sends this once per payer and organization NPI (no NPI = no Subscription; the background job below still runs `$inquire`):
 
 ```json
 {
@@ -691,7 +719,7 @@ The result is saved in `PA_PAYER_SUBSCRIPTION` (`active` or `error`). A refused 
 
 **2. Background job (the safety net).** `PendingRequestPoller` runs every `Workflow:PollMinutes` (5; 0 = off). For every request with status `pended` it:
 
-1. searches the payer's Tasks (information requests, see the CDex guide), once per payer and organization
+1. searches the payer's Tasks (information requests, see the CDex guide), once per payer and organization NPI (skipped for requests whose organization has no NPI)
 2. runs `$inquire` and saves the new decision in `PA_PRIOR_AUTH`
 
 One failure never stops the job.
@@ -733,7 +761,7 @@ The EHR reads the result with `GET /api/v1/pas/requests/{requestId}` or straight
 | `PA_PAYER.BASE_URL` + `FHIR_PATH` | `fhir` | Where `Claim/$submit`, `Claim/$inquire` and `Subscription` are |
 | `PA_PAYER.TIMEOUT_SECONDS` | 30 | Seconds to wait for the payer |
 | The payer id of the patient's insurance (FHIR API, `Coverage.payor.identifier`) | | The payer's id in `Claim.insurer` |
-| The member id of the patient's insurance (FHIR API, `Coverage.subscriberId`) | | The member id in the Coverage |
+| The member id of the patient's insurance (FHIR API, `Coverage.subscriberId`) | | The member id in the Coverage. Optional: sent without it when the insurance has none |
 | `PA_PAYER.USE_SUBSCRIPTIONS` | 1 | Create the PAS Subscription |
 | `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the notification URL given to the payer. The payer must be able to reach it |
 | `Workflow:ClaimIdentifierSystem` | `http://provider.example.org/fhir/sid/prior-auth-request-id` | System of `Claim.identifier` |
@@ -742,7 +770,7 @@ The EHR reads the result with `GET /api/v1/pas/requests/{requestId}` or straight
 | `Workflow:ExpeditedDecisionHours` | 72 | `decisionDueBy` for `urgent` |
 | `Workflow:StandardDecisionDays` | 7 | `decisionDueBy` for `routine` |
 
-PAS always uses FHIR R4, also for a payer with `FHIR_VERSION = R5`: the Da Vinci PAS guide exists only for R4.
+PAS uses FHIR R4, like every other step (the Da Vinci PAS guide exists only for R4).
 
 ---
 
@@ -759,7 +787,8 @@ Content-Type: application/json
   "requestId": "PA-2026-0102",
   "payerName": "MockPayer",
   "patientId": "pat-1",
-  "requestingOrganizationId": "org-1",
+  "orderLocationCode": "loc-main",
+  "requestingPractitionerId": "prac-1",
   "orderIds": ["ord-1-hd"],
   "priority": "routine",
   "documentIds": ["doc-1-note"]
@@ -778,7 +807,8 @@ Content-Type: application/json
 {
   "payerName": "MockPayer",
   "patientId": "pat-1",
-  "requestingOrganizationId": "org-1",
+  "orderLocationCode": "loc-main",
+  "requestingPractitionerId": "prac-1",
   "orderIds": ["ord-1-hd", "ord-1-retacrit"],
   "documentIds": ["doc-1-labs", "doc-1-note"]
 }

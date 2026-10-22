@@ -3,10 +3,14 @@ using System.Text.Json.Serialization;
 
 namespace PayerGatewayWebAPI.Models.Fhir;
 
+// FHIR R4 cardinality of each property: Meta (data type), https://hl7.org/fhir/R4/resource.html#Meta
+// 1..1 / 1..* = required by FHIR; 0..1 / 0..* = optional (left out when there is no data).
 /// <summary>FHIR Meta: the profiles a resource claims to follow.</summary>
 public class Meta
 {
+    // R4: Meta.profile 0..* - optional
     public List<string> Profile { get; set; } = new();
+    // R4: Meta.lastUpdated 0..1 - optional
     public string? LastUpdated { get; set; }
 
     /// <summary>
