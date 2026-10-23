@@ -156,7 +156,7 @@ public class PasService
 
         // The NPI is optional in the PAS Requestor profile (identifier:NPI 0..*, must support): it is sent when the
         // organization has one. Without it the payer cannot be asked to notify us (PAS Subscription) and cannot be
-        // searched for information requests (CDex Task?owner=NPI); the background $inquire still finds the decision.
+        // searched for information requests (CDex Task?owner=NPI); POST .../inquire (called by the client EHR) still finds the decision.
         string? organizationNpi = ReadNpi(organization);
         if (organizationNpi == null)
         {
@@ -408,7 +408,7 @@ public class PasService
             latest.DecidedAt = before.DecidedAt;
         }
 
-        // Nothing new from the payer: do not save. A pended request is inquired every few minutes; saving each time
+        // Nothing new from the payer: do not save. A pended request can be inquired many times; saving each time
         // would change UPDATED_AT of PA_PRIOR_AUTH although nothing changed (the EHR may look for changed rows by
         // that column) and would write the large Bundles again for nothing.
         if (ApiJson.Write(before) == ApiJson.Write(latest))

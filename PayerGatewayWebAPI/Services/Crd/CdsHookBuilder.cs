@@ -121,6 +121,14 @@ public class CdsHookBuilder
             values["userPractitionerId"] = userPractitionerId;
         }
 
+        // CLIENT-EHR: the gateway's own token {{coverageId}} = the coverageId of the order-sign request (the patient's
+        // active insurance). Not a CDS Hooks context field: a payer template like Coverage?_id={{coverageId}} only works
+        // with this gateway; standard payer templates use Coverage?patient={{context.patientId}}.
+        if (!string.IsNullOrWhiteSpace(request.CoverageId))
+        {
+            values["coverageId"] = request.CoverageId.Trim();
+        }
+
         // ids per resource type, comma separated: ServiceRequest -> "ord-1001,ord-1002"
         Dictionary<string, List<string>> idsByType = new Dictionary<string, List<string>>();
         foreach (JsonObject raw in orders)

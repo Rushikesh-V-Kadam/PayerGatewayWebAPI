@@ -82,18 +82,6 @@ CREATE UNIQUE INDEX UX_PA_PAYER_NAME ON PA_PAYER (UPPER(PAYER_NAME));
 -- VALUES ('MockPayer', 'Mock Da Vinci Payer', 'http://localhost:5080', 'none');
 
 -- ------------------------------------------------------------------ STEP 1: CRD (order-sign)
--- One row per order-sign event: the answer the gateway returned (a repeated eventId gets the same answer,
--- no second payer call).
-CREATE TABLE PA_CRD_EVENT (
-    EVENT_ID       VARCHAR2(100)  NOT NULL,     -- the EHR's id of the signing event
-    PATIENT_ID     VARCHAR2(64)   NOT NULL,
-    PAYER_NAME     VARCHAR2(64)   NOT NULL,
-    RESPONSE_JSON  CLOB           NOT NULL,     -- the whole order-sign response
-    CREATED_AT     TIMESTAMP      NOT NULL,     -- UTC
-    CONSTRAINT PK_PA_CRD_EVENT PRIMARY KEY (EVENT_ID),
-    CONSTRAINT CK_PA_CRD_EVENT_JSON CHECK (RESPONSE_JSON IS JSON)
-);
-
 -- Latest coverage decision per order. THE EHR ORDER SCREEN READS THIS TABLE (replaces the old write-back
 -- PUT api/orders/{orderId}/coverage-decision).
 CREATE TABLE PA_COVERAGE_DECISION (

@@ -32,7 +32,7 @@ public class CrdController : ControllerBase
     ///
     /// If the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = "unknown" and payerCall.outcome = "timeout" / "error".
     /// Orders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).
-    /// Sending the same eventId again returns the stored answer without calling the payer.
+    /// Every call asks the payer again; sending the same eventId again (for example after a timeout) gets a fresh answer.
     /// </remarks>
     /// <param name="request">Required. The signing event: eventId, payerName, patientId and orderIds must be filled.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>

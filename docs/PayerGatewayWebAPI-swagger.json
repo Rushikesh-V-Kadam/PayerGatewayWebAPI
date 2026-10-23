@@ -26,7 +26,7 @@
           {
             "name": "refresh",
             "in": "query",
-            "description": "true = search the payer's Tasks now instead of waiting for the background job.",
+            "description": "true = search the payer's Tasks now (the gateway has no background job; the client EHR calls this with refresh=true for each pended request). false = return what is stored.",
             "schema": {
               "type": "boolean",
               "default": false
@@ -251,7 +251,7 @@
           "Crd"
         ],
         "summary": "Order signed: asks the payer (CDS Hooks order-sign) and returns one coverage decision per order.",
-        "description": "The gateway reads the patient, orders and coverage from the FHIR API, calls the payer named in\npayerName, and reads pa-needed / doc-needed from the payer's answer.\n            \nWhat to do with each decision:\n- **callDtr = true** → POST /api/v1/dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.\n- **callPas = true** → POST /api/v1/pas/requests (after DTR when both are true).\n- both false → nothing more is needed for that order.\n            \nIf the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = \"unknown\" and payerCall.outcome = \"timeout\" / \"error\".\nOrders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).\nSending the same eventId again returns the stored answer without calling the payer.",
+        "description": "The gateway reads the patient, orders and coverage from the FHIR API, calls the payer named in\npayerName, and reads pa-needed / doc-needed from the payer's answer.\n            \nWhat to do with each decision:\n- **callDtr = true** → POST /api/v1/dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.\n- **callPas = true** → POST /api/v1/pas/requests (after DTR when both are true).\n- both false → nothing more is needed for that order.\n            \nIf the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = \"unknown\" and payerCall.outcome = \"timeout\" / \"error\".\nOrders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).\nEvery call asks the payer again; sending the same eventId again (for example after a timeout) gets a fresh answer.",
         "requestBody": {
           "description": "Required. The signing event: eventId, payerName, patientId and orderIds must be filled.",
           "content": {
@@ -1173,7 +1173,7 @@
           "Pas"
         ],
         "summary": "Asks the payer for the latest decision now (Claim/$inquire).",
-        "description": "The background job also does this every Workflow:PollMinutes for pended requests.",
+        "description": "The gateway has no background job: the client EHR decides when to check pended requests. For each request that is still pended in PA_PRIOR_AUTH, call this endpoint and\nGET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true (payer requests for documents).",
         "parameters": [
           {
             "name": "requestId",

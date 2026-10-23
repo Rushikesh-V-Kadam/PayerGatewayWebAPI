@@ -31,7 +31,7 @@ public class CdexController : ControllerBase
     /// For questionnaires: POST /api/v1/dtr/forms with those URLs, answer them, then send the questionnaireResponseId.
     /// </remarks>
     /// <param name="requestId">EHR prior auth request id.</param>
-    /// <param name="refresh">true = search the payer's Tasks now instead of waiting for the background job.</param>
+    /// <param name="refresh">true = search the payer's Tasks now (the gateway has no background job; the client EHR calls this with refresh=true for each pended request). false = return what is stored.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">The information requests (may be empty).</response>
     /// <response code="404">Unknown requestId.</response>

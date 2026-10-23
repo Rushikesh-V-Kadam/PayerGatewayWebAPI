@@ -34,7 +34,7 @@ The EHR sends plain JSON (ids only). The gateway reads the FHIR data, calls the 
   |                              |                                   |<-----------------------|
   |                              |  cards + systemActions (coverage-information)              |
   |                              |<-----------------------------------------------------------|
-  |                              |  save PA_CRD_EVENT, PA_COVERAGE_DECISION, PA_DTR_LINK      |
+  |                              |  save PA_COVERAGE_DECISION, PA_DTR_LINK                    |
   |  200: one decision per order |                                   |                        |
   |<-----------------------------|                                   |                        |
 ```
@@ -174,7 +174,7 @@ The gateway uses the first service whose `hook` is `order-sign`. Its `id` become
 
 | Field | Required | Meaning |
 |---|---|---|
-| `eventId` | Yes | Unique id of this signing event in the EHR. The same id sent again returns the stored answer |
+| `eventId` | Yes | Id of this signing event in the EHR. Saved with each decision as a reference. Every call asks the payer again, also with an `eventId` sent before |
 | `payerName` | Yes | Payer to ask (`PA_PAYER.PAYER_NAME`) |
 | `patientId` | Yes | EHR patient id |
 | `orderIds` | Yes, at least one | EHR order ids being signed. An order is a ServiceRequest (service order) or a MedicationRequest (medication order) at the FHIR API. Device orders are not used |
@@ -200,15 +200,14 @@ Content-Type: application/json
 
 1. **Checks the input.** All problems are returned together (400).
 2. **Finds the payer** by `payerName`.
-3. **Same `eventId` seen before?** Returns the stored answer. The payer is not called again.
-4. **Reads from the FHIR API:** `Patient/{patientId}`, the orders (`ServiceRequest?_id=...`, `MedicationRequest?_id=...`) and the insurance `Coverage/{coverageId}`.
-5. **Checks the coverage:** it must exist, belong to the patient and be active. Otherwise the payer is not called and every order gets `unknown` with the reason (see below).
-6. **Discovery:** `GET {payer}/cds-services`, kept 12 hours. Picks the `order-sign` service.
-7. **Gets a `fhirAuthorization` token** from the FHIR API (`POST /internal/access-tokens`, valid `Workflow:FhirAuthorizationMinutes`). If this fails, the hook is sent without it.
-8. **Fills the prefetch templates** and runs each query against the FHIR API. A template that cannot be filled, or a query that fails, is left out.
-9. **Calls the payer:** `POST {payer}/cds-services/{serviceId}` with timeout `CRD_TIMEOUT_SECONDS`.
-10. **Reads the answer** (section 5): `systemActions` become decisions, `cards` become messages.
-11. **Sets `callDtr` / `callPas`**, saves each decision and the whole response, and returns it.
+3. **Reads from the FHIR API:** `Patient/{patientId}`, the orders (`ServiceRequest?_id=...`, `MedicationRequest?_id=...`) and the insurance `Coverage/{coverageId}`.
+4. **Checks the coverage:** it must exist, belong to the patient and be active. Otherwise the payer is not called and every order gets `unknown` with the reason (see below).
+5. **Discovery:** `GET {payer}/cds-services`, kept 12 hours. Picks the `order-sign` service.
+6. **Gets a `fhirAuthorization` token** from the FHIR API (`POST /internal/access-tokens`, valid `Workflow:FhirAuthorizationMinutes`). If this fails, the hook is sent without it.
+7. **Fills the prefetch templates** and runs each query against the FHIR API. A template that cannot be filled, or a query that fails, is left out. Tokens: the CDS Hooks ones (`{{context.patientId}}`, `{{context.encounterId}}`, `{{context.userId}}`, `{{context.draftOrders.<Type>.id}}`) and two gateway tokens, `{{userPractitionerId}}` and `{{coverageId}}` (the `coverageId` of the request, e.g. `Coverage?_id={{coverageId}}`). The gateway tokens are not CDS Hooks standard, so only a payer set up for this gateway uses them; standard payers ask for `Coverage?patient={{context.patientId}}&status=active`, which keeps working.
+8. **Calls the payer:** `POST {payer}/cds-services/{serviceId}` with timeout `CRD_TIMEOUT_SECONDS`.
+9. **Reads the answer** (section 5): `systemActions` become decisions, `cards` become messages.
+10. **Sets `callDtr` / `callPas`**, saves each decision, and returns the response.
 
 #### What the gateway sends to the payer
 
@@ -408,7 +407,17 @@ Example when the payer times out:
 }
 ```
 
-**Important: the same `eventId` always returns the first answer.** This is also true for an `unknown` answer after a timeout. To ask the payer again, send a **new `eventId`**.
+**How to recognise a timeout.** The HTTP status is **200**, not 504. Check the body instead:
+
+- `payerCall.outcome` is `timeout`, and `payerCall.error` says how long the gateway waited (`CRD_TIMEOUT_SECONDS` of the payer, default 5 seconds).
+- Every order has `covered = "unknown"`, `priorAuthNeeded` and `documentationNeeded` are `null`, and the order has a `warning` message.
+- `callDtr` and `callPas` are `false`. **This does not mean that nothing is needed**: the payer could not be asked. Do not treat it as "no prior authorization needed".
+- The `unknown` decisions are saved in `PA_COVERAGE_DECISION` like any other decision.
+- `payerCall.serviceId` is `null` when the payer's discovery call (`GET cds-services`) timed out, before the hook was sent.
+
+The payer may still have received the hook, but its late answer is lost: the gateway stops waiting at the time limit, and CRD has no callback.
+
+**What the EHR should do.** Call order-sign again a little later (with the same or a new `eventId`). Every call asks the payer; nothing is answered from a stored copy. The new decisions replace the `unknown` ones in `PA_COVERAGE_DECISION`. If the payer still does not answer, staff can decide, or the EHR can go straight to PAS: PAS gives the payer's binding answer, and `not-required` when no authorization is needed.
 
 #### Errors
 
@@ -417,7 +426,7 @@ Example when the payer times out:
 | 400 | A required field is missing (`coverageId` and `userPractitionerId` included) or `orderIds` is empty (`details` lists each problem); unknown or disabled `payerName`; an order belongs to another patient; invalid JSON |
 | 404 | The patient is not found at the FHIR API, or none of the orders are found |
 | 502 | The FHIR API failed or timed out |
-| 503 | The EHR data API is not available (the stored answer could not be read or saved) |
+| 503 | The EHR data API is not available (the payer list could not be read, or a decision could not be saved) |
 | 500 | Unexpected error. Look up `traceId` in the log |
 
 A payer failure is **not** an HTTP error here. It returns 200 with `covered = "unknown"`, so the clinician is never blocked at signing.
@@ -494,7 +503,6 @@ All rows are in the EHR's Oracle database and are read and saved through the EHR
 | Table | Key | What |
 |---|---|---|
 | `PA_PAYER` | `PAYER_NAME` | The payers (maintained by the EHR team) |
-| `PA_CRD_EVENT` | `EVENT_ID` | The whole order-sign response of an event (`RESPONSE_JSON`). Used to answer a repeated `eventId` |
 | `PA_COVERAGE_DECISION` | `ORDER_ID` | The latest decision of an order (`DECISION_JSON` plus `COVERED`, `PRIOR_AUTH_NEEDED`, `DOCUMENTATION_NEEDED` as columns) |
 | `PA_DTR_LINK` | `LINK_ID` | One row per `smart` link given to the EHR |
 

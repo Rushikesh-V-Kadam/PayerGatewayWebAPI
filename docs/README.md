@@ -21,7 +21,7 @@ EHR's Oracle database, in tables named `PA_...`, and is read and saved through a
 | What | Where |
 | --- | --- |
 | Tables (the EHR team runs this once) | `PayerGatewayWebAPI/Database/01_create_tables.sql` (the only script; no ALTER scripts) |
-| The API the EHR team builds (19 endpoints: one row of one table each) | `docs/EHR-Data-API.md` |
+| The API the EHR team builds (17 endpoints: one row of one table each) | `docs/EHR-Data-API.md` |
 | The gateway code that calls it | `Clients/EhrDataClient.cs` and `Repositories/Database/EhrApi*Repository.cs` |
 | Settings | `Storage:Provider = EhrApi`, `Ehr:BaseUrl`, `Ehr:DataPath` |
 
@@ -29,10 +29,12 @@ EHR's Oracle database, in tables named `PA_...`, and is read and saved through a
 gateway does not send a second copy to the EHR. The `writeBack` request fields and the `EHR_SYNC_STATUS` column no
 longer exist.
 
-**Background job.** `PendingRequestPoller` still runs every `Workflow:PollMinutes`: for requests the payer has pended
-it looks for payer information requests (CDex Tasks) and asks the payer for the latest decision (`$inquire`), then
+**No background job.** The gateway does not check pended requests by itself (`PendingRequestPoller` and
+`Workflow:PollMinutes` are removed). The client EHR decides when to check: for each row with `STATUS = 'pended'` in
+`PA_PRIOR_AUTH` it calls `POST /api/v1/pas/requests/{requestId}/inquire` (latest decision) and
+`GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true` (payer requests for documents). The gateway
 saves the result in `PA_PRIOR_AUTH` - only when it is different from what is stored, so `UPDATED_AT` moves only when
-something changed. It no longer retries write-backs, because there are none.
+something changed. Payer notifications (PAS Subscription) and pushed Tasks still update the rows on their own.
 
 `Storage:Provider = InMemory` keeps everything in memory instead (lost on restart) and reads the payers from
 `appsettings.json` → `Payers`. Use it only to run the gateway without the EHR.
@@ -62,8 +64,11 @@ payer as they are. The gateway never makes up an id or a "system".
 **Orders** are service orders and medication orders (FHIR `ServiceRequest` and `MedicationRequest`). Device orders
 (`DeviceRequest`) are not read.
 
-**Which insurance is used:** the `coverageId` of the request, else the insurance on the order, else the patient's only
-active insurance. With more than one active insurance and none chosen the gateway answers 422; it does not pick one.
+**Which insurance is used:** always the `coverageId` of the request, the EHR's own id of the patient's active insurance
+(required in order-sign, DTR forms and the PAS submit; a PAS update without it keeps the insurance of the request). The
+client's orders carry no insurance, so the gateway never picks one. It reads `Coverage/{coverageId}` and checks that it
+belongs to the patient and is active: in order-sign an unusable insurance gives `unknown` decisions (the payer is not
+called), in DTR and PAS it gives 422.
 
 ## How the questionnaire is filled
 

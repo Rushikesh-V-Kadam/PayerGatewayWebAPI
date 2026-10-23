@@ -56,7 +56,7 @@ public class CdexService
 
     /// <summary>
     /// The information requests of a prior auth request. refresh = true searches the payer's Tasks now
-    /// (instead of waiting for the background poller or a push).
+    /// (the client EHR does this for pended requests; there is no background job). Otherwise only Tasks the payer pushed are known.
     /// </summary>
     public async Task<List<InformationRequest>> GetInformationRequestsAsync(string requestId, bool refresh, CancellationToken ct)
     {
@@ -369,7 +369,7 @@ public class CdexService
         if (request.Final)
         {
             // An extra step: when it fails, the attachments were still sent. The decision is then left empty in
-            // the answer and the background poller (or POST .../inquire) gets it later.
+            // the answer and the client EHR gets it later with POST /api/v1/pas/requests/{requestId}/inquire.
             summary.Decision = await _pas.TryInquireAsync(requestId, ct);
         }
         return summary;

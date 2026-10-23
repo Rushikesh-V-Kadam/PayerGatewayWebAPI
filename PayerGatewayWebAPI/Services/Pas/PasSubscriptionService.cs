@@ -14,7 +14,8 @@ namespace PayerGatewayWebAPI.Services.Pas;
 /// PAS Subscription (Subscriptions R5 Backport). A pended request can take days; instead of asking the payer again and
 /// again, the gateway subscribes once per payer + provider organization. The payer then POSTs a notification to
 /// /api/v1/pas/notifications/{payerName} when a ClaimResponse changes, and the gateway runs $inquire.
-/// If the payer refuses the subscription, the background poller still runs $inquire periodically.
+/// If the payer refuses the subscription, the decision is found when the client EHR calls POST .../inquire for its
+/// pended requests (the gateway has no background job).
 /// </summary>
 public class PasSubscriptionService
 {
@@ -37,7 +38,7 @@ public class PasSubscriptionService
     /// Creates the Subscription at the payer unless one is already active for this organization.
     /// It is called after a prior authorization request was accepted and saved, so a problem here must not turn that
     /// success into an error: a payer failure or an EHR data API failure is logged and the method returns normally.
-    /// The background poller then finds the decision with $inquire.
+    /// The decision is then found when the client EHR calls POST /api/v1/pas/requests/{requestId}/inquire.
     /// </summary>
     public async Task EnsureSubscribedAsync(PayerSettings payer, string organizationNpi, CancellationToken ct)
     {
@@ -52,7 +53,7 @@ public class PasSubscriptionService
         }
         catch (PayerException ex)
         {
-            _logger.LogWarning(ex, "PAS Subscription at {Payer} failed; the background poller will use $inquire", payer.PayerName);
+            _logger.LogWarning(ex, "PAS Subscription at {Payer} failed; decisions are found only when the client EHR calls inquire", payer.PayerName);
         }
         catch (EhrException ex)
         {
@@ -104,13 +105,13 @@ public class PasSubscriptionService
             else
             {
                 record.Status = "error";
-                _logger.LogWarning("{Payer} refused the PAS Subscription (HTTP {Status}); the background poller will use $inquire", payer.PayerName, result.StatusCode);
+                _logger.LogWarning("{Payer} refused the PAS Subscription (HTTP {Status}); decisions are found only when the client EHR calls inquire", payer.PayerName, result.StatusCode);
             }
         }
         catch (PayerException ex)
         {
             record.Status = "error";
-            _logger.LogWarning(ex, "PAS Subscription at {Payer} failed; the background poller will use $inquire", payer.PayerName);
+            _logger.LogWarning(ex, "PAS Subscription at {Payer} failed; decisions are found only when the client EHR calls inquire", payer.PayerName);
         }
         await _repository.SaveAsync(record, ct);
     }

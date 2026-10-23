@@ -132,7 +132,11 @@ public class PasController : ControllerBase
     }
 
     /// <summary>Asks the payer for the latest decision now (Claim/$inquire).</summary>
-    /// <remarks>The background job also does this every Workflow:PollMinutes for pended requests.</remarks>
+    /// <remarks>
+    /// The gateway has no background job: the client EHR decides when to check pended requests. For each request that
+    /// is still pended in PA_PRIOR_AUTH, call this endpoint and
+    /// GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true (payer requests for documents).
+    /// </remarks>
     /// <param name="requestId">EHR request id.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">The latest decision (the stored one when the payer has nothing new, or the request is cancelled).</response>

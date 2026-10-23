@@ -34,10 +34,10 @@ When order-sign says `callPas = true`, the EHR asks the payer for a prior author
   | 201: decision                |                                     |                        |
   |<-----------------------------|                                     |                        |
   |                              |                                     |                        |
-  |   later, when the request is pended:                               |                        |
+  |   later, when the request is pended (payer notification, or the EHR calls inquire):         |
   |                              |  POST /api/v1/pas/notifications/{payerName}  (from the payer) |
   |                              |<-------------------------------------------------------------|
-  |                              |  POST {payer}/fhir/Claim/$inquire   (also every PollMinutes)  |
+  |                              |  POST {payer}/fhir/Claim/$inquire                             |
   |                              |------------------------------------------------------------->|
   |                              |  save the new decision in PA_PRIOR_AUTH                      |
   | GET /api/v1/pas/requests/{id}  (or read PA_PRIOR_AUTH)             |                        |
@@ -181,7 +181,7 @@ A renewal for a transient patient:
 6. **Builds the PAS request Bundle** (section 6) and calls `POST {payer}/fhir/Claim/$submit`.
 7. **Reads the ClaimResponse** into the decision (section 5).
 8. **Saves** the request, both Bundles and the decision in `PA_PRIOR_AUTH`.
-9. **Subscribes** at the payer for decision updates, once per payer and organization NPI (section 8). Skipped when the organization has no NPI: the background `$inquire` still finds the decision.
+9. **Subscribes** at the payer for decision updates, once per payer and organization NPI (section 8). Skipped when the organization has no NPI: the EHR still gets the decision by calling inquire (section 4.5).
 
 Nothing is saved when the payer rejects the request. Fix the problem and send the same `requestId` again.
 
@@ -255,7 +255,7 @@ A pended request looks like this (example):
 }
 ```
 
-`informationRequests` is empty right after the submit. It is filled when the gateway receives the payer's Task: by the background job, by `GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true`, or when the payer pushes the Task. See `CDex-API-Guide.md`.
+`informationRequests` is empty right after the submit. It is filled when the gateway receives the payer's Task: when the EHR calls `GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true` (section 8), or when the payer pushes the Task. See `CDex-API-Guide.md`.
 
 #### When the payer rejects the request
 
@@ -380,7 +380,7 @@ Notes:
 
 ### 4.4 `GET /api/v1/pas/requests/{requestId}`: latest stored decision
 
-**Why we use it.** To show the current state without calling the payer. The background job keeps the stored decision up to date for pended requests.
+**Why we use it.** To show the current state without calling the payer. For a pended request the stored decision changes only when the payer sends a notification or the EHR calls inquire (section 8).
 
 ```http
 GET /api/v1/pas/requests/PA-ORD-2-HOME-PD-UAV6LK
@@ -400,7 +400,7 @@ The EHR can also read the same JSON straight from `PA_PRIOR_AUTH.DECISION_JSON`.
 
 ### 4.5 `POST /api/v1/pas/requests/{requestId}/inquire`: ask the payer now
 
-**Why we use it.** A pended request can take days. `Claim/$inquire` asks the payer for its latest decision. The gateway does this by itself (section 8); this endpoint is for "refresh now".
+**Why we use it.** A pended request can take days. `Claim/$inquire` asks the payer for its latest decision. The gateway has no background job: **the EHR calls this endpoint for each pended request, on its own schedule** (section 8).
 
 ```http
 POST /api/v1/pas/requests/PA-2026-0102/inquire
@@ -467,6 +467,7 @@ A failed inquiry of one request is logged and does not stop the others.
 | HTTP | When |
 |---|---|
 | 200 | Handled |
+| 400 | The body is not a valid FHIR Bundle |
 | 404 | `payerName` is not configured or not enabled |
 | 503 | The EHR data API is not available |
 
@@ -682,9 +683,9 @@ Built from the last request Bundle that was sent:
 
 ## 8. How a pended decision is followed
 
-Two ways, both automatic:
+Two ways: the payer tells the gateway (automatic), and the EHR asks (the EHR decides when).
 
-**1. PAS Subscription (the fast way).** After every accepted submit, the gateway makes sure it has an active Subscription at the payer for the provider organization (`PA_PAYER.USE_SUBSCRIPTIONS = 1`). It sends this once per payer and organization NPI (no NPI = no Subscription; the background job below still runs `$inquire`):
+**1. PAS Subscription (the fast way).** After every accepted submit, the gateway makes sure it has an active Subscription at the payer for the provider organization (`PA_PAYER.USE_SUBSCRIPTIONS = 1`). It sends this once per payer and organization NPI (no NPI = no Subscription; the EHR's own check below still finds the decision):
 
 ```json
 {
@@ -715,14 +716,16 @@ Two ways, both automatic:
 }
 ```
 
-The result is saved in `PA_PAYER_SUBSCRIPTION` (`active` or `error`). A refused Subscription never fails the submit; the background job still works.
+The result is saved in `PA_PAYER_SUBSCRIPTION` (`active` or `error`). A refused Subscription never fails the submit; the EHR's own check below still works.
 
-**2. Background job (the safety net).** `PendingRequestPoller` runs every `Workflow:PollMinutes` (5; 0 = off). For every request with status `pended` it:
+**2. The EHR checks its pended requests (the safety net).** The gateway has no background job. The EHR decides when to check, for example with a scheduled job of its own. Not every payer sends notifications and a notification can be lost, so this check is what makes sure nothing is missed:
 
-1. searches the payer's Tasks (information requests, see the CDex guide), once per payer and organization NPI (skipped for requests whose organization has no NPI)
-2. runs `$inquire` and saves the new decision in `PA_PRIOR_AUTH`
+1. Read the requests with `STATUS = 'pended'` from `PA_PRIOR_AUTH`.
+2. For each one, call `POST /api/v1/pas/requests/{requestId}/inquire` (section 4.5). The gateway asks the payer and saves the new decision in `PA_PRIOR_AUTH`.
+3. For each one, also call `GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true` (CDex guide). The gateway searches the payer's Tasks, so a payer request for more documents is found. Inquire alone does not find these. Skipped by the gateway when the request's organization has no NPI.
+4. When documents are requested, send them with CDex. When the decision is final, the request is no longer `pended` and drops out of step 1.
 
-One failure never stops the job.
+A failed call (payer down, timeout) leaves the stored decision unchanged; call it again next time. If the EHR never runs this check, a payer that sends no notification is never asked again, and a request for documents can pass its due date unseen.
 
 The EHR reads the result with `GET /api/v1/pas/requests/{requestId}` or straight from `PA_PRIOR_AUTH`. The gateway does not send a second copy to the EHR.
 
@@ -766,7 +769,6 @@ The EHR reads the result with `GET /api/v1/pas/requests/{requestId}` or straight
 | `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the notification URL given to the payer. The payer must be able to reach it |
 | `Workflow:ClaimIdentifierSystem` | `http://provider.example.org/fhir/sid/prior-auth-request-id` | System of `Claim.identifier` |
 | `Workflow:BundleIdentifierSystem` | `http://provider.example.org/fhir/sid/pas-bundle-id` | System of `Bundle.identifier` |
-| `Workflow:PollMinutes` | 5 | How often pended requests are checked. 0 = off |
 | `Workflow:ExpeditedDecisionHours` | 72 | `decisionDueBy` for `urgent` |
 | `Workflow:StandardDecisionDays` | 7 | `decisionDueBy` for `routine` |
 
@@ -836,7 +838,7 @@ If you still have the earlier PAS guide, these are the points where it no longer
 | No database of its own. All rows go through the EHR data API. A new status 503 means the EHR data API is not available | Sections 3 and 10 |
 | The payer is found by `payerName` in table `PA_PAYER`, not in `appsettings.json` (that list is used only with `Storage:Provider = InMemory`) | Section 3 |
 | No authentication on any call (gateway to payer, payer to gateway) | Section 3 |
-| The background job no longer retries write-backs. It searches Tasks and runs `$inquire` | Section 8 |
+| No background job. The EHR checks its pended requests by calling inquire and `information-requests?refresh=true` for each one. `Workflow:PollMinutes` is removed | Sections 4.5 and 8 |
 | Project and namespaces renamed to `PayerGatewayWebAPI` | Section 14 |
 
 ---
@@ -850,7 +852,6 @@ If you still have the earlier PAS guide, these are the points where it no longer
 | `Services/Pas/PasBundleBuilder.cs` | The request Bundle and the inquiry Bundle |
 | `Services/Pas/PasDecisionReader.cs` | ClaimResponse to decision |
 | `Services/Pas/PasSubscriptionService.cs` | The PAS Subscription |
-| `Background/PendingRequestPoller.cs` | The background job |
 | `Services/OrderHelper.cs` | Order checks and the coverage choice |
 | `Repositories/Database/EhrApiPriorAuthRepository.cs`, `EhrApiPayerSubscriptionRepository.cs` | `PA_PRIOR_AUTH` and `PA_PAYER_SUBSCRIPTION` through the EHR data API |
 | `Constants/PasCodes.cs`, `PasProfiles.cs`, `PasExtensions.cs`, `X12Codes.cs`, `X12ReviewActions.cs`, `DecisionStatus.cs` | Codes and URLs |

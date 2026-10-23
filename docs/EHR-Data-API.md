@@ -2,9 +2,9 @@
 
 **For the EHR team.** This is what the Payer Gateway needs from the EHR so that all prior authorization data is kept in the EHR's own Oracle database.
 
-- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (9 tables, all named `PA_...`). It is the only
+- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (8 tables, all named `PA_...`). It is the only
   script: no script has been run yet, so there are no ALTER scripts.
-- Web API to build: 19 small endpoints, described below. Each one reads or saves **one row of one table**.
+- Web API to build: 17 small endpoints, described below. Each one reads or saves **one row of one table**.
 - A working example of the whole API (in memory, for testing): `MockEhr.Api/Controllers/PriorAuthDataController.cs`.
 - Swagger file of the API (every endpoint and every property, with its meaning, column, example and required mark):
   `EHR-API-swagger.json`, next to this document. Open it in Swagger Editor or import it into Postman. The same document
@@ -57,24 +57,22 @@ All paths are under `{EHR base URL}/api/prior-auth-data`.
 | # | Method and path | Table | Used for |
 | --- | --- | --- | --- |
 | 1 | `GET payers` | `PA_PAYER` | All payers (enabled or not). Read at start-up and every few minutes. |
-| 2 | `GET crd-events/{eventId}` | `PA_CRD_EVENT` | Was this order-sign event already answered? (`404` = no) |
-| 3 | `PUT crd-events/{eventId}` | `PA_CRD_EVENT` | Save the answer of an order-sign event. |
-| 4 | `GET coverage-decisions/{orderId}` | `PA_COVERAGE_DECISION` | Latest coverage decision of an order. |
-| 5 | `PUT coverage-decisions/{orderId}` | `PA_COVERAGE_DECISION` | Save the coverage decision of an order. |
-| 6 | `GET dtr-forms/{formId}` | `PA_DTR_FORM` | One payer questionnaire and its answers. |
-| 7 | `PUT dtr-forms/{formId}` | `PA_DTR_FORM` | Save it. |
-| 8 | `GET dtr-links/{linkId}` | `PA_DTR_LINK` | One payer SMART DTR app link. |
-| 9 | `PUT dtr-links/{linkId}` | `PA_DTR_LINK` | Save it. |
-| 10 | `GET prior-auths/{requestId}` | `PA_PRIOR_AUTH` | One prior authorization request. |
-| 11 | `PUT prior-auths/{requestId}` | `PA_PRIOR_AUTH` | Save it (new request, update, cancel, new payer decision). |
-| 12 | `GET prior-auths?status=pended[&payerName=X]` | `PA_PRIOR_AUTH` | Requests still waiting for a payer. `WHERE STATUS = :status [AND UPPER(PAYER_NAME) = UPPER(:payerName)]` |
-| 13 | `GET payer-subscriptions/{payerName}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Did we already subscribe at this payer for this organization? |
-| 14 | `PUT payer-subscriptions/{payerName}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Save the subscription. |
-| 15 | `PUT cdex-tasks/{payerName}/{taskId}` | `PA_CDEX_TASK` | Save a payer information request (Task). |
-| 16 | `GET cdex-tasks?requestId=X` | `PA_CDEX_TASK` | All Tasks of one prior authorization request. |
-| 17 | `GET questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | One filled-in form in FHIR format (called by the FHIR API). |
-| 18 | `PUT questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | Save it. |
-| 19 | `GET questionnaire-responses?patientId=X` | `PA_QUESTIONNAIRE_RESPONSE` | All FHIR forms of a patient, newest first (`ORDER BY LAST_UPDATED_UTC DESC`). |
+| 2 | `GET coverage-decisions/{orderId}` | `PA_COVERAGE_DECISION` | Latest coverage decision of an order. |
+| 3 | `PUT coverage-decisions/{orderId}` | `PA_COVERAGE_DECISION` | Save the coverage decision of an order. |
+| 4 | `GET dtr-forms/{formId}` | `PA_DTR_FORM` | One payer questionnaire and its answers. |
+| 5 | `PUT dtr-forms/{formId}` | `PA_DTR_FORM` | Save it. |
+| 6 | `GET dtr-links/{linkId}` | `PA_DTR_LINK` | One payer SMART DTR app link. |
+| 7 | `PUT dtr-links/{linkId}` | `PA_DTR_LINK` | Save it. |
+| 8 | `GET prior-auths/{requestId}` | `PA_PRIOR_AUTH` | One prior authorization request. |
+| 9 | `PUT prior-auths/{requestId}` | `PA_PRIOR_AUTH` | Save it (new request, update, cancel, new payer decision). |
+| 10 | `GET prior-auths?status=pended[&payerName=X]` | `PA_PRIOR_AUTH` | Requests still waiting for a payer. `WHERE STATUS = :status [AND UPPER(PAYER_NAME) = UPPER(:payerName)]` |
+| 11 | `GET payer-subscriptions/{payerName}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Did we already subscribe at this payer for this organization? |
+| 12 | `PUT payer-subscriptions/{payerName}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Save the subscription. |
+| 13 | `PUT cdex-tasks/{payerName}/{taskId}` | `PA_CDEX_TASK` | Save a payer information request (Task). |
+| 14 | `GET cdex-tasks?requestId=X` | `PA_CDEX_TASK` | All Tasks of one prior authorization request. |
+| 15 | `GET questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | One filled-in form in FHIR format (called by the FHIR API). |
+| 16 | `PUT questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | Save it. |
+| 17 | `GET questionnaire-responses?patientId=X` | `PA_QUESTIONNAIRE_RESPONSE` | All FHIR forms of a patient, newest first (`ORDER BY LAST_UPDATED_UTC DESC`). |
 
 There is no DELETE. Nothing is removed by the gateway.
 
@@ -143,17 +141,7 @@ A row with every property:
 A new or changed payer is picked up by the gateway within `Storage:PayerCacheMinutes` (default 5 minutes); a payer name the
 gateway does not know yet is looked up again immediately.
 
-### 4.2 `PA_CRD_EVENT` (endpoints 2, 3)
-
-| Property | Type | Meaning |
-| --- | --- | --- |
-| **eventId** | text | The EHR's id of the signing event. Key. |
-| **patientId** | text | |
-| **payerName** | text | |
-| **responseJson** | JSON text | The whole answer the gateway returned for the event. |
-| **createdAt** | time | |
-
-### 4.3 `PA_COVERAGE_DECISION` (endpoints 4, 5)
+### 4.2 `PA_COVERAGE_DECISION` (endpoints 2, 3)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -178,7 +166,7 @@ gateway does not know yet is looked up again immediately.
 }
 ```
 
-### 4.4 `PA_DTR_FORM` (endpoints 6, 7)
+### 4.3 `PA_DTR_FORM` (endpoints 4, 5)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -198,7 +186,7 @@ gateway does not know yet is looked up again immediately.
 | **createdAt** | time | |
 | **updatedAt** | time | |
 
-### 4.5 `PA_DTR_LINK` (endpoints 8, 9)
+### 4.4 `PA_DTR_LINK` (endpoints 6, 7)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -212,7 +200,7 @@ gateway does not know yet is looked up again immediately.
 | **appUrl** | text | Up to 1000 characters. |
 | **expiresAt** | time | |
 
-### 4.6 `PA_PRIOR_AUTH` (endpoints 10, 11, 12)
+### 4.5 `PA_PRIOR_AUTH` (endpoints 8, 9, 10)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -253,7 +241,7 @@ gateway does not know yet is looked up again immediately.
 }
 ```
 
-### 4.7 `PA_PAYER_SUBSCRIPTION` (endpoints 13, 14)
+### 4.6 `PA_PAYER_SUBSCRIPTION` (endpoints 11, 12)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -263,7 +251,7 @@ gateway does not know yet is looked up again immediately.
 | **status** | text | `active`, `error` |
 | **createdAt** | time | |
 
-### 4.8 `PA_CDEX_TASK` (endpoints 15, 16)
+### 4.7 `PA_CDEX_TASK` (endpoints 13, 14)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -277,7 +265,7 @@ gateway does not know yet is looked up again immediately.
 | **taskJson** | JSON text | The FHIR Task as received. |
 | **receivedAt** | time | |
 
-### 4.9 `PA_QUESTIONNAIRE_RESPONSE` (endpoints 17, 18, 19; called by the FHIR API)
+### 4.8 `PA_QUESTIONNAIRE_RESPONSE` (endpoints 15, 16, 17; called by the FHIR API)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -304,10 +292,10 @@ Nothing is pushed to the EHR. The EHR screens read the tables (example SQL is at
 | What the payer still needs (documents, due date) | `PA_PRIOR_AUTH.DECISION_JSON` → `informationRequests[]` |
 | The questionnaire and the answers given | `PA_DTR_FORM` (`ANSWERS_JSON`), or `GET /api/v1/dtr/forms/{formId}` on the gateway |
 
-**Decisions that arrive later.** A payer can pend a request and decide days later. The gateway's background job (and
-the payer's notification) then updates the same `PA_PRIOR_AUTH` row. The EHR can notice this in any of three ways:
+**Decisions that arrive later.** A payer can pend a request and decide days later. The payer's notification, or the
+EHR's own call to inquire for a pended request (the gateway has no background job), then updates the same `PA_PRIOR_AUTH` row. The EHR can notice this in any of three ways:
 read the row when the screen opens; ask for rows with `UPDATED_AT > :lastCheck`; or react inside the Web API when
-endpoint 11 is called (for example, raise a task for the user when `status` changes).
+endpoint 9 is called (for example, raise a task for the user when `status` changes).
 The gateway saves a row only when something in it changed: asking a payer again and getting the same answer does not
 save, so `UPDATED_AT` of `PA_PRIOR_AUTH` and `RECEIVED_AT` of `PA_CDEX_TASK` move only when there is something new.
 
@@ -327,16 +315,17 @@ Data API calls per gateway operation (for sizing):
 
 | Gateway operation | Data API calls |
 | --- | --- |
-| Order-sign | `GET crd-events`, then `PUT coverage-decisions` per order, `PUT crd-events` (and `PUT dtr-links` for each payer app link) |
+| Order-sign | `PUT coverage-decisions` per order (and `PUT dtr-links` for each payer app link) |
 | Get a form | `PUT dtr-forms` per questionnaire |
 | Save answers | `GET dtr-forms`, `GET` + `PUT questionnaire-responses`, `PUT dtr-forms` |
 | Submit / update a request | `GET prior-auths/{id}`, `GET questionnaire-responses?patientId`, `PUT prior-auths/{id}`, `GET payer-subscriptions` (+ `PUT` the first time) |
 | Ask the payer again (inquire) | `GET prior-auths/{id}`; `PUT prior-auths/{id}` only when the decision changed |
-| Background job (every 5 minutes) | `GET prior-auths?status=pended`, then per pended request `GET prior-auths/{id}`, and per Task the payer has open `GET prior-auths/{id}` + `GET cdex-tasks?requestId`. A `PUT` (`prior-auths`, `cdex-tasks`) follows only when something changed |
+| Look for payer Tasks (`information-requests?refresh=true`, called by the EHR for a pended request) | `GET prior-auths/{id}`, then per Task the payer has open `GET prior-auths/{id}` + `GET cdex-tasks?requestId`. A `PUT` (`prior-auths`, `cdex-tasks`) follows only when something changed |
+| Payer notification | `GET prior-auths?status=pended&payerName={payer}`, then the inquire calls above per request |
 
 ## 7. Testing
 
-- The mock EHR (`MockEhr.Api`, port 5090) implements all 19 endpoints. Start it, the FHIR API and the mock
+- The mock EHR (`MockEhr.Api`, port 5090) implements all 17 endpoints. Start it, the FHIR API and the mock
   payer, set `Storage:Provider` to `EhrApi` in the gateway, and run `PayerGatewayWebAPI.http` from top to bottom.
 - To test the real API, change `Ehr:BaseUrl` and `Ehr:DataPath` in the gateway's `appsettings.json`
   (and `Ehr:BaseUrl` / `Ehr:DataPath` in the FHIR API) and run the same file.

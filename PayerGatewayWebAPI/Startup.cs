@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Formatters;
 using Microsoft.OpenApi;
-using PayerGatewayWebAPI.Background;
 using PayerGatewayWebAPI.Clients;
 using PayerGatewayWebAPI.Configuration;
 using PayerGatewayWebAPI.Constants;
@@ -102,9 +101,9 @@ public class Startup
         services.AddScoped<FacilityResolver>();
         services.AddScoped<PasService>();
         services.AddScoped<CdexService>();
-
-        // Safety net for pended requests: reads payer Tasks and inquires the payer (see PendingRequestPoller)
-        services.AddHostedService<PendingRequestPoller>();
+        // No background job: the client EHR decides when to check pended requests. For each pended request in
+        // PA_PRIOR_AUTH it calls POST /api/v1/pas/requests/{requestId}/inquire (latest decision) and
+        // GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true (payer requests for documents).
 
         // ------------------------------------------------------------ 6. MVC controllers, validation errors, exceptions
         services.AddControllers(ConfigureMvc);

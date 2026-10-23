@@ -26,7 +26,7 @@ CDex is used **only when the payer has pended a prior authorization and asks for
   |                                |                                   |                        |
   |   the PAS request is "pended"  |                                   |                        |
   |                                |  A. GET {payer}/fhir/Task?owner={organization NPI}         |
-  |                                |     (background job, or refresh=true)                      |
+  |                                |     (when the EHR calls ...?refresh=true)                  |
   |                                |----------------------------------------------------------->|
   |                                |  B. POST /api/v1/cdex/tasks/{payerName}  (payer pushes)    |
   |                                |<-----------------------------------------------------------|
@@ -316,7 +316,7 @@ The request does not have to be `pended`: the gateway sends attachments for any 
 | `messages` | Messages from the payer's `OperationOutcome` |
 | `decision` | The decision after the payer reviewed again. `null` when `final = false`, or when the inquiry after the send failed |
 
-When `decision` is `null` or still `pended`, read it later with `GET /api/v1/pas/requests/{requestId}`. The background job keeps asking the payer.
+When `decision` is `null` or still `pended`, the EHR keeps checking the request on its own schedule: `POST /api/v1/pas/requests/{requestId}/inquire` for the decision and `GET .../information-requests?refresh=true` for new Tasks (section 6). The gateway has no background job.
 
 #### When the payer rejects the attachments
 
@@ -449,11 +449,12 @@ The Task's `payer-url` input is not used. Attachments always go to the payer URL
 
 | Way | When | What happens |
 |---|---|---|
-| **Background job** | Every `Workflow:PollMinutes` (5; 0 = off), for requests with status `pended` | `GET {payer}/fhir/Task?owner={organization NPI}`, once per payer and organization. Then `$inquire` for each pended request |
-| **Refresh** | `GET .../information-requests?refresh=true` | The same Task search, now |
+| **Refresh (called by the EHR)** | The EHR calls `GET .../information-requests?refresh=true` for each request with `STATUS = 'pended'` in `PA_PRIOR_AUTH`, on its own schedule | `GET {payer}/fhir/Task?owner={organization NPI}` (skipped when the request's organization has no NPI) |
 | **Push** | The payer calls `POST /api/v1/cdex/tasks/{payerName}` | The Task is processed at once |
 
-All three save the Task in `PA_CDEX_TASK` and update `informationRequests` in `PA_PRIOR_AUTH.DECISION_JSON`. The EHR can read it there; the gateway does not send a second copy.
+The gateway has no background job. Not every payer pushes Tasks, so the EHR's refresh call is what makes sure a request for more documents is not missed. `POST /api/v1/pas/requests/{requestId}/inquire` (PAS guide) gets the decision but does not find Tasks, so the EHR calls both for each pended request.
+
+Both save the Task in `PA_CDEX_TASK` and update `informationRequests` in `PA_PRIOR_AUTH.DECISION_JSON`. The EHR can read it there; the gateway does not send a second copy.
 
 ---
 
@@ -521,7 +522,6 @@ Both are in the EHR's Oracle database, through the EHR data API (`docs/EHR-Data-
 | The payer id of the patient's insurance (FHIR API, `Coverage.payor.identifier`) | | `PayerId` |
 | The member id of the patient's insurance (FHIR API, `Coverage.subscriberId`) | | `MemberId` |
 | `Workflow:ClaimIdentifierSystem` | `http://provider.example.org/fhir/sid/prior-auth-request-id` | System of the tracking id of an unsolicited attachment |
-| `Workflow:PollMinutes` | 5 | How often the payer's Tasks are searched. 0 = off |
 | `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the push URL given to payers |
 
 CDex uses FHIR R4, like every other step.
@@ -548,7 +548,7 @@ If you still have the earlier CDex guide, these are the points where it no longe
 | No database of its own. Tasks are saved in `PA_CDEX_TASK` through the EHR data API. A new status 503 means the EHR data API is not available | Sections 3 and 8 |
 | The payer is found by name in table `PA_PAYER` | Section 9 |
 | No authentication on any call: the Task search, `$submit-attachment`, and the payer's push to `/api/v1/cdex/tasks/{payerName}` | Section 3 |
-| The background job searches Tasks and runs `$inquire`; it no longer retries write-backs | Section 6 |
+| No background job. The EHR calls `information-requests?refresh=true` (and PAS inquire) for each pended request. `Workflow:PollMinutes` is removed | Section 6 |
 | Project and namespaces renamed to `PayerGatewayWebAPI` | Section 12 |
 
 ---
@@ -561,7 +561,6 @@ If you still have the earlier CDex guide, these are the points where it no longe
 | `Services/Cdex/CdexService.cs` | Task search, pushed Tasks, `$submit-attachment` |
 | `Services/Cdex/TaskReader.cs` | Task to information request |
 | `Services/Pas/PasService.cs` | `InquireAsync` (the new decision after the send) |
-| `Background/PendingRequestPoller.cs` | The background job |
 | `Clients/FhirApiClient.cs` | `ReadDocumentWithContentAsync` (embeds the file) |
 | `Repositories/Database/EhrApiCdexTaskRepository.cs`, `EhrApiPriorAuthRepository.cs` | `PA_CDEX_TASK` and `PA_PRIOR_AUTH` through the EHR data API |
 | `Constants/CdexCodes.cs`, `PasCodes.cs`, `PasExtensions.cs` | Codes and URLs |

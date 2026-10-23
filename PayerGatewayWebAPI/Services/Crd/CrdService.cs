@@ -100,16 +100,8 @@ public class CrdService
         // ---- 1. the payer
         PayerSettings payer = await _payers.GetRequiredAsync(request.PayerName, 400, ct);
 
-        // Same eventId again -> same answer, no second payer call (the EHR may retry)
-        CrdEventRecord? previous = await _crdRepository.GetEventAsync(request.EventId, ct);
-        if (previous != null)
-        {
-            OrderSignResponse? stored = JsonSerializer.Deserialize<OrderSignResponse>(previous.ResponseJson, ApiJson.Options);
-            if (stored != null)
-            {
-                return stored;
-            }
-        }
+        // No stored answer per eventId: every call asks the payer, so a retry (also after a timeout) gets a fresh
+        // answer. eventId is only kept with each saved decision as a reference.
 
         // ---- 2. data from the FHIR API
         JsonObject? patient = await _fhir.ReadAsync("Patient", request.PatientId, ct);
@@ -170,13 +162,6 @@ public class CrdService
             record.DecisionJson = ApiJson.Write(decision);
             await _crdRepository.SaveDecisionAsync(record, ct);
         }
-
-        CrdEventRecord eventRecord = new CrdEventRecord();
-        eventRecord.EventId = request.EventId;
-        eventRecord.PatientId = request.PatientId;
-        eventRecord.PayerName = payer.PayerName;
-        eventRecord.ResponseJson = ApiJson.Write(response);
-        await _crdRepository.SaveEventAsync(eventRecord, ct);
 
         _logger.LogInformation("order-sign event {EventId} at {Payer}: {Count} decision(s)", request.EventId, payer.PayerName, response.Decisions.Count);
         return response;

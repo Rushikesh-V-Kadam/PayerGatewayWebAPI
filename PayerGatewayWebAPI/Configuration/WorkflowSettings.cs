@@ -40,9 +40,6 @@ public class WorkflowSettings
     /// <summary>Lifetime of the fhirAuthorization token given to payers during CRD, in minutes.</summary>
     public int FhirAuthorizationMinutes { get; set; } = 5;
 
-    /// <summary>How often the background job checks pended requests ($inquire + CDex Tasks), in minutes. 0 = off.</summary>
-    public int PollMinutes { get; set; } = 5;
-
     /// <summary>Decision deadline for urgent requests (CMS-0057-F: 72 hours).</summary>
     public int ExpeditedDecisionHours { get; set; } = 72;
 
