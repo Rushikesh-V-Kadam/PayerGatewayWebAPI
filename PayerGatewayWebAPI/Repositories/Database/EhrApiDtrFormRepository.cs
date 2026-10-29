@@ -41,7 +41,7 @@ public class EhrApiDtrFormRepository : IDtrFormRepository
     {
         DtrFormRow row = new DtrFormRow();
         row.FormId = record.FormId;
-        row.PiInsurancePlanId = record.PiInsurancePlanId;
+        row.InsurancePlanId = record.InsurancePlanId;
         row.PatientId = record.PatientId;
         row.CoverageId = record.CoverageId;
         row.OrderIdsJson = ApiJson.Write(record.OrderIds);
@@ -63,7 +63,7 @@ public class EhrApiDtrFormRepository : IDtrFormRepository
     {
         DtrFormRecord record = new DtrFormRecord();
         record.FormId = row.FormId;
-        record.PiInsurancePlanId = row.PiInsurancePlanId;
+        record.InsurancePlanId = row.InsurancePlanId;
         record.PatientId = row.PatientId;
         record.CoverageId = row.CoverageId;
         record.OrderIds = ApiJson.Read<List<string>>(row.OrderIdsJson);

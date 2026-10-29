@@ -7,20 +7,14 @@
 //   STEP 3  PAS   prior authorization request      -> the payer's decision
 //   STEP 4  CDex  attachments                      -> extra documents when the payer pends the request
 //
-// The EHR sends piInsurancePlanId; the gateway reads that payer's configuration (table PA_PAYER) and calls it.
+// The EHR sends insurancePlanId; the gateway reads that payer's configuration (table PA_PAYER) and calls it.
 // All gateway data lives in the EHR's Oracle database and is read / saved through the EHR data API (docs/EHR-Data-API.md).
 // Controllers only (no minimal API endpoints). Registrations are in Startup.cs.
 // =====================================================================================================
 
 using PayerGatewayWebAPI;
-using PayerGatewayWebAPI.EncryptedConfiguration;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-
-// Load the encrypted configuration, the same way as FHIRRestAPI (ConfigureAppConfiguration -> config.Add(...)).
-// It is added after appsettings.json and the environment variables, so its values win.
-// (ConfigurationManager has Add only as an explicit interface method, so the source is added to Sources.)
-builder.Configuration.Sources.Add(new EncryptedConfigurationProvider());
 
 Startup startup = new Startup(builder.Configuration);
 startup.ConfigureServices(builder.Services);

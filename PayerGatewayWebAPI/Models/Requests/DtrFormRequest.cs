@@ -8,10 +8,10 @@ namespace PayerGatewayWebAPI.Models.Requests;
 /// </summary>
 public class DtrFormRequest
 {
-    /// <summary>Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.</summary>
+    /// <summary>Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.</summary>
     /// <example>1001</example>
     [Required]
-    public int? PiInsurancePlanId { get; set; }
+    public int? InsurancePlanId { get; set; }
 
     /// <summary>EHR patient id.</summary>
     /// <example>pat-1</example>

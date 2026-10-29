@@ -126,7 +126,7 @@ public static class PasDecisionReader
     {
         PriorAuthDecision decision = new PriorAuthDecision();
         decision.RequestId = record.RequestId;
-        decision.PiInsurancePlanId = record.PiInsurancePlanId;
+        decision.InsurancePlanId = record.InsurancePlanId;
         decision.PatientId = record.PatientId;
         decision.OrderIds = new List<string>(record.OrderIds);
         decision.InformationRequests = record.Decision.InformationRequests;   // kept up to date by CdexService
@@ -179,17 +179,17 @@ public static class PasDecisionReader
     }
 
     /// <summary>Decision for a request the payer rejected (HTTP 4xx with an OperationOutcome, or no ClaimResponse).</summary>
-    public static PriorAuthDecision Rejected(string requestId, int piInsurancePlanId, string patientId, List<string> orderIds, PayerCallResult result)
+    public static PriorAuthDecision Rejected(string requestId, int insurancePlanId, string patientId, List<string> orderIds, PayerCallResult result)
     {
-        return Refused(requestId, piInsurancePlanId, patientId, orderIds, result.Messages());
+        return Refused(requestId, insurancePlanId, patientId, orderIds, result.Messages());
     }
 
     /// <summary>Decision for a request the payer did not take, with the payer's error texts.</summary>
-    public static PriorAuthDecision Refused(string requestId, int piInsurancePlanId, string patientId, List<string> orderIds, List<string> errors)
+    public static PriorAuthDecision Refused(string requestId, int insurancePlanId, string patientId, List<string> orderIds, List<string> errors)
     {
         PriorAuthDecision decision = new PriorAuthDecision();
         decision.RequestId = requestId;
-        decision.PiInsurancePlanId = piInsurancePlanId;
+        decision.InsurancePlanId = insurancePlanId;
         decision.PatientId = patientId;
         decision.OrderIds = orderIds;
         decision.OverallStatus = DecisionStatus.Error;

@@ -9,8 +9,8 @@ public class PriorAuthRow
 {
     /// <summary>Column REQUEST_ID (key).</summary>
     public string RequestId { get; set; } = string.Empty;
-    /// <summary>Column PI_INSURANCE_PLAN_ID: insurance plan id of the payer.</summary>
-    public int PiInsurancePlanId { get; set; }
+    /// <summary>Column INSURANCE_PLAN_ID: insurance plan id of the payer.</summary>
+    public int InsurancePlanId { get; set; }
     /// <summary>Column PATIENT_ID.</summary>
     public string PatientId { get; set; } = string.Empty;
     /// <summary>Column COVERAGE_ID.</summary>

@@ -6,7 +6,7 @@ namespace PayerGatewayWebAPI.Repositories.Interfaces;
 public interface IPayerSubscriptionRepository
 {
     /// <summary>The subscription for a payer (insurance plan id) + organization NPI, or null.</summary>
-    Task<PayerSubscriptionRecord?> GetAsync(int piInsurancePlanId, string organizationNpi, CancellationToken ct);
+    Task<PayerSubscriptionRecord?> GetAsync(int insurancePlanId, string organizationNpi, CancellationToken ct);
 
     /// <summary>Inserts or updates the subscription.</summary>
     Task SaveAsync(PayerSubscriptionRecord record, CancellationToken ct);

@@ -19,7 +19,7 @@ The EHR sends plain JSON (ids only). The gateway reads the FHIR data, calls the 
  EHR                      Payer Gateway (5200)                 FHIR API (5100)              Payer
   |                              |                                   |                        |
   |  POST /crd/order-sign        |                                   |                        |
-  |  (eventId, piInsurancePlanId,|                                   |                        |
+  |  (eventId, insurancePlanId,|                                   |                        |
   |   patientId, orderIds)       |                                   |                        |
   |----------------------------->|  read payer (GET payers/{id})     |                        |
   |                              |  read Patient, orders, Coverage   |                        |
@@ -34,7 +34,7 @@ The EHR sends plain JSON (ids only). The gateway reads the FHIR data, calls the 
   |                              |                                   |<-----------------------|
   |                              |  cards + systemActions (coverage-information)              |
   |                              |<-----------------------------------------------------------|
-  |                              |  save PA_COVERAGE_DECISION, PA_DTR_LINK                    |
+  |                              |  save PA_DTR_LINK (payer app links only)                   |
   |  200: one decision per order |                                   |                        |
   |<-----------------------------|                                   |                        |
 ```
@@ -47,16 +47,19 @@ What the EHR does with the answer:
 | `callPas = true` | Submit the prior authorization: see the PAS guide (after DTR when both are `true`) |
 | both `false` | Nothing more for this order |
 
+**The EHR stores the response.** The gateway does not save the decisions (CLIENT-EHR: the EHR keeps the order-sign
+response on its side). DTR and PAS do not read them back: keep `insurancePlanId`, `coverageId`, `callDtr`, `callPas`,
+`questionnaireUrls` and `coverageAssertionId` of each decision and send them in the DTR and PAS requests.
+
 ---
 
 ## 2. Endpoints at a glance
 
 | # | Endpoint | In one sentence | Called by |
 |---|---|---|---|
-| 0a | `GET /payers/{piInsurancePlanId}` | Shows the payer configuration of one insurance plan id | EHR / support |
-| 0b | `POST /payers/{piInsurancePlanId}/discover` | Tests a payer connection (CDS Hooks discovery) | Support / onboarding |
+| 0a | `GET /payers/{insurancePlanId}` | Shows the payer configuration of one insurance plan id | EHR / support |
+| 0b | `POST /payers/{insurancePlanId}/discover` | Tests a payer connection (CDS Hooks discovery) | Support / onboarding |
 | 1 | `POST /crd/order-sign` | Asks the payer about the signed orders and returns one decision per order | EHR |
-| 2 | `GET /crd/decisions/{orderId}` | Returns the latest stored decision of an order (no payer call) | EHR |
 
 ---
 
@@ -64,13 +67,13 @@ What the EHR does with the answer:
 
 - **Base URL:** `http://localhost:5200` locally (`Urls` in `appsettings.json`).
 - **Format:** `Content-Type: application/json`, property names in camelCase.
-- **Payer:** every request carries `piInsurancePlanId` (a whole number): the EHR's insurance plan id of the patient's insurance (`PA_PAYER.PI_INSURANCE_PLAN_ID`). The gateway reads that payer's configuration, and the payer must be enabled.
+- **Payer:** every request carries `insurancePlanId` (a whole number): the EHR's insurance plan id of the patient's insurance (`PA_PAYER.INSURANCE_PLAN_ID`). The gateway reads that payer's configuration, and the payer must be enabled.
 - **Authentication:** none is built in. It is added outside this code.
 - **Errors:** every error has the same body.
 
 ```json
 {
-  "error": "No payer is configured or enabled for piInsurancePlanId 9999.",
+  "error": "No payer is configured or enabled for insurancePlanId 9999.",
   "details": [],
   "traceId": "0HN6Q2L3J7K1B:00000001"
 }
@@ -82,9 +85,9 @@ What the EHR does with the answer:
 
 ## 4. Endpoints
 
-### 4.1 `GET /payers/{piInsurancePlanId}`: the payer of an insurance plan id
+### 4.1 `GET /payers/{insurancePlanId}`: the payer of an insurance plan id
 
-**Why we use it.** Every request names the payer by `piInsurancePlanId`. This call shows the configuration the gateway reads for one id (there is no payer list), with its DTR mode.
+**Why we use it.** Every request names the payer by `insurancePlanId`. This call shows the configuration the gateway reads for one id (there is no payer list), with its DTR mode.
 
 **Request**
 
@@ -96,7 +99,7 @@ GET /payers/1001
 
 ```json
 {
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "payerName": "MockPayer",
   "enabled": true,
   "baseUrl": "http://localhost:5080",
@@ -106,12 +109,12 @@ GET /payers/1001
 
 | Field | Meaning |
 |---|---|
-| `piInsurancePlanId` | The EHR's insurance plan id of this payer (`PA_PAYER.PI_INSURANCE_PLAN_ID`): the value to send as `piInsurancePlanId` in every other request |
+| `insurancePlanId` | The EHR's insurance plan id of this payer (`PA_PAYER.INSURANCE_PLAN_ID`): the value to send as `insurancePlanId` in every other request |
 | `payerName` | Name of the payer, shown in messages |
 | `enabled` | `false` = the payer is configured but switched off; requests for it get "not configured or enabled" |
 | `dtrMode` | `Forms` = questionnaire through the gateway forms. `SmartApp` = the payer's own SMART DTR app |
 
-The payer comes from table `PA_PAYER` through the EHR data API (`GET payers/{piInsurancePlanId}`). It is kept for `Storage:PayerCacheMinutes` (5 minutes). An id without a payer is asked again at the next request, so a new payer row works without a restart.
+The payer comes from table `PA_PAYER` through the EHR data API (`GET payers/{insurancePlanId}`). It is kept for `Storage:PayerCacheMinutes` (5 minutes). An id without a payer is asked again at the next request, so a new payer row works without a restart.
 
 | HTTP | When |
 |---|---|
@@ -120,7 +123,7 @@ The payer comes from table `PA_PAYER` through the EHR data API (`GET payers/{piI
 
 ---
 
-### 4.2 `POST /payers/{piInsurancePlanId}/discover`: test a payer connection
+### 4.2 `POST /payers/{insurancePlanId}/discover`: test a payer connection
 
 **Why we use it.** CDS Hooks says every payer publishes its services at `{payer}/cds-services`. This call reads that list, so you can check that a new payer answers and that it has an `order-sign` service. It also refreshes the gateway's 12-hour discovery cache.
 
@@ -174,7 +177,7 @@ The gateway uses the first service whose `hook` is `order-sign`. Its `id` become
 | Field | Required | Meaning |
 |---|---|---|
 | `eventId` | Yes | Id of this signing event in the EHR. Saved with each decision as a reference. Every call asks the payer again, also with an `eventId` sent before |
-| `piInsurancePlanId` | Yes | Whole number. The EHR's insurance plan id of the patient's insurance (`PA_PAYER.PI_INSURANCE_PLAN_ID`): the payer to ask |
+| `insurancePlanId` | Yes | Whole number. The EHR's insurance plan id of the patient's insurance (`PA_PAYER.INSURANCE_PLAN_ID`): the payer to ask |
 | `patientId` | Yes | EHR patient id |
 | `orderIds` | Yes, at least one | EHR order ids being signed. An order is a ServiceRequest (service order) or a MedicationRequest (medication order) at the FHIR API. Device orders are not used |
 | `coverageId` | Yes | The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it with `GET Coverage/{coverageId}` at the FHIR API. The orders carry no insurance |
@@ -187,7 +190,7 @@ Content-Type: application/json
 
 {
   "eventId": "evt-ord-2-home-pd-wcbp0q",
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "patientId": "pat-2",
   "orderIds": ["ord-2-home-pd"],
   "encounterId": "enc-2",
@@ -198,7 +201,7 @@ Content-Type: application/json
 #### What the gateway does
 
 1. **Checks the input.** All problems are returned together (400).
-2. **Reads the payer configuration** of `piInsurancePlanId`.
+2. **Reads the payer configuration** of `insurancePlanId`.
 3. **Reads from the FHIR API:** `Patient/{patientId}`, the orders (`ServiceRequest?_id=...`, `MedicationRequest?_id=...`) and the insurance `Coverage/{coverageId}`.
 4. **Checks the coverage:** it must exist, belong to the patient and be active. Otherwise the payer is not called and every order gets `unknown` with the reason (see below).
 5. **Discovery:** `GET {payer}/cds-services`, kept 12 hours. Picks the `order-sign` service.
@@ -250,11 +253,11 @@ This example is a real answer from the mock payer.
 ```json
 {
   "eventId": "evt-ord-2-home-pd-wcbp0q",
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "decisions": [
     {
       "orderId": "ord-2-home-pd",
-      "piInsurancePlanId": 1001,
+      "insurancePlanId": 1001,
       "coverageId": "cov-2",
       "covered": "covered",
       "priorAuthNeeded": "auth-needed",
@@ -295,7 +298,7 @@ This example is a real answer from the mock payer.
   ],
   "messages": [],
   "payerCall": {
-    "piInsurancePlanId": 1001,
+    "insurancePlanId": 1001,
     "payerName": "MockPayer",
     "serviceId": "crd-order-sign",
     "outcome": "ok",
@@ -369,11 +372,11 @@ Example when the payer times out:
 ```json
 {
   "eventId": "evt-ord-1-hd-0001",
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "decisions": [
     {
       "orderId": "ord-1-hd",
-      "piInsurancePlanId": 1001,
+      "insurancePlanId": 1001,
       "coverageId": "cov-1",
       "covered": "unknown",
       "priorAuthNeeded": null,
@@ -398,7 +401,7 @@ Example when the payer times out:
   ],
   "messages": [],
   "payerCall": {
-    "piInsurancePlanId": 1001,
+    "insurancePlanId": 1001,
     "payerName": "MockPayer",
     "serviceId": "crd-order-sign",
     "outcome": "timeout",
@@ -413,46 +416,23 @@ Example when the payer times out:
 - `payerCall.outcome` is `timeout`, and `payerCall.error` says how long the gateway waited (`CRD_TIMEOUT_SECONDS` of the payer, default 5 seconds).
 - Every order has `covered = "unknown"`, `priorAuthNeeded` and `documentationNeeded` are `null`, and the order has a `warning` message.
 - `callDtr` and `callPas` are `false`. **This does not mean that nothing is needed**: the payer could not be asked. Do not treat it as "no prior authorization needed".
-- The `unknown` decisions are saved in `PA_COVERAGE_DECISION` like any other decision.
 - `payerCall.serviceId` is `null` when the payer's discovery call (`GET cds-services`) timed out, before the hook was sent.
 
 The payer may still have received the hook, but its late answer is lost: the gateway stops waiting at the time limit, and CRD has no callback.
 
-**What the EHR should do.** Call order-sign again a little later (with the same or a new `eventId`). Every call asks the payer; nothing is answered from a stored copy. The new decisions replace the `unknown` ones in `PA_COVERAGE_DECISION`. If the payer still does not answer, staff can decide, or the EHR can go straight to PAS: PAS gives the payer's binding answer, and `not-required` when no authorization is needed.
+**What the EHR should do.** Call order-sign again a little later (with the same or a new `eventId`). Every call asks the payer; nothing is answered from a stored copy. The EHR replaces the `unknown` decisions it stored with the new ones. If the payer still does not answer, staff can decide, or the EHR can go straight to PAS: PAS gives the payer's binding answer, and `not-required` when no authorization is needed.
 
 #### Errors
 
 | HTTP | When |
 |---|---|
-| 400 | A required field is missing (`coverageId` and `userPractitionerId` included) or `orderIds` is empty (`details` lists each problem); unknown or disabled `piInsurancePlanId`; an order belongs to another patient; invalid JSON |
+| 400 | A required field is missing (`coverageId` and `userPractitionerId` included) or `orderIds` is empty (`details` lists each problem); unknown or disabled `insurancePlanId`; an order belongs to another patient; invalid JSON |
 | 404 | The patient is not found at the FHIR API, or none of the orders are found |
 | 502 | The FHIR API failed or timed out |
-| 503 | The EHR data API is not available (the payer list could not be read, or a decision could not be saved) |
+| 503 | The EHR data API is not available (the payer could not be read, or a payer app link could not be saved) |
 | 500 | Unexpected error. Look up `traceId` in the log |
 
 A payer failure is **not** an HTTP error here. It returns 200 with `covered = "unknown"`, so the clinician is never blocked at signing.
-
----
-
-### 4.4 `GET /crd/decisions/{orderId}`: latest decision of an order
-
-**Why we use it.** The EHR can read the decision again later (for example when the user opens the order) without calling the payer.
-
-**Request**
-
-```http
-GET /crd/decisions/ord-2-home-pd
-```
-
-**Response 200:** one decision, the same structure as one entry of `decisions` in section 4.3.
-
-Only the latest decision of an order is kept. A new order-sign for the same order replaces it.
-
-| HTTP | When |
-|---|---|
-| 200 | The stored decision |
-| 404 | No order-sign was run for this order |
-| 503 | The EHR data API is not available |
 
 ---
 
@@ -503,11 +483,10 @@ All rows are in the EHR's Oracle database and are read and saved through the EHR
 
 | Table | Key | What |
 |---|---|---|
-| `PA_PAYER` | `PAYER_NAME` | The payers (maintained by the EHR team) |
-| `PA_COVERAGE_DECISION` | `ORDER_ID` | The latest decision of an order (`DECISION_JSON` plus `COVERED`, `PRIOR_AUTH_NEEDED`, `DOCUMENTATION_NEEDED` as columns) |
+| `PA_PAYER` | `INSURANCE_PLAN_ID` | The payers (maintained by the EHR team) |
 | `PA_DTR_LINK` | `LINK_ID` | One row per `smart` link given to the EHR |
 
-The EHR can read the decision straight from `PA_COVERAGE_DECISION`. The gateway does not send a second copy to the EHR.
+The decisions themselves are not stored by the gateway: the EHR stores the order-sign response on its side.
 
 ---
 
@@ -545,15 +524,12 @@ Content-Type: application/json
 
 {
   "eventId": "evt-ord-1-hd-0001",
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "encounterId": "enc-1",
   "userPractitionerId": "prac-1"
 }
-
-### read the decision again
-GET http://localhost:5200/crd/decisions/ord-1-hd
 ```
 
 Note: the examples in Swagger and in `PayerGatewayWebAPI.http` use `pat-1001`, `ord-1001`, `prac-2001`. Those ids are not in the mock EHR data. Use `pat-1`, `ord-1-hd`, `prac-1` and so on.
@@ -564,8 +540,8 @@ Note: the examples in Swagger and in `PayerGatewayWebAPI.http` use `pat-1001`, `
 
 | File | What it does |
 |---|---|
-| `Controllers/PayersController.cs` | `GET /payers/{piInsurancePlanId}`, `POST .../discover` |
-| `Controllers/CrdController.cs` | `POST /crd/order-sign`, `GET /crd/decisions/{orderId}` |
+| `Controllers/PayersController.cs` | `GET /payers/{insurancePlanId}`, `POST .../discover` |
+| `Controllers/CrdController.cs` | `POST /crd/order-sign` |
 | `Services/Crd/CrdService.cs` | The whole order-sign flow |
 | `Services/Crd/CdsHookBuilder.cs` | Builds `context` and `prefetch` |
 | `Services/Crd/CoverageDecisionReader.cs` | Reads coverage-information, sets `callDtr` / `callPas` |

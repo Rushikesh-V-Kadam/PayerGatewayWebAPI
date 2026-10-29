@@ -8,8 +8,8 @@ using PayerGatewayWebAPI.Repositories.Interfaces;
 namespace PayerGatewayWebAPI.Services.Payers;
 
 /// <summary>
-/// Finds the payer of a request. The EHR sends piInsurancePlanId in each request and the gateway reads that one
-/// payer's configuration (IPayerRepository: GET payers/{piInsurancePlanId} on the EHR data API). There is no payer list.
+/// Finds the payer of a request. The EHR sends insurancePlanId in each request and the gateway reads that one
+/// payer's configuration (IPayerRepository: GET payers/{insurancePlanId} on the EHR data API). There is no payer list.
 ///
 /// A payer that was read is kept for Storage:PayerCacheMinutes and then read again, so a change by the EHR team is
 /// used after a few minutes without a restart. An insurance plan id without a payer is not kept: it is asked again
@@ -42,19 +42,19 @@ public class PayerRegistry
     /// The payer of this insurance plan id, enabled or not, with its defaults filled in. Null when there is no such
     /// payer, or when its configuration cannot be used (the reason is written to the log).
     /// </summary>
-    public async Task<PayerSettings?> GetAsync(int piInsurancePlanId, CancellationToken ct)
+    public async Task<PayerSettings?> GetAsync(int insurancePlanId, CancellationToken ct)
     {
         CachedPayer? cached;
-        if (_payers.TryGetValue(piInsurancePlanId, out cached) && cached.Expires > DateTime.UtcNow)
+        if (_payers.TryGetValue(insurancePlanId, out cached) && cached.Expires > DateTime.UtcNow)
         {
             return cached.Payer;
         }
 
-        PayerSettings? payer = await _repository.GetByPiInsurancePlanIdAsync(piInsurancePlanId, ct);
+        PayerSettings? payer = await _repository.GetByInsurancePlanIdAsync(insurancePlanId, ct);
         if (payer == null)
         {
             CachedPayer? removed;
-            _payers.TryRemove(piInsurancePlanId, out removed);
+            _payers.TryRemove(insurancePlanId, out removed);
             return null;
         }
 
@@ -62,10 +62,10 @@ public class PayerRegistry
         string? problem = payer.GetProblem();
         if (problem != null)
         {
-            _logger.LogWarning("Payer of piInsurancePlanId {PiInsurancePlanId} ('{Payer}') is not used: {Problem}. Correct the row in table PA_PAYER.",
-                piInsurancePlanId, payer.PayerName, problem);
+            _logger.LogWarning("Payer of insurancePlanId {InsurancePlanId} ('{Payer}') is not used: {Problem}. Correct the row in table PA_PAYER.",
+                insurancePlanId, payer.PayerName, problem);
             CachedPayer? removed;
-            _payers.TryRemove(piInsurancePlanId, out removed);
+            _payers.TryRemove(insurancePlanId, out removed);
             return null;
         }
 
@@ -74,19 +74,19 @@ public class PayerRegistry
             CachedPayer entry = new CachedPayer();
             entry.Payer = payer;
             entry.Expires = DateTime.UtcNow.AddMinutes(_cacheMinutes);
-            _payers[piInsurancePlanId] = entry;
+            _payers[insurancePlanId] = entry;
         }
         return payer;
     }
 
     /// <summary>The enabled payer of this insurance plan id, or null (no id, no such payer, or switched off).</summary>
-    public async Task<PayerSettings?> FindAsync(int? piInsurancePlanId, CancellationToken ct)
+    public async Task<PayerSettings?> FindAsync(int? insurancePlanId, CancellationToken ct)
     {
-        if (piInsurancePlanId == null || piInsurancePlanId.Value <= 0)
+        if (insurancePlanId == null || insurancePlanId.Value <= 0)
         {
             return null;
         }
-        PayerSettings? payer = await GetAsync(piInsurancePlanId.Value, ct);
+        PayerSettings? payer = await GetAsync(insurancePlanId.Value, ct);
         if (payer == null || !payer.Enabled)
         {
             return null;
@@ -99,16 +99,16 @@ public class PayerRegistry
     /// not configured or switched off (400 when the id came in a request body, 404 when it came in the URL,
     /// 422 when it came from a saved row).
     /// </summary>
-    public async Task<PayerSettings> GetRequiredAsync(int? piInsurancePlanId, int statusCode, CancellationToken ct)
+    public async Task<PayerSettings> GetRequiredAsync(int? insurancePlanId, int statusCode, CancellationToken ct)
     {
-        if (piInsurancePlanId == null || piInsurancePlanId.Value <= 0)
+        if (insurancePlanId == null || insurancePlanId.Value <= 0)
         {
-            throw new ApiException(400, "piInsurancePlanId is required (a whole number above 0).");
+            throw new ApiException(400, "insurancePlanId is required (a whole number above 0).");
         }
-        PayerSettings? payer = await FindAsync(piInsurancePlanId, ct);
+        PayerSettings? payer = await FindAsync(insurancePlanId, ct);
         if (payer == null)
         {
-            throw new ApiException(statusCode, "No payer is configured or enabled for piInsurancePlanId " + piInsurancePlanId.Value + ".");
+            throw new ApiException(statusCode, "No payer is configured or enabled for insurancePlanId " + insurancePlanId.Value + ".");
         }
         return payer;
     }
@@ -151,6 +151,6 @@ public class PayerRegistry
     /// </summary>
     private static string DiscoveryKey(PayerSettings payer)
     {
-        return payer.PiInsurancePlanId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + payer.GetCdsServicesUrl();
+        return payer.InsurancePlanId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + payer.GetCdsServicesUrl();
     }
 }

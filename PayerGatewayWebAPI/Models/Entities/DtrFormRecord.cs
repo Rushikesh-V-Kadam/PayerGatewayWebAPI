@@ -11,7 +11,7 @@ public class DtrFormRecord
     /// <summary>Form id created by the gateway (key), e.g. "frm-235b7ad69e85".</summary>
     public string FormId { get; set; } = string.Empty;
     /// <summary>Insurance plan id of the payer the questionnaire came from.</summary>
-    public int PiInsurancePlanId { get; set; }
+    public int InsurancePlanId { get; set; }
     /// <summary>EHR patient id.</summary>
     public string PatientId { get; set; } = string.Empty;
     /// <summary>Insurance the form is for.</summary>

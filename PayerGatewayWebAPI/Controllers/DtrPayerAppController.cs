@@ -64,44 +64,44 @@ public class DtrPayerAppController : ControllerBase
     /// <remarks>
     /// Only needed when a DTR app calls the payer through the gateway (most payer apps call their own payer directly).
     /// </remarks>
-    /// <param name="piInsurancePlanId">The EHR's insurance plan id of the payer.</param>
+    /// <param name="insurancePlanId">The EHR's insurance plan id of the payer.</param>
     /// <param name="body">Required. FHIR Parameters from the DTR app.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">The payer's FHIR answer (the payer's own status code is passed through).</response>
     /// <response code="404">No payer is configured or enabled for this insurance plan id.</response>
     /// <response code="502">The payer could not be reached.</response>
     /// <response code="504">The payer did not answer in time.</response>
-    [HttpPost("{piInsurancePlanId:int}/Questionnaire/$questionnaire-package")]
+    [HttpPost("{insurancePlanId:int}/Questionnaire/$questionnaire-package")]
     [Consumes(ApiHeaders.FhirJson, ApiHeaders.Json)]
     [Produces(ApiHeaders.FhirJson)]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status502BadGateway)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status504GatewayTimeout)]
-    public async Task<IActionResult> RelayQuestionnairePackage(int piInsurancePlanId, [FromBody, Required] JsonObject body, CancellationToken ct)
+    public async Task<IActionResult> RelayQuestionnairePackage(int insurancePlanId, [FromBody, Required] JsonObject body, CancellationToken ct)
     {
-        PayerCallResult result = await _dtr.RelayToPayerAsync(piInsurancePlanId, DtrCodes.QuestionnairePackage, body, ct);
+        PayerCallResult result = await _dtr.RelayToPayerAsync(insurancePlanId, DtrCodes.QuestionnairePackage, body, ct);
         return FhirResult(result);
     }
 
     /// <summary>For payer SMART DTR apps: adaptive forms, $next-question passed to the payer unchanged.</summary>
-    /// <param name="piInsurancePlanId">The EHR's insurance plan id of the payer.</param>
+    /// <param name="insurancePlanId">The EHR's insurance plan id of the payer.</param>
     /// <param name="body">Required. FHIR Parameters / QuestionnaireResponse from the DTR app.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">The payer's FHIR answer (the payer's own status code is passed through).</response>
     /// <response code="404">No payer is configured or enabled for this insurance plan id.</response>
     /// <response code="502">The payer could not be reached.</response>
     /// <response code="504">The payer did not answer in time.</response>
-    [HttpPost("{piInsurancePlanId:int}/Questionnaire/$next-question")]
+    [HttpPost("{insurancePlanId:int}/Questionnaire/$next-question")]
     [Consumes(ApiHeaders.FhirJson, ApiHeaders.Json)]
     [Produces(ApiHeaders.FhirJson)]
     [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status502BadGateway)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status504GatewayTimeout)]
-    public async Task<IActionResult> RelayNextQuestion(int piInsurancePlanId, [FromBody, Required] JsonObject body, CancellationToken ct)
+    public async Task<IActionResult> RelayNextQuestion(int insurancePlanId, [FromBody, Required] JsonObject body, CancellationToken ct)
     {
-        PayerCallResult result = await _dtr.RelayToPayerAsync(piInsurancePlanId, DtrCodes.NextQuestion, body, ct);
+        PayerCallResult result = await _dtr.RelayToPayerAsync(insurancePlanId, DtrCodes.NextQuestion, body, ct);
         return FhirResult(result);
     }
 

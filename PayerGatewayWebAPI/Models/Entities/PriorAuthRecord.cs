@@ -9,7 +9,7 @@ public class PriorAuthRecord
     /// <summary>The EHR's request id (key).</summary>
     public string RequestId { get; set; } = string.Empty;
     /// <summary>Insurance plan id of the payer the request was sent to.</summary>
-    public int PiInsurancePlanId { get; set; }
+    public int InsurancePlanId { get; set; }
     /// <summary>EHR patient id.</summary>
     public string PatientId { get; set; } = string.Empty;
     /// <summary>Insurance used for the request.</summary>

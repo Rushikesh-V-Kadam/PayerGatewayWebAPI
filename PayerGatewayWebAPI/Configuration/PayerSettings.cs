@@ -1,16 +1,16 @@
 namespace PayerGatewayWebAPI.Configuration;
 
 /// <summary>
-/// One connected payer: the configuration of one insurance plan id. The EHR sends <see cref="PiInsurancePlanId"/> in
+/// One connected payer: the configuration of one insurance plan id. The EHR sends <see cref="InsurancePlanId"/> in
 /// every request; the gateway reads that one payer's configuration and uses its URLs.
-/// It is read with GET payers/{piInsurancePlanId} on the EHR data API (one row of table PA_PAYER, EhrApiPayerRepository).
+/// It is read with GET payers/{insurancePlanId} on the EHR data API (one row of table PA_PAYER, EhrApiPayerRepository).
 /// Every payer is called the same way; only these values differ:
 ///   CRD   {BaseUrl}/{CdsServicesPath}            e.g. http://localhost:5080/cds-services
 ///   DTR   {BaseUrl}/{FhirPath}/Questionnaire/$questionnaire-package
 ///   PAS   {BaseUrl}/{FhirPath}/Claim/$submit, Claim/$inquire, Subscription
 ///   CDex  {BaseUrl}/{FhirPath}/$submit-attachment, Task
 ///
-/// PiInsurancePlanId, PayerName and BaseUrl must be filled for the gateway to call the payer.
+/// InsurancePlanId, PayerName and BaseUrl must be filled for the gateway to call the payer.
 /// PayerName is only shown in log lines and messages. Every other value is optional and has a default.
 ///
 /// The two paths: empty = the usual path ("cds-services" / "fhir"); "/" = no extra path, the payer's address is
@@ -37,8 +37,8 @@ public class PayerSettings
     /// <summary>Seconds to wait for every other payer call when the payer row has no value.</summary>
     public const int DefaultTimeoutSeconds = 30;
 
-    /// <summary>Required. The EHR's insurance plan id of this payer (PA_PAYER.PI_INSURANCE_PLAN_ID), e.g. 1001. The EHR sends it as piInsurancePlanId in every request.</summary>
-    public int PiInsurancePlanId { get; set; }
+    /// <summary>Required. The EHR's insurance plan id of this payer (PA_PAYER.INSURANCE_PLAN_ID), e.g. 1001. The EHR sends it as insurancePlanId in every request.</summary>
+    public int InsurancePlanId { get; set; }
 
     /// <summary>Required. Name of the payer, e.g. "MockPayer". Shown in log lines and messages only.</summary>
     public string PayerName { get; set; } = string.Empty;
@@ -132,9 +132,9 @@ public class PayerSettings
     /// </summary>
     public string? GetProblem()
     {
-        if (PiInsurancePlanId <= 0)
+        if (InsurancePlanId <= 0)
         {
-            return "piInsurancePlanId (PI_INSURANCE_PLAN_ID) is empty or not a whole number above 0";
+            return "insurancePlanId (INSURANCE_PLAN_ID) is empty or not a whole number above 0";
         }
         if (string.IsNullOrWhiteSpace(PayerName))
         {

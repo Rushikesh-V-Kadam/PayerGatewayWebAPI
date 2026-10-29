@@ -41,7 +41,7 @@ public class DtrFormsController : ControllerBase
     /// <param name="request">Required. Payer, patient, orders and the questionnaire URLs from the order-sign decision.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">The forms with their questions.</response>
-    /// <response code="400">Invalid body, missing field, unknown piInsurancePlanId, or an order of another patient.</response>
+    /// <response code="400">Invalid body, missing field, unknown insurancePlanId, or an order of another patient.</response>
     /// <response code="404">An order was not found at the FHIR API.</response>
     /// <response code="422">The insurance (coverageId) is not found, belongs to another patient or is not active; or the payer refused / returned no questionnaire.</response>
     /// <response code="502">The payer or the FHIR API failed.</response>

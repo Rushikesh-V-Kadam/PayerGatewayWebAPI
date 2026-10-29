@@ -8,7 +8,7 @@ public class OrderSignResponse
 
     /// <summary>The EHR's insurance plan id of the payer.</summary>
     /// <example>1001</example>
-    public int PiInsurancePlanId { get; set; }
+    public int InsurancePlanId { get; set; }
 
     /// <summary>One decision per order. Read callDtr / callPas to know what to do next.</summary>
     public List<CoverageDecision> Decisions { get; set; } = new();

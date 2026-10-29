@@ -12,7 +12,7 @@ public class InMemoryCdexTaskRepository : ICdexTaskRepository
     /// <summary>Keeps the Task under insurance plan id + Task id (a second save replaces the first).</summary>
     public Task SaveAsync(CdexTaskRecord record, CancellationToken ct)
     {
-        _tasks[record.PiInsurancePlanId + "|" + record.TaskId] = record;
+        _tasks[record.InsurancePlanId + "|" + record.TaskId] = record;
         return Task.CompletedTask;
     }
 

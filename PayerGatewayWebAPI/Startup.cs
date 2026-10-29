@@ -23,13 +23,13 @@ namespace PayerGatewayWebAPI;
 /// <summary>
 /// Wires the application together. Every class has its own file and comments; this class only registers them.
 ///
-///   STEP 0  Payers   GET  /payers/{piInsurancePlanId}, POST /payers/{piInsurancePlanId}/discover
-///   STEP 1  CRD      POST /crd/order-sign, GET /crd/decisions/{orderId}
+///   STEP 0  Payers   GET  /payers/{insurancePlanId}, POST /payers/{insurancePlanId}/discover
+///   STEP 1  CRD      POST /crd/order-sign
 ///   STEP 2  DTR      POST /dtr/forms, GET /dtr/forms/{formId}, POST /dtr/forms/{formId}/answers
 ///                    payer SMART apps: GET /dtr/launch/{linkId}, GET /dtr/saved-forms, relay endpoints
-///   STEP 3  PAS      POST /pas/requests, PUT / cancel / GET / inquire, POST /pas/notifications/{piInsurancePlanId}
+///   STEP 3  PAS      POST /pas/requests, PUT / cancel / GET / inquire, POST /pas/notifications/{insurancePlanId}
 ///   STEP 4  CDex     GET  /cdex/requests/{requestId}/information-requests, POST .../attachments,
-///                    POST /cdex/tasks/{piInsurancePlanId}
+///                    POST /cdex/tasks/{insurancePlanId}
 /// </summary>
 public class Startup
 {
@@ -70,11 +70,10 @@ public class Startup
         // Folders: Repositories\Interfaces (what the services use), Repositories\Database (EHR data API),
         // Repositories\InMemory (local testing; data is lost when the app stops).
         // The payer configuration is read the same way in both modes: one payer by insurance plan id, from the EHR
-        // data API (GET payers/{piInsurancePlanId}, table PA_PAYER).
+        // data API (GET payers/{insurancePlanId}, table PA_PAYER).
         services.AddSingleton<IPayerRepository, EhrApiPayerRepository>();
         if (storage.IsEhrApi())
         {
-            services.AddSingleton<ICrdRepository, EhrApiCrdRepository>();
             services.AddSingleton<IDtrLinkRepository, EhrApiDtrLinkRepository>();
             services.AddSingleton<IDtrFormRepository, EhrApiDtrFormRepository>();
             services.AddSingleton<IPriorAuthRepository, EhrApiPriorAuthRepository>();
@@ -83,7 +82,6 @@ public class Startup
         }
         else
         {
-            services.AddSingleton<ICrdRepository, InMemoryCrdRepository>();
             services.AddSingleton<IDtrLinkRepository, InMemoryDtrLinkRepository>();
             services.AddSingleton<IDtrFormRepository, InMemoryDtrFormRepository>();
             services.AddSingleton<IPriorAuthRepository, InMemoryPriorAuthRepository>();
@@ -181,7 +179,7 @@ public class Startup
             "Da Vinci prior authorization for the EHR. Call order: " +
             "1) POST /crd/order-sign  2) DTR forms (when documentation is needed)  " +
             "3) POST /pas/requests (when prior auth is needed)  4) CDex attachments (when the payer pends and asks for more). " +
-            "Every EHR request carries piInsurancePlanId (the insurance plan id); the gateway reads that payer's configuration (table PA_PAYER). " +
+            "Every EHR request carries insurancePlanId (the insurance plan id); the gateway reads that payer's configuration (table PA_PAYER). " +
             "All gateway data is stored in the EHR database through the EHR data API, so decisions are not written back separately. " +
             "No authentication is built in (it is added outside this code). " +
             "Errors always return { \"error\": \"...\", \"details\": [ ... ], \"traceId\": \"...\" }.";

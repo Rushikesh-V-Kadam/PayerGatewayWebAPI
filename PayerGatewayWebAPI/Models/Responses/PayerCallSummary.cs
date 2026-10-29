@@ -5,7 +5,7 @@ public class PayerCallSummary
 {
     /// <summary>The EHR's insurance plan id of the payer.</summary>
     /// <example>1001</example>
-    public int PiInsurancePlanId { get; set; }
+    public int InsurancePlanId { get; set; }
 
     /// <summary>Name of the payer that was asked (from its configuration).</summary>
     /// <example>MockPayer</example>

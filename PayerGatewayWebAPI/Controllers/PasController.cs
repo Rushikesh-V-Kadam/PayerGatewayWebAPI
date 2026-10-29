@@ -37,10 +37,10 @@ public class PasController : ControllerBase
     /// send the same requestId again. The payer can reject with an HTTP error or with an answer that only carries errors
     /// (for example "member not found") - both give 422.
     /// </remarks>
-    /// <param name="request">Required. The prior authorization request: requestId, piInsurancePlanId, patientId and orderIds must be filled. orderLocationCode and requestingPractitionerId are required too.</param>
+    /// <param name="request">Required. The prior authorization request: requestId, insurancePlanId, patientId and orderIds must be filled. orderLocationCode and requestingPractitionerId are required too.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="201">Accepted by the payer; the decision (may be pended).</response>
-    /// <response code="400">Invalid body, missing field, unknown piInsurancePlanId, an order of another patient, or orderLocationCode / requestingPractitionerId missing.</response>
+    /// <response code="400">Invalid body, missing field, unknown insurancePlanId, an order of another patient, or orderLocationCode / requestingPractitionerId missing.</response>
     /// <response code="404">Patient, order, facility (orderLocationCode), organization, requesting practitioner, form or document not found at the FHIR API.</response>
     /// <response code="409">requestId was already submitted (use PUT to change it).</response>
     /// <response code="422">The insurance (coverageId) is not found, belongs to another patient or is not active, order without code, the facility of orderLocationCode has no organization at the FHIR API, or the payer rejected the request (body = decision with errors).</response>
@@ -158,20 +158,20 @@ public class PasController : ControllerBase
     /// <remarks>
     /// The gateway then inquires every open request of that payer and saves the new decisions.
     /// </remarks>
-    /// <param name="piInsurancePlanId">The EHR's insurance plan id of the payer (part of the Subscription endpoint the gateway registered).</param>
+    /// <param name="insurancePlanId">The EHR's insurance plan id of the payer (part of the Subscription endpoint the gateway registered).</param>
     /// <param name="body">Subscription notification Bundle.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">Handled.</response>
     /// <response code="400">The body is not a valid FHIR Bundle.</response>
     /// <response code="404">No payer is configured or enabled for this insurance plan id.</response>
-    [HttpPost("notifications/{piInsurancePlanId:int}")]
+    [HttpPost("notifications/{insurancePlanId:int}")]
     [Consumes(ApiHeaders.FhirJson, ApiHeaders.Json)]
     [ProducesResponseType(typeof(NotificationResult), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<NotificationResult>> Notification(int piInsurancePlanId, [FromBody] JsonObject? body, CancellationToken ct)
+    public async Task<ActionResult<NotificationResult>> Notification(int insurancePlanId, [FromBody] JsonObject? body, CancellationToken ct)
     {
-        NotificationResult result = await _pas.HandleNotificationAsync(piInsurancePlanId, body, ct);
+        NotificationResult result = await _pas.HandleNotificationAsync(insurancePlanId, body, ct);
         return Ok(result);
     }
 }

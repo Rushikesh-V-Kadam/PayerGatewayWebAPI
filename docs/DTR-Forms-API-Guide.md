@@ -84,7 +84,7 @@ The payer wants a questionnaire filled in before it decides. In this flow the **
 
 | Field | Required | Meaning |
 |---|---|---|
-| `piInsurancePlanId` | Yes | Whole number. The EHR's insurance plan id: the payer to ask |
+| `insurancePlanId` | Yes | Whole number. The EHR's insurance plan id: the payer to ask |
 | `patientId` | Yes | EHR patient id |
 | `orderIds` | Yes, at least one | Orders the documentation is for |
 | `coverageId` | Yes | The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it with `GET Coverage/{coverageId}` at the FHIR API. The orders carry no insurance |
@@ -96,7 +96,7 @@ POST /dtr/forms
 Content-Type: application/json
 
 {
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "questionnaireUrls": ["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"],
@@ -133,7 +133,7 @@ A list with one form per questionnaire (shortened: 5 of the questions).
 [
   {
     "formId": "frm-235b7ad69e85",
-    "piInsurancePlanId": 1001,
+    "insurancePlanId": 1001,
     "patientId": "pat-1",
     "orderIds": ["ord-1-hd"],
     "coverageId": "cov-1",
@@ -278,7 +278,7 @@ A list with one form per questionnaire (shortened: 5 of the questions).
 
 | HTTP | When |
 |---|---|
-| 400 | Missing field, empty `orderIds`, unknown `piInsurancePlanId`, or an order belongs to another patient |
+| 400 | Missing field, empty `orderIds`, unknown `insurancePlanId`, or an order belongs to another patient |
 | 404 | An order was not found at the FHIR API |
 | 422 | The insurance (`coverageId`) is not found, belongs to another patient, or is not active; the payer refused the request (HTTP 4xx, `details` has the payer's messages); or the payer returned no questionnaire |
 | 502 | The payer answered with HTTP 5xx or could not be reached; or the FHIR API failed |
@@ -633,7 +633,7 @@ POST http://localhost:5200/dtr/forms
 Content-Type: application/json
 
 {
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "questionnaireUrls": ["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"]

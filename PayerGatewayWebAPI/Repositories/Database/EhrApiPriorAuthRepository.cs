@@ -12,7 +12,7 @@ namespace PayerGatewayWebAPI.Repositories.Database;
 /// <summary>
 /// Prior auth requests in the EHR database, through the EHR data API (table PA_PRIOR_AUTH):
 ///   prior-auths/{requestId}                      one request (GET, PUT)
-///   prior-auths?status=pended[&amp;piInsurancePlanId=...]    requests still waiting for the payer
+///   prior-auths?status=pended[&amp;insurancePlanId=...]    requests still waiting for the payer
 /// The EHR reads the decision from the same table, so no separate write-back is needed.
 /// </summary>
 public class EhrApiPriorAuthRepository : IPriorAuthRepository
@@ -44,12 +44,12 @@ public class EhrApiPriorAuthRepository : IPriorAuthRepository
     }
 
     /// <summary>The requests still waiting for a payer decision: GET prior-auths?status=pended, optionally of one payer.</summary>
-    public async Task<List<PriorAuthRecord>> GetOpenAsync(int? piInsurancePlanId, CancellationToken ct)
+    public async Task<List<PriorAuthRecord>> GetOpenAsync(int? insurancePlanId, CancellationToken ct)
     {
         string path = "prior-auths?status=" + DecisionStatus.Pended;
-        if (piInsurancePlanId != null)
+        if (insurancePlanId != null)
         {
-            path = path + "&piInsurancePlanId=" + piInsurancePlanId.Value.ToString(CultureInfo.InvariantCulture);
+            path = path + "&insurancePlanId=" + insurancePlanId.Value.ToString(CultureInfo.InvariantCulture);
         }
 
         List<PriorAuthRow> rows = await _ehr.GetListAsync<PriorAuthRow>(path, ct);
@@ -66,7 +66,7 @@ public class EhrApiPriorAuthRepository : IPriorAuthRepository
     {
         PriorAuthRow row = new PriorAuthRow();
         row.RequestId = record.RequestId;
-        row.PiInsurancePlanId = record.PiInsurancePlanId;
+        row.InsurancePlanId = record.InsurancePlanId;
         row.PatientId = record.PatientId;
         row.CoverageId = record.CoverageId;
         row.MemberId = record.MemberId;
@@ -93,7 +93,7 @@ public class EhrApiPriorAuthRepository : IPriorAuthRepository
     {
         PriorAuthRecord record = new PriorAuthRecord();
         record.RequestId = row.RequestId;
-        record.PiInsurancePlanId = row.PiInsurancePlanId;
+        record.InsurancePlanId = row.InsurancePlanId;
         record.PatientId = row.PatientId;
         record.CoverageId = row.CoverageId;
         record.MemberId = row.MemberId;

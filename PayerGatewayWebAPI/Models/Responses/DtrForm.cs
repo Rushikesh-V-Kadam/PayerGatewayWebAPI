@@ -12,7 +12,7 @@ public class DtrForm
 
     /// <summary>The EHR's insurance plan id of the payer.</summary>
     /// <example>1001</example>
-    public int PiInsurancePlanId { get; set; }
+    public int InsurancePlanId { get; set; }
 
     /// <example>pat-1</example>
     public string PatientId { get; set; } = string.Empty;

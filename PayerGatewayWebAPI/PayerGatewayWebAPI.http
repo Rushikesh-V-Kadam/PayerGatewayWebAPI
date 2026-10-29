@@ -17,7 +17,7 @@ Content-Type: application/json
 
 {
   "eventId": "evt-20260929-0001",
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "orderLocationCode": "loc-main",
@@ -29,7 +29,7 @@ POST {{gateway}}/dtr/forms
 Content-Type: application/json
 
 {
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "questionnaireUrls": ["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"],
@@ -59,7 +59,7 @@ Content-Type: application/json
 
 {
   "requestId": "PA-2026-0001",
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "patientId": "pat-1",
   "requestingPractitionerId": "prac-1",
   "orderLocationCode": "loc-main",

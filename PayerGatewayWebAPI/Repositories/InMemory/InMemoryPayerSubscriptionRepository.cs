@@ -10,17 +10,17 @@ public class InMemoryPayerSubscriptionRepository : IPayerSubscriptionRepository
     private readonly ConcurrentDictionary<string, PayerSubscriptionRecord> _subscriptions = new ConcurrentDictionary<string, PayerSubscriptionRecord>();
 
     /// <summary>The Subscription of this payer (insurance plan id) + organization, or null.</summary>
-    public Task<PayerSubscriptionRecord?> GetAsync(int piInsurancePlanId, string organizationNpi, CancellationToken ct)
+    public Task<PayerSubscriptionRecord?> GetAsync(int insurancePlanId, string organizationNpi, CancellationToken ct)
     {
         PayerSubscriptionRecord? record;
-        _subscriptions.TryGetValue(piInsurancePlanId + "|" + organizationNpi, out record);
+        _subscriptions.TryGetValue(insurancePlanId + "|" + organizationNpi, out record);
         return Task.FromResult(record);
     }
 
     /// <summary>Keeps the Subscription of a payer + organization.</summary>
     public Task SaveAsync(PayerSubscriptionRecord record, CancellationToken ct)
     {
-        _subscriptions[record.PiInsurancePlanId + "|" + record.OrganizationNpi] = record;
+        _subscriptions[record.InsurancePlanId + "|" + record.OrganizationNpi] = record;
         return Task.CompletedTask;
     }
 }

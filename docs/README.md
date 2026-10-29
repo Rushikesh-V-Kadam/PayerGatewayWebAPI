@@ -25,8 +25,9 @@ EHR's Oracle database, in tables named `PA_...`, and is read and saved through a
 | The gateway code that calls it | `Clients/EhrDataClient.cs` and `Repositories/Database/EhrApi*Repository.cs` |
 | Settings | `Storage:Provider = EhrApi`, `Ehr:BaseUrl`, `Ehr:DataPath` |
 
-**No write-back.** The EHR reads the decisions from the same tables (`PA_COVERAGE_DECISION`, `PA_PRIOR_AUTH`), so the
-gateway does not send a second copy to the EHR. The `writeBack` request fields and the `EHR_SYNC_STATUS` column no
+**No write-back.** The EHR reads the prior authorization decisions from the same table (`PA_PRIOR_AUTH`), so the
+gateway does not send a second copy to the EHR. CRD order-sign decisions are not stored by the gateway at all: the EHR
+stores the order-sign response on its side. The `writeBack` request fields and the `EHR_SYNC_STATUS` column no
 longer exist.
 
 **No background job.** The gateway does not check pended requests by itself (`PendingRequestPoller` and
@@ -49,14 +50,14 @@ something changed. Payer notifications (PAS Subscription) and pushed Tasks still
 
 ## How the payer is chosen
 
-Every EHR request carries `piInsurancePlanId` (a whole number, the EHR's insurance plan id). The gateway reads that one
-payer's configuration (table `PA_PAYER`, key `PI_INSURANCE_PLAN_ID`) and uses its base URL, paths and timeouts. There is no payer list.
-It is read with `GET payers/{piInsurancePlanId}` on the EHR data API (the mock EHR has the mock payer as plan id `1001`).
+Every EHR request carries `insurancePlanId` (a whole number, the EHR's insurance plan id). The gateway reads that one
+payer's configuration (table `PA_PAYER`, key `INSURANCE_PLAN_ID`) and uses its base URL, paths and timeouts. There is no payer list.
+It is read with `GET payers/{insurancePlanId}` on the EHR data API (the mock EHR has the mock payer as plan id `1001`).
 A payer is kept for `Storage:PayerCacheMinutes` (default 5); an id without a payer is asked again at the next request.
 To onboard a payer, the EHR team inserts a row; nothing changes in the gateway and no restart is needed.
 An unknown or disabled id returns 400 (404 when the id is in the URL).
 
-**Only `PI_INSURANCE_PLAN_ID`, `PAYER_NAME` and `BASE_URL` must be filled in a payer row.** Every other column is optional and has a default
+**Only `INSURANCE_PLAN_ID`, `PAYER_NAME` and `BASE_URL` must be filled in a payer row.** Every other column is optional and has a default
 (`PayerSettings.ApplyDefaults`); a row without a name or without a complete http / https address is left out with a
 warning in the log. The payer row has no payer id and no identifier systems: the payer id and the member id come from
 the patient's insurance in the EHR (FHIR `Coverage.payor.identifier` and `Coverage.subscriberId`) and are sent to the
@@ -76,7 +77,7 @@ called), in DTR and PAS it gives 422.
 **Payers without their own app (`PA_PAYER.DTR_MODE = Forms`, the default):** the gateway does the DTR work itself and
 exposes it as plain JSON:
 
-1. **Get the form.** `POST /dtr/forms` with `piInsurancePlanId`, `patientId`, `orderIds` and the `questionnaireUrls` /
+1. **Get the form.** `POST /dtr/forms` with `insurancePlanId`, `patientId`, `orderIds` and the `questionnaireUrls` /
    `coverageAssertionId` from the order-sign decision. The gateway calls the payer's `$questionnaire-package` and returns each
    Questionnaire as a list of questions: `linkId`, `text`, `type`, `required`, `options`, `defaultValues`, `showWhen`.
 2. **Answer it.** The EHR team shows those questions on an existing EHR screen (a simple form: one field per question).
@@ -94,7 +95,7 @@ with `opensPayerApp = true` (`/dtr/launch/{linkId}`). The EHR opens it in a brow
 1. The gateway creates the SMART launch at the FHIR API (`iss` = `/fhir/r4`), and redirects to the app
    (`DTR_APP_LAUNCH_URL`, or the URL on the payer's card).
 2. The app gets its launch context from the FHIR API (SMART App Launch), reads the patient data, gets the questionnaire from its payer (directly, or through
-   `/dtr/{piInsurancePlanId}/Questionnaire/$questionnaire-package`), and saves the QuestionnaireResponse
+   `/dtr/{insurancePlanId}/Questionnaire/$questionnaire-package`), and saves the QuestionnaireResponse
    at the FHIR API.
 3. `GET /dtr/saved-forms?patientId=...&orderId=...` shows the EHR that the form is completed.
 4. PAS attaches it automatically, as for step 4 above.
@@ -118,7 +119,7 @@ Every error has the same body: `{ "error": "...", "details": ["..."], "traceId":
 
 | Status | Meaning |
 | --- | --- |
-| 400 | Invalid body / missing field / unknown piInsurancePlanId / wrong answer format / order-sign without a signing clinician |
+| 400 | Invalid body / missing field / unknown insurancePlanId / wrong answer format / order-sign without a signing clinician |
 | 404 | Patient, order, form, document or request not found |
 | 409 | Request already submitted (use PUT), or it is cancelled |
 | 422 | Cannot be processed: the insurance (`coverageId`) is not found, belongs to another patient or is not active, insurance without member id, order without code, no NPI, required questions missing, payer rejected (PAS returns the decision with errors) |

@@ -16,7 +16,7 @@ public static class QuestionnaireReader
     {
         DtrForm form = new DtrForm();
         form.FormId = record.FormId;
-        form.PiInsurancePlanId = record.PiInsurancePlanId;
+        form.InsurancePlanId = record.InsurancePlanId;
         form.PatientId = record.PatientId;
         form.OrderIds = record.OrderIds;
         form.CoverageId = record.CoverageId;

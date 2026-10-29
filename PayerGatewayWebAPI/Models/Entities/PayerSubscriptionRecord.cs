@@ -4,7 +4,7 @@ namespace PayerGatewayWebAPI.Models.Entities;
 public class PayerSubscriptionRecord
 {
     /// <summary>Insurance plan id of the payer the Subscription was created at (key, part 1).</summary>
-    public int PiInsurancePlanId { get; set; }
+    public int InsurancePlanId { get; set; }
     /// <summary>NPI of the provider organization (key, part 2).</summary>
     public string OrganizationNpi { get; set; } = string.Empty;
     /// <summary>The payer's id of the Subscription.</summary>

@@ -21,12 +21,13 @@ namespace PayerGatewayWebAPI.Services.Crd;
 /// <summary>
 /// STEP 1 - CRD (Coverage Requirements Discovery), order-sign only. Called when the clinician signs orders.
 ///
-///   1. read the payer of piInsurancePlanId (PayerRegistry: EHR data API GET payers/{piInsurancePlanId})
+///   1. read the payer of insurancePlanId (PayerRegistry: EHR data API GET payers/{insurancePlanId})
 ///   2. read the patient, the orders and the coverage from the FHIR API
 ///   3. get the payer's CDS services (discovery, cached 12 h) -> the order-sign service id + prefetch templates
 ///   4. call POST {payer}/cds-services/{id} with context, prefetch and a fhirAuthorization token
 ///   5. turn the answer into one CoverageDecision per order (pa-needed, doc-needed, questionnaires, callDtr, callPas)
-///   6. save each decision (the EHR reads it from table PA_COVERAGE_DECISION) and return them
+///   6. return the decisions. They are not saved by the gateway: the EHR stores the response on its side
+///      (CLIENT-EHR). DTR and PAS do not read them back - the EHR sends the values they need in its own requests.
 /// </summary>
 public class CrdService
 {
@@ -34,20 +35,18 @@ public class CrdService
     private readonly PayerRegistry _payers;
     private readonly PayerClient _payerClient;
     private readonly CdsHookBuilder _builder;
-    private readonly ICrdRepository _crdRepository;
     private readonly IDtrLinkRepository _linkRepository;
     private readonly WorkflowSettings _workflow;
     private readonly ILogger<CrdService> _logger;
 
     /// <summary>Created by dependency injection.</summary>
     public CrdService(FhirApiClient fhir, PayerRegistry payers, PayerClient payerClient, CdsHookBuilder builder,
-        ICrdRepository crdRepository, IDtrLinkRepository linkRepository, IOptions<WorkflowSettings> workflow, ILogger<CrdService> logger)
+        IDtrLinkRepository linkRepository, IOptions<WorkflowSettings> workflow, ILogger<CrdService> logger)
     {
         _fhir = fhir;
         _payers = payers;
         _payerClient = payerClient;
         _builder = builder;
-        _crdRepository = crdRepository;
         _linkRepository = linkRepository;
         _workflow = workflow.Value;
         _logger = logger;
@@ -65,9 +64,9 @@ public class CrdService
             problems.Add("eventId is required.");
         }
 
-        if (request.PiInsurancePlanId == null || request.PiInsurancePlanId.Value <= 0)
+        if (request.InsurancePlanId == null || request.InsurancePlanId.Value <= 0)
         {
-            problems.Add("piInsurancePlanId is required (a whole number above 0).");
+            problems.Add("insurancePlanId is required (a whole number above 0).");
         }
 
         if (string.IsNullOrWhiteSpace(request.PatientId))
@@ -98,7 +97,7 @@ public class CrdService
         }
 
         // ---- 1. the payer
-        PayerSettings payer = await _payers.GetRequiredAsync(request.PiInsurancePlanId, 400, ct);
+        PayerSettings payer = await _payers.GetRequiredAsync(request.InsurancePlanId, 400, ct);
 
         // No stored answer per eventId: every call asks the payer, so a retry (also after a timeout) gets a fresh
         // answer. eventId is only kept with each saved decision as a reference.
@@ -112,8 +111,8 @@ public class CrdService
 
         OrderSignResponse response = new OrderSignResponse();
         response.EventId = request.EventId;
-        response.PiInsurancePlanId = payer.PiInsurancePlanId;
-        response.PayerCall.PiInsurancePlanId = payer.PiInsurancePlanId;
+        response.InsurancePlanId = payer.InsurancePlanId;
+        response.PayerCall.InsurancePlanId = payer.InsurancePlanId;
         response.PayerCall.PayerName = payer.PayerName;
 
         List<JsonObject> orders = await ReadOrdersAsync(request, response, ct);
@@ -146,42 +145,15 @@ public class CrdService
             await CallPayerAsync(request, payer, coverage, orders, userPractitionerId, response, ct);
         }
 
-        // ---- 6. save (the EHR reads the decision from the same table; no separate write-back)
+        // ---- 6. next steps per order (callDtr / callPas). Nothing is saved here.
+        // CLIENT-EHR: the EHR stores the order-sign response on its side; the gateway keeps no copy of the decisions.
         foreach (CoverageDecision decision in response.Decisions)
         {
             CoverageDecisionReader.SetNextSteps(decision);
-
-            CoverageDecisionRecord record = new CoverageDecisionRecord();
-            record.OrderId = decision.OrderId;
-            record.EventId = request.EventId;
-            record.PiInsurancePlanId = decision.PiInsurancePlanId;
-            record.PatientId = request.PatientId;
-            record.CoverageAssertionId = decision.CoverageAssertionId;
-            record.Covered = decision.Covered;
-            record.PriorAuthNeeded = decision.PriorAuthNeeded;
-            record.DocumentationNeeded = decision.DocumentationNeeded;
-            record.DecisionJson = ApiJson.Write(decision);
-            await _crdRepository.SaveDecisionAsync(record, ct);
         }
 
         _logger.LogInformation("order-sign event {EventId} at {Payer}: {Count} decision(s)", request.EventId, payer.PayerName, response.Decisions.Count);
         return response;
-    }
-
-    /// <summary>Latest stored decision of an order (no payer call).</summary>
-    public async Task<CoverageDecision> GetDecisionAsync(string orderId, CancellationToken ct)
-    {
-        CoverageDecisionRecord? record = await _crdRepository.GetDecisionAsync(orderId, ct);
-        if (record == null)
-        {
-            throw new ApiException(404, "No coverage decision for order " + orderId + ". Call POST /crd/order-sign first.");
-        }
-        CoverageDecision? decision = JsonSerializer.Deserialize<CoverageDecision>(record.DecisionJson, ApiJson.Options);
-        if (decision == null)
-        {
-            throw new ApiException(500, "The stored decision of order " + orderId + " could not be read.");
-        }
-        return decision;
     }
 
     // ================================================================== 2. orders
@@ -268,7 +240,7 @@ public class CrdService
                 if (byReference.TryGetValue(order.GetReference(), out decision))
                 {
                     decision.OrderId = order.Id ?? string.Empty;
-                    decision.PiInsurancePlanId = payer.PiInsurancePlanId;
+                    decision.InsurancePlanId = payer.InsurancePlanId;
                     if (decision.CoverageId == null)
                     {
                         decision.CoverageId = coverage.Id;
@@ -460,7 +432,7 @@ public class CrdService
 
         // SMART link: remember the launch context, give the EHR a gateway URL
         DtrLinkRecord dtrLink = new DtrLinkRecord();
-        dtrLink.PiInsurancePlanId = payer.PiInsurancePlanId;
+        dtrLink.InsurancePlanId = payer.InsurancePlanId;
         dtrLink.PatientId = request.PatientId;
         dtrLink.EncounterId = request.EncounterId;
         dtrLink.UserPractitionerId = userPractitionerId;
@@ -534,7 +506,7 @@ public class CrdService
     {
         CoverageDecision decision = new CoverageDecision();
         decision.OrderId = orderId;
-        decision.PiInsurancePlanId = payer.PiInsurancePlanId;
+        decision.InsurancePlanId = payer.InsurancePlanId;
         decision.CoverageId = coverageId;
         decision.Covered = CrdCodes.Unknown;
         decision.DecidedAt = FhirDate.Now();

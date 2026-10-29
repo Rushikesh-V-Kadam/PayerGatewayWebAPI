@@ -11,7 +11,7 @@ public class StorageSettings
     /// "EhrApi"   = the EHR's Oracle database, through the EHR data API (appsettings "Ehr").
     /// "InMemory" = local testing without the EHR: data is lost on restart.
     /// The payer configuration does NOT follow this setting: it is always read from the EHR data API
-    /// (GET payers/{piInsurancePlanId}, table PA_PAYER).
+    /// (GET payers/{insurancePlanId}, table PA_PAYER).
     /// </summary>
     public string Provider { get; set; } = "InMemory";
 

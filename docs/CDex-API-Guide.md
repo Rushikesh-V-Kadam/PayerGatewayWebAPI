@@ -28,7 +28,7 @@ CDex is used **only when the payer has pended a prior authorization and asks for
   |                                |  A. GET {payer}/fhir/Task?owner={organization NPI}         |
   |                                |     (when the EHR calls ...?refresh=true)                  |
   |                                |----------------------------------------------------------->|
-  |                                |  B. POST /cdex/tasks/{piInsurancePlanId}  (payer pushes)    |
+  |                                |  B. POST /cdex/tasks/{insurancePlanId}  (payer pushes)    |
   |                                |<-----------------------------------------------------------|
   |                                |  save PA_CDEX_TASK, add to PA_PRIOR_AUTH.DECISION_JSON     |
   | GET .../information-requests   |                                   |                        |
@@ -57,7 +57,7 @@ CDex is used **only when the payer has pended a prior authorization and asks for
 |---|---|---|---|
 | 1 | `GET /cdex/requests/{requestId}/information-requests` | What the payer asked for on a pended request | EHR |
 | 2 | `POST /cdex/requests/{requestId}/attachments` | Sends documents and / or completed forms to the payer | EHR |
-| 3 | `POST /cdex/tasks/{piInsurancePlanId}` | The payer pushes a Task that asks for more information | Payer |
+| 3 | `POST /cdex/tasks/{insurancePlanId}` | The payer pushes a Task that asks for more information | Payer |
 
 `requestId` is the EHR's prior authorization request id from the PAS step.
 
@@ -134,7 +134,7 @@ POST /dtr/forms
 Content-Type: application/json
 
 {
-  "piInsurancePlanId": 1001,
+  "insurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "questionnaireUrls": ["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"],
@@ -270,7 +270,7 @@ The request does not have to be `pended`: the gateway sends attachments for any 
   "messages": [],
   "decision": {
     "requestId": "PA-2026-0102",
-    "piInsurancePlanId": 1001,
+    "insurancePlanId": 1001,
     "patientId": "pat-1",
     "orderIds": ["ord-1-hd"],
     "overallStatus": "approved",
@@ -352,9 +352,9 @@ When `decision` is `null` or still `pended`, the EHR keeps checking the request 
 
 ---
 
-### 4.3 `POST /cdex/tasks/{piInsurancePlanId}`: called by the payer
+### 4.3 `POST /cdex/tasks/{insurancePlanId}`: called by the payer
 
-**Why it exists.** A payer may send its Task to the provider instead of waiting to be asked. Give the payer this URL: `{Workflow:GatewayPublicBaseUrl}/cdex/tasks/{piInsurancePlanId}`.
+**Why it exists.** A payer may send its Task to the provider instead of waiting to be asked. Give the payer this URL: `{Workflow:GatewayPublicBaseUrl}/cdex/tasks/{insurancePlanId}`.
 
 **Request** (from the payer; a `Task`, or a `Bundle` of Tasks; `application/fhir+json` or `application/json`)
 
@@ -408,7 +408,7 @@ Content-Type: application/fhir+json
 |---|---|
 | 202 | At least one Task was accepted |
 | 400 | The body is not a Task or a Bundle |
-| 404 | No payer is configured or enabled for this `piInsurancePlanId` |
+| 404 | No payer is configured or enabled for this `insurancePlanId` |
 | 422 | No Task in the body matches a prior authorization request sent by this gateway |
 | 503 | The EHR data API is not available |
 
@@ -450,7 +450,7 @@ The Task's `payer-url` input is not used. Attachments always go to the payer URL
 | Way | When | What happens |
 |---|---|---|
 | **Refresh (called by the EHR)** | The EHR calls `GET .../information-requests?refresh=true` for each request with `STATUS = 'pended'` in `PA_PRIOR_AUTH`, on its own schedule | `GET {payer}/fhir/Task?owner={organization NPI}` (skipped when the request's organization has no NPI) |
-| **Push** | The payer calls `POST /cdex/tasks/{piInsurancePlanId}` | The Task is processed at once |
+| **Push** | The payer calls `POST /cdex/tasks/{insurancePlanId}` | The Task is processed at once |
 
 The gateway has no background job. Not every payer pushes Tasks, so the EHR's refresh call is what makes sure a request for more documents is not missed. `POST /pas/requests/{requestId}/inquire` (PAS guide) gets the decision but does not find Tasks, so the EHR calls both for each pended request.
 
@@ -547,7 +547,7 @@ If you still have the earlier CDex guide, these are the points where it no longe
 | No write-back. Information requests and decisions are saved in `PA_PRIOR_AUTH` in the EHR database, and the EHR reads them there | Sections 4.1 and 6 |
 | No database of its own. Tasks are saved in `PA_CDEX_TASK` through the EHR data API. A new status 503 means the EHR data API is not available | Sections 3 and 8 |
 | The payer is found by name in table `PA_PAYER` | Section 9 |
-| No authentication on any call: the Task search, `$submit-attachment`, and the payer's push to `/cdex/tasks/{piInsurancePlanId}` | Section 3 |
+| No authentication on any call: the Task search, `$submit-attachment`, and the payer's push to `/cdex/tasks/{insurancePlanId}` | Section 3 |
 | No background job. The EHR calls `information-requests?refresh=true` (and PAS inquire) for each pended request. `Workflow:PollMinutes` is removed | Section 6 |
 | Project and namespaces renamed to `PayerGatewayWebAPI` | Section 12 |
 

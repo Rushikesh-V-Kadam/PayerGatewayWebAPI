@@ -1,8 +1,7 @@
 namespace PayerGatewayWebAPI.Models.Responses;
 
 /// <summary>
-/// CRD answer for one order. Also saved in table PA_COVERAGE_DECISION of the EHR database (column DECISION_JSON),
-/// where the EHR reads it.
+/// CRD answer for one order. The gateway does not save it: the EHR stores the order-sign response on its side.
 /// What to do next:
 ///   callDtr = true  -> DTR: POST /dtr/forms with questionnaireUrls, then POST .../answers
 ///   callPas = true  -> PAS: POST /pas/requests (after DTR when both are true)
@@ -15,7 +14,7 @@ public class CoverageDecision
 
     /// <summary>The EHR's insurance plan id of the payer.</summary>
     /// <example>1001</example>
-    public int? PiInsurancePlanId { get; set; }
+    public int? InsurancePlanId { get; set; }
 
     /// <example>cov-1</example>
     public string? CoverageId { get; set; }

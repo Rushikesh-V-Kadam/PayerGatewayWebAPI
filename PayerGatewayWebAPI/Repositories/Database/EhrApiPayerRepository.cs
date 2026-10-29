@@ -3,25 +3,34 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using PayerGatewayWebAPI.Clients;
 using PayerGatewayWebAPI.Configuration;
+using PayerGatewayWebAPI.Exceptions;
+using PayerGatewayWebAPI.Helpers;
 using PayerGatewayWebAPI.Repositories.Interfaces;
 
 namespace PayerGatewayWebAPI.Repositories.Database;
 
 /// <summary>
-/// One payer's configuration, read by the EHR's insurance plan id: GET payers/{piInsurancePlanId} on the EHR data API,
-/// one row of table PA_PAYER (404 = no such payer). There is no payer list.
+/// One payer's configuration, read by the EHR's insurance plan id: GET payers/{insurancePlanId} on the EHR data API,
+/// one row of table PA_PAYER. There is no payer list.
+///
+/// CLIENT-EHR: the client's API wraps the row (the client's own format):
+///   { "PayerDetail": { "InsurancePlanID": 11111111, "PayerName": "MockPayer", "BaseURL": "...", ... },
+///     "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }
+///   no such payer      -> "PayerDetail": null (an HTTP 404 is also understood as "no such payer")
+///   TOKEN_EXPIRED or ERROR_MESSAGE filled -> the call failed (503 for the caller, the text is in the log)
 /// The EHR team adds and changes payers in PA_PAYER; nothing in the gateway changes when a payer is onboarded.
 ///
-/// One row = one JSON object; one property = one column (payerName = PAYER_NAME ...).
-/// piInsurancePlanId, payerName and baseUrl are needed to call the payer. Every other property is optional: it may be
+/// The row is the PayerDetail object; one property = one column (PayerName = PAYER_NAME ...). Property names are
+/// matched without regard to upper / lower case (BaseURL, baseUrl and BASEURL are the same).
+/// InsurancePlanID, PayerName and BaseURL are needed to call the payer. Every other property is optional: it may be
 /// missing, null or an empty text, and the gateway then uses its default. The properties the gateway reads:
-///   piInsurancePlanId                        whole number (1001 or "1001"); required
-///   payerName, baseUrl                       required
-///   enabled, useSubscriptions                true / false; empty = true
-///   cdsServicesPath, fhirPath                text; empty = "cds-services" / "fhir"; "/" = no extra path
-///   crdTimeoutSeconds, timeoutSeconds        whole number; empty or 0 = 5 / 30
-///   dtrMode                                  Forms | SmartApp; empty = Forms
-///   dtrAppLaunchUrl                          text; empty = the URL on the payer's CRD card
+///   InsurancePlanID                          whole number (1001 or "1001"); required
+///   PayerName, BaseURL                       required
+///   Enabled, UseSubscriptions                true / false; empty = true
+///   CDSServicesPath, FHIRPath                text; empty = "cds-services" / "fhir"; "/" = no extra path
+///   CRDTimeoutSeconds, TimeoutSeconds        whole number; empty or 0 = 5 / 30
+///   DTRMode                                  Forms | SmartApp; empty = Forms
+///   DTRAppLaunchURL                          text; empty = the URL on the payer's CRD card
 /// PA_PAYER also has login columns (AUTH_*, SIGN_CDS_HOOKS_REQUESTS, NOTIFICATION_SECRET). The gateway does not
 /// read them: they belong to the authentication layer that is added outside this code.
 ///
@@ -43,25 +52,52 @@ public class EhrApiPayerRepository : IPayerRepository
     }
 
     /// <summary>
-    /// GET payers/{piInsurancePlanId} on the EHR data API: one JSON object (not an array). Null when the EHR answers
-    /// 404, or when the row it returns belongs to another insurance plan id (reported in the log). The row is returned
-    /// as it is; PayerRegistry fills in the defaults and refuses a row that cannot be used (no name or no valid base URL).
+    /// GET payers/{insurancePlanId} on the EHR data API. Null when there is no such payer ("PayerDetail": null, or
+    /// HTTP 404), or when the row belongs to another insurance plan id (reported in the log). Throws EhrException (503)
+    /// when the answer reports an error (TOKEN_EXPIRED or ERROR_MESSAGE filled) or cannot be read. The row is returned as
+    /// it is; PayerRegistry fills in the defaults and refuses a row that cannot be used (no name or no valid base URL).
     /// </summary>
-    public async Task<PayerSettings?> GetByPiInsurancePlanIdAsync(int piInsurancePlanId, CancellationToken ct)
+    public async Task<PayerSettings?> GetByInsurancePlanIdAsync(int insurancePlanId, CancellationToken ct)
     {
-        string path = "payers/" + piInsurancePlanId.ToString(CultureInfo.InvariantCulture);
+        // TODO: confirm the path with the EHR team; it is the gateway setting Ehr:DataPath + "payers/{id}".
+        string path = "payers/" + insurancePlanId.ToString(CultureInfo.InvariantCulture);
         JsonObject? body = await _ehr.GetAsync<JsonObject>(path, ct);
         if (body == null)
         {
-            return null;
+            return null;   // HTTP 404 (or an empty answer): no such payer
+        }
+        JsonElement answer = JsonSerializer.SerializeToElement(body);
+
+        // CLIENT-EHR: TOKEN_EXPIRED and ERROR_MESSAGE are empty texts when the call worked.
+        // TODO: confirm with the EHR team which values TOKEN_EXPIRED holds; for now any text in it is an error.
+        string? tokenExpired = ReadText(answer, "TOKEN_EXPIRED");
+        if (!string.IsNullOrWhiteSpace(tokenExpired))
+        {
+            throw new EhrException("EHR data API GET " + path + " answered TOKEN_EXPIRED = '" + TextHelper.Shorten(tokenExpired, 100) + "'.");
+        }
+        string? errorMessage = ReadText(answer, "ERROR_MESSAGE");
+        if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            throw new EhrException("EHR data API GET " + path + " answered with an error: " + TextHelper.Shorten(errorMessage, 300));
         }
 
-        JsonElement row = JsonSerializer.SerializeToElement(body);
-        int? rowId = ReadNumber(row, "piInsurancePlanId", "piInsurancePlanId " + piInsurancePlanId);
-        if (rowId == null || rowId.Value != piInsurancePlanId)
+        // CLIENT-EHR: "PayerDetail": null means there is no payer with this insurance plan id.
+        JsonElement? detail = Find(answer, "PayerDetail");
+        if (detail == null || detail.Value.ValueKind == JsonValueKind.Null)
         {
-            _logger.LogWarning("GET {Path} returned a payer row whose piInsurancePlanId is '{RowId}', not {Requested}; the row is not used. Correct the EHR data API.",
-                path, rowId, piInsurancePlanId);
+            return null;
+        }
+        if (detail.Value.ValueKind != JsonValueKind.Object)
+        {
+            throw new EhrException("EHR data API GET " + path + " answered a PayerDetail that is not a JSON object.");
+        }
+
+        JsonElement row = detail.Value;
+        int? rowId = ReadNumber(row, "InsurancePlanID", "insurance plan id " + insurancePlanId);
+        if (rowId == null || rowId.Value != insurancePlanId)
+        {
+            _logger.LogWarning("GET {Path} returned a payer whose InsurancePlanID is '{RowId}', not {Requested}; the row is not used. Correct the EHR data API.",
+                path, rowId, insurancePlanId);
             return null;
         }
         return ToSettings(row);
@@ -76,10 +112,10 @@ public class EhrApiPayerRepository : IPayerRepository
         PayerSettings payer = new PayerSettings();
         payer.PayerName = ReadText(row, "payerName") ?? string.Empty;
         payer.BaseUrl = ReadText(row, "baseUrl") ?? string.Empty;
-        int? piInsurancePlanId = ReadNumber(row, "piInsurancePlanId", payer.PayerName);
-        if (piInsurancePlanId != null)
+        int? insurancePlanId = ReadNumber(row, "InsurancePlanID", payer.PayerName);
+        if (insurancePlanId != null)
         {
-            payer.PiInsurancePlanId = piInsurancePlanId.Value;
+            payer.InsurancePlanId = insurancePlanId.Value;
         }
 
         bool? enabled = ReadFlag(row, "enabled", payer.PayerName);

@@ -26,12 +26,12 @@ public class InMemoryPriorAuthRepository : IPriorAuthRepository
     }
 
     /// <summary>The requests still waiting for a payer decision, optionally of one payer.</summary>
-    public Task<List<PriorAuthRecord>> GetOpenAsync(int? piInsurancePlanId, CancellationToken ct)
+    public Task<List<PriorAuthRecord>> GetOpenAsync(int? insurancePlanId, CancellationToken ct)
     {
         List<PriorAuthRecord> open = new List<PriorAuthRecord>();
         foreach (PriorAuthRecord record in _requests.Values)
         {
-            bool payerMatches = piInsurancePlanId == null || record.PiInsurancePlanId == piInsurancePlanId.Value;
+            bool payerMatches = insurancePlanId == null || record.InsurancePlanId == insurancePlanId.Value;
             if (record.IsOpen() && payerMatches)
             {
                 open.Add(record);

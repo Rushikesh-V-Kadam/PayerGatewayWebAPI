@@ -13,7 +13,7 @@ namespace PayerGatewayWebAPI.Services.Pas;
 /// <summary>
 /// PAS Subscription (Subscriptions R5 Backport). A pended request can take days; instead of asking the payer again and
 /// again, the gateway subscribes once per payer + provider organization. The payer then POSTs a notification to
-/// /pas/notifications/{piInsurancePlanId} when a ClaimResponse changes, and the gateway runs $inquire.
+/// /pas/notifications/{insurancePlanId} when a ClaimResponse changes, and the gateway runs $inquire.
 /// If the payer refuses the subscription, the decision is found when the client EHR calls POST .../inquire for its
 /// pended requests (the gateway has no background job).
 /// </summary>
@@ -64,7 +64,7 @@ public class PasSubscriptionService
     /// <summary>Does the work of EnsureSubscribedAsync; may throw PayerException or EhrException.</summary>
     private async Task SubscribeAsync(PayerSettings payer, string organizationNpi, CancellationToken ct)
     {
-        PayerSubscriptionRecord? existing = await _repository.GetAsync(payer.PiInsurancePlanId, organizationNpi, ct);
+        PayerSubscriptionRecord? existing = await _repository.GetAsync(payer.InsurancePlanId, organizationNpi, ct);
         if (existing != null && existing.Status == "active")
         {
             return;
@@ -84,7 +84,7 @@ public class PasSubscriptionService
         subscription.CriteriaExtensions.Extension.Add(filter);
 
         subscription.Channel = new SubscriptionChannel();
-        subscription.Channel.Endpoint = _workflow.GetGatewayBaseUrl() + "/pas/notifications/" + payer.PiInsurancePlanId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        subscription.Channel.Endpoint = _workflow.GetGatewayBaseUrl() + "/pas/notifications/" + payer.InsurancePlanId.ToString(System.Globalization.CultureInfo.InvariantCulture);
         subscription.Channel.Payload = ApiHeaders.FhirJson;
         Extension payload = new Extension(PasCodes.BackportPayloadContent);
         payload.ValueCode = "id-only";
@@ -92,7 +92,7 @@ public class PasSubscriptionService
         subscription.Channel.PayloadExtensions.Extension.Add(payload);
 
         PayerSubscriptionRecord record = new PayerSubscriptionRecord();
-        record.PiInsurancePlanId = payer.PiInsurancePlanId;
+        record.InsurancePlanId = payer.InsurancePlanId;
         record.OrganizationNpi = organizationNpi;
         try
         {

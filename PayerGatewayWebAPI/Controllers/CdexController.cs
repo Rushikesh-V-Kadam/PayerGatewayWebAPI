@@ -75,22 +75,22 @@ public class CdexController : ControllerBase
     }
 
     /// <summary>Called BY THE PAYER to push a Task (or a Bundle of Tasks) asking for more information.</summary>
-    /// <param name="piInsurancePlanId">The EHR's insurance plan id of the payer (the one the gateway put in this address).</param>
+    /// <param name="insurancePlanId">The EHR's insurance plan id of the payer (the one the gateway put in this address).</param>
     /// <param name="body">A FHIR Task or a Bundle of Tasks.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="202">Accepted.</response>
     /// <response code="400">Not a Task or a Bundle of Tasks, or the Task is not valid FHIR.</response>
     /// <response code="404">No payer is configured or enabled for this insurance plan id.</response>
     /// <response code="422">The Task is not about a request sent by this gateway.</response>
-    [HttpPost("tasks/{piInsurancePlanId:int}")]
+    [HttpPost("tasks/{insurancePlanId:int}")]
     [Consumes(ApiHeaders.FhirJson, ApiHeaders.Json)]
     [ProducesResponseType(typeof(NotificationResult), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status422UnprocessableEntity)]
-    public async Task<ActionResult<NotificationResult>> ReceiveTasks(int piInsurancePlanId, [FromBody] JsonObject? body, CancellationToken ct)
+    public async Task<ActionResult<NotificationResult>> ReceiveTasks(int insurancePlanId, [FromBody] JsonObject? body, CancellationToken ct)
     {
-        NotificationResult result = await _cdex.ReceivePushedTasksAsync(piInsurancePlanId, body, ct);
+        NotificationResult result = await _cdex.ReceivePushedTasksAsync(insurancePlanId, body, ct);
         return Accepted(result);
     }
 }

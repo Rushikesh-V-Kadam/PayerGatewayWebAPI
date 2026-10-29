@@ -25,28 +25,28 @@ public class PayersController : ControllerBase
 
     /// <summary>Shows the payer configuration of one insurance plan id.</summary>
     /// <remarks>
-    /// Read from the EHR data API (GET payers/{piInsurancePlanId}, table PA_PAYER). A switched-off payer is shown too
+    /// Read from the EHR data API (GET payers/{insurancePlanId}, table PA_PAYER). A switched-off payer is shown too
     /// (enabled = false); the other requests refuse it.
     /// </remarks>
-    /// <param name="piInsurancePlanId">The EHR's insurance plan id, e.g. 1001.</param>
+    /// <param name="insurancePlanId">The EHR's insurance plan id, e.g. 1001.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">The payer configuration.</response>
     /// <response code="404">No usable payer configuration for this insurance plan id.</response>
     /// <response code="503">The EHR data API is not available.</response>
-    [HttpGet("{piInsurancePlanId:int}")]
+    [HttpGet("{insurancePlanId:int}")]
     [ProducesResponseType(typeof(PayerSummary), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status503ServiceUnavailable)]
-    public async Task<ActionResult<PayerSummary>> Get(int piInsurancePlanId, CancellationToken ct)
+    public async Task<ActionResult<PayerSummary>> Get(int insurancePlanId, CancellationToken ct)
     {
-        PayerSettings? payer = await _payers.GetAsync(piInsurancePlanId, ct);
+        PayerSettings? payer = await _payers.GetAsync(insurancePlanId, ct);
         if (payer == null)
         {
-            throw new ApiException(StatusCodes.Status404NotFound, "No usable payer configuration for piInsurancePlanId " + piInsurancePlanId + ".");
+            throw new ApiException(StatusCodes.Status404NotFound, "No usable payer configuration for insurancePlanId " + insurancePlanId + ".");
         }
 
         PayerSummary summary = new PayerSummary();
-        summary.PiInsurancePlanId = payer.PiInsurancePlanId;
+        summary.InsurancePlanId = payer.InsurancePlanId;
         summary.PayerName = payer.PayerName;
         summary.Enabled = payer.Enabled;
         summary.BaseUrl = payer.BaseUrl;
@@ -59,20 +59,20 @@ public class PayersController : ControllerBase
     /// Shows which hooks the payer supports (look for "order-sign") and its prefetch templates,
     /// and refreshes the gateway's 12-hour cache. Use it when a new payer is onboarded.
     /// </remarks>
-    /// <param name="piInsurancePlanId">The EHR's insurance plan id of the payer, e.g. 1001.</param>
+    /// <param name="insurancePlanId">The EHR's insurance plan id of the payer, e.g. 1001.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">The payer's CDS services.</response>
     /// <response code="404">No payer is configured or enabled for this insurance plan id.</response>
     /// <response code="502">The payer answered with an error.</response>
     /// <response code="504">The payer did not answer in time.</response>
-    [HttpPost("{piInsurancePlanId:int}/discover")]
+    [HttpPost("{insurancePlanId:int}/discover")]
     [ProducesResponseType(typeof(CdsDiscoveryResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status502BadGateway)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status504GatewayTimeout)]
-    public async Task<ActionResult<CdsDiscoveryResponse>> Discover(int piInsurancePlanId, CancellationToken ct)
+    public async Task<ActionResult<CdsDiscoveryResponse>> Discover(int insurancePlanId, CancellationToken ct)
     {
-        PayerSettings payer = await _payers.GetRequiredAsync(piInsurancePlanId, StatusCodes.Status404NotFound, ct);
+        PayerSettings payer = await _payers.GetRequiredAsync(insurancePlanId, StatusCodes.Status404NotFound, ct);
         CdsDiscoveryResponse discovery = await _payerClient.DiscoverAsync(payer, payer.TimeoutSeconds, ct);
         _payers.CacheDiscovery(payer, discovery);
         return Ok(discovery);

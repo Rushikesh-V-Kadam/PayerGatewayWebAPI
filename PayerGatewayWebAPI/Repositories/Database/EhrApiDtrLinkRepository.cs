@@ -22,7 +22,7 @@ public class EhrApiDtrLinkRepository : IDtrLinkRepository
     {
         DtrLinkRow row = new DtrLinkRow();
         row.LinkId = record.LinkId;
-        row.PiInsurancePlanId = record.PiInsurancePlanId;
+        row.InsurancePlanId = record.InsurancePlanId;
         row.PatientId = record.PatientId;
         row.EncounterId = record.EncounterId;
         row.UserPractitionerId = record.UserPractitionerId;
@@ -44,7 +44,7 @@ public class EhrApiDtrLinkRepository : IDtrLinkRepository
 
         DtrLinkRecord record = new DtrLinkRecord();
         record.LinkId = row.LinkId;
-        record.PiInsurancePlanId = row.PiInsurancePlanId;
+        record.InsurancePlanId = row.InsurancePlanId;
         record.PatientId = row.PatientId;
         record.EncounterId = row.EncounterId;
         record.UserPractitionerId = row.UserPractitionerId;

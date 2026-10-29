@@ -4,7 +4,7 @@ namespace PayerGatewayWebAPI.Models.Entities;
 public class CdexTaskRecord
 {
     /// <summary>Insurance plan id of the payer that sent the Task (key, part 1).</summary>
-    public int PiInsurancePlanId { get; set; }
+    public int InsurancePlanId { get; set; }
     /// <summary>The payer's Task id (key, part 2).</summary>
     public string TaskId { get; set; } = string.Empty;
     /// <summary>The prior authorization request the Task belongs to.</summary>

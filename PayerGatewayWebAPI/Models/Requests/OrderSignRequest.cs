@@ -4,7 +4,7 @@ namespace PayerGatewayWebAPI.Models.Requests;
 
 /// <summary>
 /// Body of POST /crd/order-sign. Sent by the EHR when the clinician signs one or more orders.
-/// The gateway sends the CDS Hooks "order-sign" call to the payer of piInsurancePlanId.
+/// The gateway sends the CDS Hooks "order-sign" call to the payer of insurancePlanId.
 /// </summary>
 public class OrderSignRequest
 {
@@ -13,10 +13,10 @@ public class OrderSignRequest
     [Required]
     public string EventId { get; set; } = string.Empty;
 
-    /// <summary>Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.</summary>
+    /// <summary>Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.</summary>
     /// <example>1001</example>
     [Required]
-    public int? PiInsurancePlanId { get; set; }
+    public int? InsurancePlanId { get; set; }
 
     /// <summary>EHR patient id.</summary>
     /// <example>pat-1</example>

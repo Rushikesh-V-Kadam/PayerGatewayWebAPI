@@ -2,9 +2,9 @@
 
 **For the EHR team.** This is what the Payer Gateway needs from the EHR so that all prior authorization data is kept in the EHR's own Oracle database.
 
-- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (8 tables, all named `PA_...`). It is the only
+- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (7 tables, all named `PA_...`). It is the only
   script: no script has been run yet, so there are no ALTER scripts.
-- Web API to build: 17 small endpoints, described below. Each one reads or saves **one row of one table**.
+- Web API to build: 15 small endpoints, described below. Each one reads or saves **one row of one table**.
 - A working example of the whole API (in memory, for testing): `MockEhr.Api/Controllers/PriorAuthDataController.cs`.
 - Swagger file of the API (every endpoint and every property, with its meaning, column, example and required mark):
   `EHR-API-swagger.json`, next to this document. Open it in Swagger Editor or import it into Postman. The same document
@@ -18,15 +18,19 @@ EHR screens ──(existing gateway API: order-sign, forms, prior auth)──▶
      │                                                                      │
      │ SQL (read)                                                           │ EHR Data API (this document)
      ▼                                                                      ▼
-  EHR Oracle database:  PA_PAYER, PA_COVERAGE_DECISION, PA_PRIOR_AUTH, ...  ◀── EHR Web API (runs the SQL)
+  EHR Oracle database:  PA_PAYER, PA_DTR_FORM, PA_PRIOR_AUTH, ...  ◀── EHR Web API (runs the SQL)
 ```
 
 - The gateway has **no database connection**. It calls the EHR Data API for every read and every save.
 - The API must offer **read (GET) and save (PUT)**. Save alone is not enough: the gateway reads its rows back, for
   example when a payer answers days later, when a form is answered, or to find the requests that are still pended.
-- The EHR reads the same tables with its own SQL. Because the decisions are already in the EHR database, the gateway
-  **no longer sends a second copy to the EHR** (the old "write-back" calls `PUT api/orders/{id}/coverage-decision` and
-  `PUT api/prior-auth-requests/{id}` are gone and do not need to be built).
+- The EHR reads the same tables with its own SQL. Because the prior authorization decisions are already in the EHR
+  database, the gateway **no longer sends a second copy to the EHR** (the old "write-back" calls
+  `PUT api/orders/{id}/coverage-decision` and `PUT api/prior-auth-requests/{id}` are gone and do not need to be built).
+- **CRD order-sign decisions are not stored by the gateway.** The EHR stores the order-sign response on its side.
+  DTR and PAS do not read the decisions back: the EHR sends the values they need (`insurancePlanId`, `coverageId`,
+  `questionnaireUrls`, `coverageAssertionId`) in its own requests. (Changed Oct 30, 2026: table `PA_COVERAGE_DECISION`
+  and its two endpoints are removed.)
 - The payer list moves from the gateway's configuration file to table `PA_PAYER`. The EHR team maintains it; the
   gateway reads it.
 
@@ -47,7 +51,7 @@ EHR screens ──(existing gateway API: order-sign, forms, prior auth)──▶
 | GET a list | `200` with a JSON array `[ {...}, {...} ]`; an empty array `[]` when nothing matches. |
 | Errors | Any other status (`400`, `401`, `500` ...) means failure. A short text or JSON body with the reason helps: the gateway logs the first 300 characters. |
 | Ids in the URL | URL-encoded by the gateway (`PA%2F2026%2F1`). Decode them before use. |
-| Payer key | `piInsurancePlanId` (a whole number, column `PI_INSURANCE_PLAN_ID`) is the payer's key everywhere: in `PA_PAYER` and in every other table, path and filter. The gateway sends it as a plain number (`1001`). |
+| Payer key | `insurancePlanId` (a whole number, column `INSURANCE_PLAN_ID`) is the payer's key everywhere: in `PA_PAYER` and in every other table, path and filter. The gateway sends it as a plain number (`1001`). |
 | Extra properties | You may return extra properties (your own audit columns); the gateway ignores them. |
 
 ## 3. Endpoints
@@ -56,23 +60,21 @@ All paths are under `{EHR base URL}/api/prior-auth-data`.
 
 | # | Method and path | Table | Used for |
 | --- | --- | --- | --- |
-| 1 | `GET payers/{piInsurancePlanId}` | `PA_PAYER` | One payer's configuration by insurance plan id (the only payer endpoint; there is no payer list). `WHERE PI_INSURANCE_PLAN_ID = :piInsurancePlanId`. `404` when there is no such payer. |
-| 2 | `GET coverage-decisions/{orderId}` | `PA_COVERAGE_DECISION` | Latest coverage decision of an order. |
-| 3 | `PUT coverage-decisions/{orderId}` | `PA_COVERAGE_DECISION` | Save the coverage decision of an order. |
-| 4 | `GET dtr-forms/{formId}` | `PA_DTR_FORM` | One payer questionnaire and its answers. |
-| 5 | `PUT dtr-forms/{formId}` | `PA_DTR_FORM` | Save it. |
-| 6 | `GET dtr-links/{linkId}` | `PA_DTR_LINK` | One payer SMART DTR app link. |
-| 7 | `PUT dtr-links/{linkId}` | `PA_DTR_LINK` | Save it. |
-| 8 | `GET prior-auths/{requestId}` | `PA_PRIOR_AUTH` | One prior authorization request. |
-| 9 | `PUT prior-auths/{requestId}` | `PA_PRIOR_AUTH` | Save it (new request, update, cancel, new payer decision). |
-| 10 | `GET prior-auths?status=pended[&piInsurancePlanId=X]` | `PA_PRIOR_AUTH` | Requests still waiting for a payer. `WHERE STATUS = :status [AND PI_INSURANCE_PLAN_ID = :piInsurancePlanId]` |
-| 11 | `GET payer-subscriptions/{piInsurancePlanId}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Did we already subscribe at this payer for this organization? |
-| 12 | `PUT payer-subscriptions/{piInsurancePlanId}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Save the subscription. |
-| 13 | `PUT cdex-tasks/{piInsurancePlanId}/{taskId}` | `PA_CDEX_TASK` | Save a payer information request (Task). |
-| 14 | `GET cdex-tasks?requestId=X` | `PA_CDEX_TASK` | All Tasks of one prior authorization request. |
-| 15 | `GET questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | One filled-in form in FHIR format (called by the FHIR API). |
-| 16 | `PUT questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | Save it. |
-| 17 | `GET questionnaire-responses?patientId=X` | `PA_QUESTIONNAIRE_RESPONSE` | All FHIR forms of a patient, newest first (`ORDER BY LAST_UPDATED_UTC DESC`). |
+| 1 | `GET payers/{insurancePlanId}` | `PA_PAYER` | One payer's configuration by insurance plan id (the only payer endpoint; there is no payer list). `WHERE INSURANCE_PLAN_ID = :insurancePlanId`. Answer in the client's wrapper `{ "PayerDetail": {...}, "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }`; `PayerDetail` is `null` when there is no such payer (section 4.1). |
+| 2 | `GET dtr-forms/{formId}` | `PA_DTR_FORM` | One payer questionnaire and its answers. |
+| 3 | `PUT dtr-forms/{formId}` | `PA_DTR_FORM` | Save it. |
+| 4 | `GET dtr-links/{linkId}` | `PA_DTR_LINK` | One payer SMART DTR app link. |
+| 5 | `PUT dtr-links/{linkId}` | `PA_DTR_LINK` | Save it. |
+| 6 | `GET prior-auths/{requestId}` | `PA_PRIOR_AUTH` | One prior authorization request. |
+| 7 | `PUT prior-auths/{requestId}` | `PA_PRIOR_AUTH` | Save it (new request, update, cancel, new payer decision). |
+| 8 | `GET prior-auths?status=pended[&insurancePlanId=X]` | `PA_PRIOR_AUTH` | Requests still waiting for a payer. `WHERE STATUS = :status [AND INSURANCE_PLAN_ID = :insurancePlanId]` |
+| 9 | `GET payer-subscriptions/{insurancePlanId}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Did we already subscribe at this payer for this organization? |
+| 10 | `PUT payer-subscriptions/{insurancePlanId}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Save the subscription. |
+| 11 | `PUT cdex-tasks/{insurancePlanId}/{taskId}` | `PA_CDEX_TASK` | Save a payer information request (Task). |
+| 12 | `GET cdex-tasks?requestId=X` | `PA_CDEX_TASK` | All Tasks of one prior authorization request. |
+| 13 | `GET questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | One filled-in form in FHIR format (called by the FHIR API). |
+| 14 | `PUT questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | Save it. |
+| 15 | `GET questionnaire-responses?patientId=X` | `PA_QUESTIONNAIRE_RESPONSE` | All FHIR forms of a patient, newest first (`ORDER BY LAST_UPDATED_UTC DESC`). |
 
 There is no DELETE. Nothing is removed by the gateway.
 
@@ -82,7 +84,7 @@ Types: *text* = JSON string, *JSON text* = JSON string that holds JSON (CLOB), *
 
 ### 4.1 `PA_PAYER` (endpoint 1; maintained by the EHR team)
 
-**Only `piInsurancePlanId`, `payerName` and `baseUrl` must be filled.** Every other property is optional: it may be `null`, an empty text,
+**Only `insurancePlanId`, `payerName` and `baseUrl` must be filled.** Every other property is optional: it may be `null`, an empty text,
 or left out of the JSON, and the gateway then uses the default in the table. A row with only those three values is a
 working payer. An optional value the gateway cannot understand (for example text in `timeoutSeconds`) does not switch
 the payer off: the default is used and a warning is written to the gateway log. A row without `payerName`, or without a
@@ -90,7 +92,7 @@ complete `http` / `https` address in `baseUrl`, is left out (also with a warning
 
 | Property | Type | Meaning |
 | --- | --- | --- |
-| **piInsurancePlanId** | int | The EHR's insurance plan id of this payer (`PI_INSURANCE_PLAN_ID`). Key of the table and of endpoint 1. The EHR sends it as `piInsurancePlanId` in every gateway request. |
+| **insurancePlanId** | int | The EHR's insurance plan id of this payer (`INSURANCE_PLAN_ID`). Key of the table and of endpoint 1. The EHR sends it as `insurancePlanId` in every gateway request. |
 | **payerName** | text | Name of the payer. Only shown in the gateway's log lines and messages. |
 | enabled | bool | `false` = switched off (the gateway answers "payer not configured"). Empty = `true`. |
 | **baseUrl** | text | Payer base URL: a complete `http` / `https` address, e.g. `https://api.payer.com`. |
@@ -109,24 +111,24 @@ complete `http` / `https` address in `baseUrl`, is left out (also with a warning
 | dtrMode | text | `Forms` (the EHR shows the payer's questions) or `SmartApp` (the payer's own SMART DTR app). Empty = `Forms`. |
 | dtrAppLaunchUrl | text | Launch URL of the payer's DTR app. Empty = the URL on the payer's CRD card. |
 
-**Changed (Oct 29, 2026):** `piInsurancePlanId` is now a whole number (`NUMBER(10)`) and the key of `PA_PAYER`
-(previously `PAYER_NAME`). The list endpoint `GET payers` is removed: the gateway only reads one payer by its id. Every other
-table stores `piInsurancePlanId` instead of `payerName` (`PI_INSURANCE_PLAN_ID` instead of `PAYER_NAME`), and the paths
-and filters use it (`payer-subscriptions/{piInsurancePlanId}/...`, `cdex-tasks/{piInsurancePlanId}/...`,
-`prior-auths?status=pended&piInsurancePlanId=...`). The gateway reads payers only through this endpoint.
+**Changed (Oct 30, 2026):** the payer key is renamed: property `piInsurancePlanId` is now `insurancePlanId` and column
+`PI_INSURANCE_PLAN_ID` is now `INSURANCE_PLAN_ID`, in every table, path and filter. In the payer answer the client's
+name `InsurancePlanID` is used (the gateway does not mind upper / lower case).
 
-**Changed (Oct 28, 2026):** added `piInsurancePlanId` (column `PI_INSURANCE_PLAN_ID`), so one payer's configuration can
+**Changed (Oct 29, 2026):** `insurancePlanId` is now a whole number (`NUMBER(10)`) and the key of `PA_PAYER`
+(previously `PAYER_NAME`). The list endpoint `GET payers` is removed: the gateway only reads one payer by its id. Every other
+table stores `insurancePlanId` instead of `payerName` (`INSURANCE_PLAN_ID` instead of `PAYER_NAME`), and the paths
+and filters use it (`payer-subscriptions/{insurancePlanId}/...`, `cdex-tasks/{insurancePlanId}/...`,
+`prior-auths?status=pended&insurancePlanId=...`). The gateway reads payers only through this endpoint.
+
+**Changed (Oct 28, 2026):** added `insurancePlanId` (column `INSURANCE_PLAN_ID`), so one payer's configuration can
 be read by the EHR's insurance plan id (endpoint 1a); removed `displayName` (column `DISPLAY_NAME`) - the gateway shows
 `payerName` in its messages. The member id still belongs only to the patient's insurance (`memberId`). `memberIdSystem` and `payerIdSystem` stay removed (Oct 9, 2026): the gateway sends the ids
 without an identifier "system"; if the API still returns them, the gateway ignores them.
 
-The smallest row that works (as returned by `GET payers/2001`):
-
-```json
-  { "piInsurancePlanId": 2001, "payerName": "AcmeHealth", "baseUrl": "https://api.acmehealth.example" }
-```
-
-A row with every property. `GET payers/{piInsurancePlanId}` returns one JSON object (not an array):
+**Answer format of `GET payers/{insurancePlanId}` (the client EHR's format, Oct 30, 2026).** The row is wrapped in
+`PayerDetail` and uses the client's property names. The gateway matches property names without regard to upper / lower
+case, so `BaseURL` and `baseUrl` are the same; only the plan id is called `InsurancePlanID` here.
 
 ```http
 GET {EHR base URL}/api/prior-auth-data/payers/1001
@@ -134,52 +136,37 @@ GET {EHR base URL}/api/prior-auth-data/payers/1001
 
 ```json
 {
-  "piInsurancePlanId": 1001, "payerName": "MockPayer", "enabled": true,
-  "baseUrl": "http://localhost:5080",
-  "cdsServicesPath": "cds-services", "fhirPath": "fhir",
-  "authType": "none", "authTokenUrl": null, "authClientId": null, "authClientSecret": null, "authScope": null,
-  "signCdsHooksRequests": true, "useSubscriptions": true, "notificationSecret": null,
-  "crdTimeoutSeconds": 10, "timeoutSeconds": 30,
-  "dtrMode": "Forms", "dtrAppLaunchUrl": null
+  "PayerDetail": {
+    "InsurancePlanID": 1001, "PayerName": "MockPayer", "Enabled": true,
+    "BaseURL": "http://localhost:5080",
+    "CDSServicesPath": "cds-services", "FHIRPath": "fhir",
+    "AuthType": "none", "AuthTokenURL": null, "AuthClientID": null, "AuthClientSecret": null, "AuthScope": null,
+    "SignCDSHooksRequests": true, "UseSubscriptions": true, "NotificationSecret": null,
+    "CRDTimeoutSeconds": 30, "TimeoutSeconds": 30,
+    "DTRMode": "Forms", "DTRAppLaunchURL": null
+  },
+  "TOKEN_EXPIRED": "",
+  "ERROR_MESSAGE": ""
 }
 ```
 
-`404` when no row has that insurance plan id. A disabled payer (`enabled` = false) is still returned; the gateway decides.
-
-A new or changed payer is picked up by the gateway within `Storage:PayerCacheMinutes` (default 5 minutes); a payer name the
-gateway does not know yet is looked up again immediately.
-
-### 4.2 `PA_COVERAGE_DECISION` (endpoints 2, 3)
-
-| Property | Type | Meaning |
+| Case | Answer | What the gateway does |
 | --- | --- | --- |
-| **orderId** | text | Key. One row per order: a new decision replaces the old one. |
-| **eventId** | text | The order-sign event that produced it. |
-| piInsurancePlanId | int | Insurance plan id of the payer that answered. |
-| **patientId** | text | |
-| coverageAssertionId | text | The payer's id for this answer. |
-| **covered** | text | `covered`, `not-covered`, `conditional`, `unknown` |
-| priorAuthNeeded | text | `no-auth`, `auth-needed`, `satisfied`, `performpa`, `conditional` |
-| documentationNeeded | text | `no-doc`, `clinical`, `admin`, `both`, `conditional` |
-| **decisionJson** | JSON text | The full decision, same structure as one entry of `decisions` in the response of `POST /crd/order-sign` (`callDtr`, `callPas`, `questionnaireUrls`, `messages` ...). |
-| **updatedAt** | time | |
+| Payer found | `PayerDetail` = the row, both texts empty | Uses the row (a disabled payer is returned too; the gateway refuses it) |
+| No payer with this id | `{ "PayerDetail": null, "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }` | "Not configured": `400` / `404` to its caller. An HTTP `404` is understood the same way. |
+| Error | `TOKEN_EXPIRED` or `ERROR_MESSAGE` filled | The call failed: `503` to its caller; the text is written to the gateway log. (Which values `TOKEN_EXPIRED` can hold is still to be confirmed; for now any text means failure.) |
 
-```json
-{
-  "orderId": "ord-1-hd", "eventId": "evt-20261007-0001", "piInsurancePlanId": 1001, "patientId": "pat-1",
-  "coverageAssertionId": "702644806bf74c70aa65d2ca1a4a34b1",
-  "covered": "covered", "priorAuthNeeded": "auth-needed", "documentationNeeded": "clinical",
-  "decisionJson": "{\"orderId\":\"ord-1-hd\",\"piInsurancePlanId\":1001,\"covered\":\"covered\",\"callDtr\":true,\"callPas\":true, ...}",
-  "updatedAt": "2026-10-07T18:35:40.1234567Z"
-}
-```
+The smallest row that works: `{ "PayerDetail": { "InsurancePlanID": 2001, "PayerName": "AcmeHealth", "BaseURL": "https://api.acmehealth.example" }, "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }`.
 
-### 4.3 `PA_DTR_FORM` (endpoints 4, 5)
+A new or changed payer is picked up by the gateway within `Storage:PayerCacheMinutes` (default 5 minutes); an insurance plan id the
+gateway has no payer for yet is looked up again immediately.
+
+### 4.2 `PA_DTR_FORM` (endpoints 2, 3)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
 | **formId** | text | Key (created by the gateway, e.g. `frm-235b7ad69e85`). |
-| **piInsurancePlanId** | int | Insurance plan id of the payer. |
+| **insurancePlanId** | int | Insurance plan id of the payer. |
 | **patientId** | text | |
 | coverageId | text | |
 | orderIdsJson | JSON text | `["ord-1-hd"]` |
@@ -194,12 +181,12 @@ gateway does not know yet is looked up again immediately.
 | **createdAt** | time | |
 | **updatedAt** | time | |
 
-### 4.4 `PA_DTR_LINK` (endpoints 6, 7)
+### 4.3 `PA_DTR_LINK` (endpoints 4, 5)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
 | **linkId** | text | Key (created by the gateway). |
-| **piInsurancePlanId** | int | Insurance plan id of the payer. |
+| **insurancePlanId** | int | Insurance plan id of the payer. |
 | **patientId** | text | |
 | encounterId | text | |
 | userPractitionerId | text | |
@@ -208,12 +195,12 @@ gateway does not know yet is looked up again immediately.
 | **appUrl** | text | Up to 1000 characters. |
 | **expiresAt** | time | |
 
-### 4.5 `PA_PRIOR_AUTH` (endpoints 8, 9, 10)
+### 4.4 `PA_PRIOR_AUTH` (endpoints 6, 7, 8)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
 | **requestId** | text | The EHR's request id. Key. |
-| **piInsurancePlanId** | int | Insurance plan id of the payer. |
+| **insurancePlanId** | int | Insurance plan id of the payer. |
 | **patientId** | text | |
 | **coverageId** | text | |
 | memberId | text | |
@@ -235,7 +222,7 @@ gateway does not know yet is looked up again immediately.
 
 ```json
 {
-  "requestId": "PA-2026-0001", "piInsurancePlanId": 1001, "patientId": "pat-1", "coverageId": "cov-1",
+  "requestId": "PA-2026-0001", "insurancePlanId": 1001, "patientId": "pat-1", "coverageId": "cov-1",
   "memberId": "MBR-1001", "organizationId": "facility-loc-main", "organizationNpi": "1999999992",
   "practitionerId": "prac-1", "practitionerNpi": "1111111112",
   "priority": "routine", "status": "pended", "authorizationNumber": null, "versionNo": 1,
@@ -249,21 +236,21 @@ gateway does not know yet is looked up again immediately.
 }
 ```
 
-### 4.6 `PA_PAYER_SUBSCRIPTION` (endpoints 11, 12)
+### 4.5 `PA_PAYER_SUBSCRIPTION` (endpoints 9, 10)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
-| **piInsurancePlanId** | int | Insurance plan id of the payer. Key, part 1. |
+| **insurancePlanId** | int | Insurance plan id of the payer. Key, part 1. |
 | **organizationNpi** | text | Key, part 2. |
 | subscriptionId | text | The payer's id of the subscription. |
 | **status** | text | `active`, `error` |
 | **createdAt** | time | |
 
-### 4.7 `PA_CDEX_TASK` (endpoints 13, 14)
+### 4.6 `PA_CDEX_TASK` (endpoints 11, 12)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
-| **piInsurancePlanId** | int | Insurance plan id of the payer. Key, part 1. |
+| **insurancePlanId** | int | Insurance plan id of the payer. Key, part 1. |
 | **taskId** | text | Key, part 2 (the payer's Task id). |
 | **requestId** | text | The prior authorization request it belongs to. |
 | **trackingId** | text | |
@@ -273,7 +260,7 @@ gateway does not know yet is looked up again immediately.
 | **taskJson** | JSON text | The FHIR Task as received. |
 | **receivedAt** | time | |
 
-### 4.8 `PA_QUESTIONNAIRE_RESPONSE` (endpoints 15, 16, 17; called by the FHIR API)
+### 4.7 `PA_QUESTIONNAIRE_RESPONSE` (endpoints 13, 14, 15; called by the FHIR API)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -294,7 +281,6 @@ Nothing is pushed to the EHR. The EHR screens read the tables (example SQL is at
 
 | The EHR wants to show | Read |
 | --- | --- |
-| Does this order need prior auth / documentation? | `PA_COVERAGE_DECISION` by `ORDER_ID` (`PRIOR_AUTH_NEEDED`, `DOCUMENTATION_NEEDED`, and `callDtr` / `callPas` in `DECISION_JSON`) |
 | Status and authorization number of a request | `PA_PRIOR_AUTH` by `REQUEST_ID` (`STATUS`, `AUTHORIZATION_NUMBER`) |
 | Decision per order line, validity dates | `PA_PRIOR_AUTH.DECISION_JSON` → `lines[]` |
 | What the payer still needs (documents, due date) | `PA_PRIOR_AUTH.DECISION_JSON` → `informationRequests[]` |
@@ -303,15 +289,16 @@ Nothing is pushed to the EHR. The EHR screens read the tables (example SQL is at
 **Decisions that arrive later.** A payer can pend a request and decide days later. The payer's notification, or the
 EHR's own call to inquire for a pended request (the gateway has no background job), then updates the same `PA_PRIOR_AUTH` row. The EHR can notice this in any of three ways:
 read the row when the screen opens; ask for rows with `UPDATED_AT > :lastCheck`; or react inside the Web API when
-endpoint 9 is called (for example, raise a task for the user when `status` changes).
+endpoint 7 is called (for example, raise a task for the user when `status` changes).
 The gateway saves a row only when something in it changed: asking a payer again and getting the same answer does not
 save, so `UPDATED_AT` of `PA_PRIOR_AUTH` and `RECEIVED_AT` of `PA_CDEX_TASK` move only when there is something new.
 
-The same data is also available from the gateway: `GET /crd/decisions/{orderId}` and `GET /pas/requests/{requestId}`.
+The same data is also available from the gateway: `GET /pas/requests/{requestId}`. The CRD order-sign decisions are
+not in these tables: the EHR keeps the order-sign response itself.
 
 ## 6. What the gateway expects from the API
 
-- **Speed.** The clinician waits during order-sign, and that one call makes 3 or more data API calls. Aim for well
+- **Speed.** The clinician waits during order-sign, and that call reads the payer (and saves payer app links). Aim for well
   under 1 second per call. The gateway gives up after `Ehr:TimeoutSeconds` (default 30).
 - **Retries.** The gateway tries a failed PUT up to 3 times. PUT must therefore be safe to repeat (insert or update).
 - **Availability.** If the data API is down, the gateway answers its callers with `503` and nothing can be processed.
@@ -323,13 +310,13 @@ Data API calls per gateway operation (for sizing):
 
 | Gateway operation | Data API calls |
 | --- | --- |
-| Order-sign | `PUT coverage-decisions` per order (and `PUT dtr-links` for each payer app link) |
+| Order-sign | `GET payers/{insurancePlanId}` (kept 5 minutes), and `PUT dtr-links` for each payer app link |
 | Get a form | `PUT dtr-forms` per questionnaire |
 | Save answers | `GET dtr-forms`, `GET` + `PUT questionnaire-responses`, `PUT dtr-forms` |
 | Submit / update a request | `GET prior-auths/{id}`, `GET questionnaire-responses?patientId`, `PUT prior-auths/{id}`, `GET payer-subscriptions` (+ `PUT` the first time) |
 | Ask the payer again (inquire) | `GET prior-auths/{id}`; `PUT prior-auths/{id}` only when the decision changed |
 | Look for payer Tasks (`information-requests?refresh=true`, called by the EHR for a pended request) | `GET prior-auths/{id}`, then per Task the payer has open `GET prior-auths/{id}` + `GET cdex-tasks?requestId`. A `PUT` (`prior-auths`, `cdex-tasks`) follows only when something changed |
-| Payer notification | `GET prior-auths?status=pended&piInsurancePlanId={piInsurancePlanId}`, then the inquire calls above per request |
+| Payer notification | `GET prior-auths?status=pended&insurancePlanId={insurancePlanId}`, then the inquire calls above per request |
 
 ## 7. Testing
 

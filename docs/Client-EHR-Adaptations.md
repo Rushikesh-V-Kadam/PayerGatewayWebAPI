@@ -35,7 +35,7 @@ profile and X12 278 rules), and the code is changed when that payer is onboarded
 
 | Required | Why | Missing → |
 |---|---|---|
-| `eventId`, `piInsurancePlanId`, at least one order | Gateway: the key of the event, which payer to call, what to check | 400 |
+| `eventId`, `insurancePlanId`, at least one order | Gateway: the key of the event, which payer to call, what to check | 400 |
 | Patient | CDS Hooks `context.patientId` 1..1 | 400 / 404 |
 | Signing clinician `userPractitionerId` | CDS Hooks `context.userId` 1..1 | 400 |
 
@@ -46,14 +46,14 @@ everything else on the orders.
 
 | Required | Why | Missing → |
 |---|---|---|
-| `piInsurancePlanId`, `patientId`, at least one order | Gateway | 400 |
+| `insurancePlanId`, `patientId`, at least one order | Gateway | 400 |
 | Active insurance | `$questionnaire-package` input `coverage` 1..1 | 422 |
 
 ### PAS
 
 | Required | Why | Missing → |
 |---|---|---|
-| `requestId`, `piInsurancePlanId`, at least one order | Gateway: the key for update / cancel / inquire / CDex, which payer, what to authorize | 400 |
+| `requestId`, `insurancePlanId`, at least one order | Gateway: the key for update / cancel / inquire / CDex, which payer, what to authorize | 400 |
 | Patient | `Claim.patient` 1..1 | 400 / 404 |
 | Facility `orderLocationCode` | `Claim.provider` 1..1 | 400 / 404 |
 | Requesting clinician `requestingPractitionerId` | Gateway rule (`Claim.careTeam` is 0..* in R4) | 400 / 404 |

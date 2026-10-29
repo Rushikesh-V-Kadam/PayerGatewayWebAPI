@@ -2,7 +2,7 @@
   "openapi": "3.0.4",
   "info": {
     "title": "Payer Gateway Web API",
-    "description": "Da Vinci prior authorization for the EHR. Call order: 1) POST /crd/order-sign  2) DTR forms (when documentation is needed)  3) POST /pas/requests (when prior auth is needed)  4) CDex attachments (when the payer pends and asks for more). Every EHR request carries piInsurancePlanId (the insurance plan id); the gateway reads that payer's configuration (table PA_PAYER). All gateway data is stored in the EHR database through the EHR data API, so decisions are not written back separately. No authentication is built in (it is added outside this code). Errors always return { \"error\": \"...\", \"details\": [ ... ], \"traceId\": \"...\" }.",
+    "description": "Da Vinci prior authorization for the EHR. Call order: 1) POST /crd/order-sign  2) DTR forms (when documentation is needed)  3) POST /pas/requests (when prior auth is needed)  4) CDex attachments (when the payer pends and asks for more). Every EHR request carries insurancePlanId (the insurance plan id); the gateway reads that payer's configuration (table PA_PAYER). All gateway data is stored in the EHR database through the EHR data API, so decisions are not written back separately. No authentication is built in (it is added outside this code). Errors always return { \"error\": \"...\", \"details\": [ ... ], \"traceId\": \"...\" }.",
     "version": "v1"
   },
   "paths": {
@@ -163,7 +163,7 @@
         }
       }
     },
-    "/cdex/tasks/{piInsurancePlanId}": {
+    "/cdex/tasks/{insurancePlanId}": {
       "post": {
         "tags": [
           "Cdex"
@@ -171,7 +171,7 @@
         "summary": "Called BY THE PAYER to push a Task (or a Bundle of Tasks) asking for more information.",
         "parameters": [
           {
-            "name": "piInsurancePlanId",
+            "name": "insurancePlanId",
             "in": "path",
             "description": "The EHR's insurance plan id of the payer.",
             "required": true,
@@ -252,9 +252,9 @@
           "Crd"
         ],
         "summary": "Order signed: asks the payer (CDS Hooks order-sign) and returns one coverage decision per order.",
-        "description": "The gateway reads the patient, orders and coverage from the FHIR API, calls the payer of\npiInsurancePlanId, and reads pa-needed / doc-needed from the payer's answer.\n            \nWhat to do with each decision:\n- **callDtr = true** → POST /dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.\n- **callPas = true** → POST /pas/requests (after DTR when both are true).\n- both false → nothing more is needed for that order.\n            \nIf the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = \"unknown\" and payerCall.outcome = \"timeout\" / \"error\".\nOrders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).\nEvery call asks the payer again; sending the same eventId again (for example after a timeout) gets a fresh answer.",
+        "description": "The gateway reads the patient, orders and coverage from the FHIR API, calls the payer of\ninsurancePlanId, and reads pa-needed / doc-needed from the payer's answer.\n            \nWhat to do with each decision:\n- **callDtr = true** → POST /dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.\n- **callPas = true** → POST /pas/requests (after DTR when both are true).\n- both false → nothing more is needed for that order.\n            \nIf the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = \"unknown\" and payerCall.outcome = \"timeout\" / \"error\".\nOrders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).\nEvery call asks the payer again; sending the same eventId again (for example after a timeout) gets a fresh answer.",
         "requestBody": {
-          "description": "Required. The signing event: eventId, piInsurancePlanId, patientId and orderIds must be filled.",
+          "description": "Required. The signing event: eventId, insurancePlanId, patientId and orderIds must be filled.",
           "content": {
             "application/json": {
               "schema": {
@@ -276,7 +276,7 @@
             }
           },
           "400": {
-            "description": "Invalid body, missing field (coverageId / userPractitionerId included), unknown piInsurancePlanId, or an order of another patient.",
+            "description": "Invalid body, missing field (coverageId / userPractitionerId included), unknown insurancePlanId, or an order of another patient.",
             "content": {
               "application/json": {
                 "schema": {
@@ -307,47 +307,6 @@
           },
           "503": {
             "description": "The database is not available.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/crd/decisions/{orderId}": {
-      "get": {
-        "tags": [
-          "Crd"
-        ],
-        "summary": "Latest coverage decision of an order (no payer call).",
-        "parameters": [
-          {
-            "name": "orderId",
-            "in": "path",
-            "description": "EHR order id, e.g. ord-1-hd.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The stored decision.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoverageDecision"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No order-sign was run for this order.",
             "content": {
               "application/json": {
                 "schema": {
@@ -392,7 +351,7 @@
             }
           },
           "400": {
-            "description": "Invalid body, missing field, unknown piInsurancePlanId, or an order of another patient.",
+            "description": "Invalid body, missing field, unknown insurancePlanId, or an order of another patient.",
             "content": {
               "application/json": {
                 "schema": {
@@ -675,7 +634,7 @@
         }
       }
     },
-    "/dtr/{piInsurancePlanId}/Questionnaire/$questionnaire-package": {
+    "/dtr/{insurancePlanId}/Questionnaire/$questionnaire-package": {
       "post": {
         "tags": [
           "DTR 2 - Payer SMART app"
@@ -684,7 +643,7 @@
         "description": "Only needed when a DTR app calls the payer through the gateway (most payer apps call their own payer directly).",
         "parameters": [
           {
-            "name": "piInsurancePlanId",
+            "name": "insurancePlanId",
             "in": "path",
             "description": "The EHR's insurance plan id of the payer.",
             "required": true,
@@ -758,7 +717,7 @@
         }
       }
     },
-    "/dtr/{piInsurancePlanId}/Questionnaire/$next-question": {
+    "/dtr/{insurancePlanId}/Questionnaire/$next-question": {
       "post": {
         "tags": [
           "DTR 2 - Payer SMART app"
@@ -766,7 +725,7 @@
         "summary": "For payer SMART DTR apps: adaptive forms, $next-question passed to the payer unchanged.",
         "parameters": [
           {
-            "name": "piInsurancePlanId",
+            "name": "insurancePlanId",
             "in": "path",
             "description": "The EHR's insurance plan id of the payer.",
             "required": true,
@@ -848,7 +807,7 @@
         "summary": "Submits a new prior authorization request (Claim/$submit).",
         "description": "Call when order-sign returned callPas = true (after DTR when callDtr was also true).\nThe gateway builds the PAS Bundle with the Claim, patient, coverage, organization, practitioner and orders,\nattaches **completed DTR forms of these orders automatically**, plus the documents in documentIds (file embedded).\n            \noverallStatus in the answer: approved | partially-approved | denied | pended | not-required | contact-payer.\nWhen pended, the payer may ask for more (informationRequests) → CDex attachments.\nNothing is saved when the payer rejects the request (422 / 502 with the payer's errors); correct the data and\nsend the same requestId again. The payer can reject with an HTTP error or with an answer that only carries errors\n(for example \"member not found\") - both give 422.",
         "requestBody": {
-          "description": "Required. The prior authorization request: requestId, piInsurancePlanId, patientId and orderIds must be filled. orderLocationCode and requestingPractitionerId are required too.",
+          "description": "Required. The prior authorization request: requestId, insurancePlanId, patientId and orderIds must be filled. orderLocationCode and requestingPractitionerId are required too.",
           "content": {
             "application/json": {
               "schema": {
@@ -870,7 +829,7 @@
             }
           },
           "400": {
-            "description": "Invalid body, missing field, unknown piInsurancePlanId, an order of another patient, or orderLocationCode / requestingPractitionerId missing.",
+            "description": "Invalid body, missing field, unknown insurancePlanId, an order of another patient, or orderLocationCode / requestingPractitionerId missing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1232,7 +1191,7 @@
         }
       }
     },
-    "/pas/notifications/{piInsurancePlanId}": {
+    "/pas/notifications/{insurancePlanId}": {
       "post": {
         "tags": [
           "Pas"
@@ -1241,7 +1200,7 @@
         "description": "The gateway then inquires every open request of that payer and saves the new decisions.",
         "parameters": [
           {
-            "name": "piInsurancePlanId",
+            "name": "insurancePlanId",
             "in": "path",
             "description": "The EHR's insurance plan id of the payer.",
             "required": true,
@@ -1306,16 +1265,16 @@
         }
       }
     },
-    "/payers/{piInsurancePlanId}": {
+    "/payers/{insurancePlanId}": {
       "get": {
         "tags": [
           "Payers"
         ],
         "summary": "Shows the payer configuration of one insurance plan id.",
-        "description": "Read from the EHR data API (GET payers/{piInsurancePlanId}, table PA_PAYER). A switched-off payer is shown too (enabled = false); the other requests refuse it.",
+        "description": "Read from the EHR data API (GET payers/{insurancePlanId}, table PA_PAYER). A switched-off payer is shown too (enabled = false); the other requests refuse it.",
         "parameters": [
           {
-            "name": "piInsurancePlanId",
+            "name": "insurancePlanId",
             "in": "path",
             "description": "The EHR's insurance plan id, e.g. 1001.",
             "required": true,
@@ -1359,7 +1318,7 @@
         }
       }
     },
-    "/payers/{piInsurancePlanId}/discover": {
+    "/payers/{insurancePlanId}/discover": {
       "post": {
         "tags": [
           "Payers"
@@ -1368,7 +1327,7 @@
         "description": "Shows which hooks the payer supports (look for \"order-sign\") and its prefetch templates,\nand refreshes the gateway's 12-hour cache. Use it when a new payer is onboarded.",
         "parameters": [
           {
-            "name": "piInsurancePlanId",
+            "name": "insurancePlanId",
             "in": "path",
             "description": "The EHR's insurance plan id of the payer.",
             "required": true,
@@ -1617,7 +1576,7 @@
             "type": "string",
             "example": "ord-1-hd"
           },
-          "piInsurancePlanId": {
+          "insurancePlanId": {
             "type": "integer",
             "format": "int32",
             "nullable": true,
@@ -1709,7 +1668,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "CRD answer for one order. Also saved in table PA_COVERAGE_DECISION of the EHR database (column DECISION_JSON),\nwhere the EHR reads it.\nWhat to do next:\n  callDtr = true  -> DTR: POST /dtr/forms with questionnaireUrls, then POST .../answers\n  callPas = true  -> PAS: POST /pas/requests (after DTR when both are true)\n  both false      -> nothing more for this order (see covered / priorAuthNeeded)"
+        "description": "CRD answer for one order. The gateway does not save it: the EHR stores the order-sign response on its side.\nWhat to do next:\n  callDtr = true  -> DTR: POST /dtr/forms with questionnaireUrls, then POST .../answers\n  callPas = true  -> PAS: POST /pas/requests (after DTR when both are true)\n  both false      -> nothing more for this order (see covered / priorAuthNeeded)"
       },
       "DocumentNeeded": {
         "type": "object",
@@ -1878,7 +1837,7 @@
             "description": "Gateway id of this form. Use it to read the form and to send the answers.",
             "example": "frm-6f1c2a9e"
           },
-          "piInsurancePlanId": {
+          "insurancePlanId": {
             "type": "integer",
             "format": "int32",
             "description": "The EHR's insurance plan id of the payer.",
@@ -1949,15 +1908,15 @@
           "coverageId",
           "orderIds",
           "patientId",
-          "piInsurancePlanId"
+          "insurancePlanId"
         ],
         "type": "object",
         "properties": {
-          "piInsurancePlanId": {
+          "insurancePlanId": {
             "type": "integer",
             "format": "int32",
             "nullable": true,
-            "description": "Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.",
+            "description": "Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.",
             "example": 1001
           },
           "patientId": {
@@ -2269,7 +2228,7 @@
           "eventId",
           "orderIds",
           "patientId",
-          "piInsurancePlanId",
+          "insurancePlanId",
           "userPractitionerId"
         ],
         "type": "object",
@@ -2280,11 +2239,11 @@
             "description": "Unique id of this signing event in the EHR. Sending the same id again returns the stored answer (no second payer call).",
             "example": "evt-20260929-0001"
           },
-          "piInsurancePlanId": {
+          "insurancePlanId": {
             "type": "integer",
             "format": "int32",
             "nullable": true,
-            "description": "Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.",
+            "description": "Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.",
             "example": 1001
           },
           "patientId": {
@@ -2324,7 +2283,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Body of POST /crd/order-sign. Sent by the EHR when the clinician signs one or more orders.\nThe gateway sends the CDS Hooks \"order-sign\" call to the payer of piInsurancePlanId."
+        "description": "Body of POST /crd/order-sign. Sent by the EHR when the clinician signs one or more orders.\nThe gateway sends the CDS Hooks \"order-sign\" call to the payer of insurancePlanId."
       },
       "OrderSignResponse": {
         "type": "object",
@@ -2333,7 +2292,7 @@
             "type": "string",
             "example": "evt-20260929-0001"
           },
-          "piInsurancePlanId": {
+          "insurancePlanId": {
             "type": "integer",
             "format": "int32",
             "description": "The EHR's insurance plan id of the payer.",
@@ -2363,7 +2322,7 @@
       "PayerCallSummary": {
         "type": "object",
         "properties": {
-          "piInsurancePlanId": {
+          "insurancePlanId": {
             "type": "integer",
             "format": "int32",
             "description": "The EHR's insurance plan id of the payer.",
@@ -2402,10 +2361,10 @@
       "PayerSummary": {
         "type": "object",
         "properties": {
-          "piInsurancePlanId": {
+          "insurancePlanId": {
             "type": "integer",
             "format": "int32",
-            "description": "The EHR's insurance plan id of this payer (PA_PAYER.PI_INSURANCE_PLAN_ID); the value the EHR sends as piInsurancePlanId.",
+            "description": "The EHR's insurance plan id of this payer (PA_PAYER.INSURANCE_PLAN_ID); the value the EHR sends as insurancePlanId.",
             "example": 1001
           },
           "payerName": {
@@ -2428,7 +2387,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "The configuration of one payer, as shown by GET /payers/{piInsurancePlanId}."
+        "description": "The configuration of one payer, as shown by GET /payers/{insurancePlanId}."
       },
       "PriorAuthDecision": {
         "type": "object",
@@ -2437,7 +2396,7 @@
             "type": "string",
             "example": "PA-2026-0001"
           },
-          "piInsurancePlanId": {
+          "insurancePlanId": {
             "type": "integer",
             "format": "int32",
             "nullable": true,
@@ -2586,7 +2545,7 @@
           "orderIds",
           "orderLocationCode",
           "patientId",
-          "piInsurancePlanId",
+          "insurancePlanId",
           "requestingPractitionerId"
         ],
         "type": "object",
@@ -2596,11 +2555,11 @@
             "description": "Required for POST. EHR id of the request; becomes Claim.identifier and is used for update, cancel, inquire and CDex. May be empty on PUT (taken from the URL).",
             "example": "PA-2026-0001"
           },
-          "piInsurancePlanId": {
+          "insurancePlanId": {
             "type": "integer",
             "format": "int32",
             "nullable": true,
-            "description": "Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.",
+            "description": "Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.",
             "example": 1001
           },
           "patientId": {

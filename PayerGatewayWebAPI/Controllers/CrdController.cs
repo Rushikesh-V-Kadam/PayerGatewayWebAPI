@@ -23,7 +23,7 @@ public class CrdController : ControllerBase
     /// <summary>Order signed: asks the payer (CDS Hooks order-sign) and returns one coverage decision per order.</summary>
     /// <remarks>
     /// The gateway reads the patient, orders and coverage from the FHIR API, calls the payer of
-    /// piInsurancePlanId, and reads pa-needed / doc-needed from the payer's answer.
+    /// insurancePlanId, and reads pa-needed / doc-needed from the payer's answer.
     ///
     /// What to do with each decision:
     /// - **callDtr = true** → POST /dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.
@@ -33,14 +33,16 @@ public class CrdController : ControllerBase
     /// If the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = "unknown" and payerCall.outcome = "timeout" / "error".
     /// Orders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).
     /// Every call asks the payer again; sending the same eventId again (for example after a timeout) gets a fresh answer.
+    /// The gateway does not save the decisions: the EHR stores this response and sends the values DTR and PAS need
+    /// (insurancePlanId, coverageId, questionnaireUrls, coverageAssertionId) in those requests.
     /// </remarks>
-    /// <param name="request">Required. The signing event: eventId, piInsurancePlanId, patientId and orderIds must be filled.</param>
+    /// <param name="request">Required. The signing event: eventId, insurancePlanId, patientId and orderIds must be filled.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">One decision per order (see callDtr / callPas).</response>
-    /// <response code="400">Invalid body, missing field (coverageId / userPractitionerId included), unknown piInsurancePlanId, or an order of another patient.</response>
+    /// <response code="400">Invalid body, missing field (coverageId / userPractitionerId included), unknown insurancePlanId, or an order of another patient.</response>
     /// <response code="404">Patient or orders not found at the FHIR API. (An insurance that cannot be used is not an error: the decisions are "unknown" with the reason.)</response>
     /// <response code="502">The FHIR API failed.</response>
-    /// <response code="503">The database is not available.</response>
+    /// <response code="503">The EHR data API is not available (the payer configuration could not be read).</response>
     [HttpPost("order-sign")]
     [Consumes("application/json")]
     [ProducesResponseType(typeof(OrderSignResponse), StatusCodes.Status200OK)]
@@ -54,17 +56,4 @@ public class CrdController : ControllerBase
         return Ok(response);
     }
 
-    /// <summary>Latest coverage decision of an order (no payer call).</summary>
-    /// <param name="orderId">EHR order id, e.g. ord-1-hd.</param>
-    /// <param name="ct">Cancelled when the caller disconnects.</param>
-    /// <response code="200">The stored decision.</response>
-    /// <response code="404">No order-sign was run for this order.</response>
-    [HttpGet("decisions/{orderId}")]
-    [ProducesResponseType(typeof(CoverageDecision), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<CoverageDecision>> GetDecision(string orderId, CancellationToken ct)
-    {
-        CoverageDecision decision = await _crd.GetDecisionAsync(orderId, ct);
-        return Ok(decision);
-    }
 }

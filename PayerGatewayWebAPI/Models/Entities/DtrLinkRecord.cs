@@ -9,7 +9,7 @@ public class DtrLinkRecord
     /// <summary>Link id created by the gateway (key); part of the URL given to the EHR.</summary>
     public string LinkId { get; set; } = Guid.NewGuid().ToString("N");
     /// <summary>Insurance plan id of the payer whose DTR app is opened.</summary>
-    public int PiInsurancePlanId { get; set; }
+    public int InsurancePlanId { get; set; }
     /// <summary>EHR patient id.</summary>
     public string PatientId { get; set; } = string.Empty;
     /// <summary>Encounter in context, if any.</summary>
