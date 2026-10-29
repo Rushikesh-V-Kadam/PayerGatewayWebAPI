@@ -8,8 +8,8 @@ public class DtrLinkRow
 {
     /// <summary>Column LINK_ID (key).</summary>
     public string LinkId { get; set; } = string.Empty;
-    /// <summary>Column PAYER_NAME.</summary>
-    public string PayerName { get; set; } = string.Empty;
+    /// <summary>Column PI_INSURANCE_PLAN_ID: insurance plan id of the payer.</summary>
+    public int PiInsurancePlanId { get; set; }
     /// <summary>Column PATIENT_ID.</summary>
     public string PatientId { get; set; } = string.Empty;
     /// <summary>Column ENCOUNTER_ID.</summary>

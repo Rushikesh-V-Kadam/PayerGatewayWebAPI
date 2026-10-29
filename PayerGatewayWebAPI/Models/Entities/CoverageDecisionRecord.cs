@@ -7,8 +7,8 @@ public class CoverageDecisionRecord
     public string OrderId { get; set; } = string.Empty;
     /// <summary>The order-sign event that produced the decision.</summary>
     public string EventId { get; set; } = string.Empty;
-    /// <summary>Payer that answered.</summary>
-    public string? PayerName { get; set; }
+    /// <summary>Insurance plan id of the payer that answered.</summary>
+    public int? PiInsurancePlanId { get; set; }
     /// <summary>EHR patient id.</summary>
     public string PatientId { get; set; } = string.Empty;
     /// <summary>The payer's id for this answer (needed for DTR).</summary>

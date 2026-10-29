@@ -437,7 +437,7 @@ public class PasBundleBuilder
         insurer["resourceType"] = "Organization";
         insurer["id"] = insurerId;
         insurer["active"] = true;
-        insurer["name"] = input.Coverage.PayorDisplay() ?? payer.GetDisplayName();
+        insurer["name"] = input.Coverage.PayorDisplay() ?? payer.PayerName;
 
         Identifier? payorId = input.Coverage.PayorIdentifier();
         if (payorId != null && !string.IsNullOrWhiteSpace(payorId.Value))

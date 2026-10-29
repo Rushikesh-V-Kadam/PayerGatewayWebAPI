@@ -17,7 +17,7 @@ namespace PayerGatewayWebAPI.Controllers;
 /// EHR screen shows them and sends the answers back. saved-forms is used by both groups.
 /// </summary>
 [ApiController]
-[Route("api/v1/dtr")]
+[Route("dtr")]
 [Tags("DTR 1 - Forms (our questionnaire app or EHR screen)")]
 public class DtrFormsController : ControllerBase
 {
@@ -36,12 +36,12 @@ public class DtrFormsController : ControllerBase
     /// with the orders and coverage, and returns one form per questionnaire.
     ///
     /// Next: show each question (text, type, options, required, showWhen) on the EHR screen and send the answers to
-    /// POST /api/v1/dtr/forms/{formId}/answers. During testing the answers can be sent from Swagger or Postman.
+    /// POST /dtr/forms/{formId}/answers. During testing the answers can be sent from Swagger or Postman.
     /// </remarks>
     /// <param name="request">Required. Payer, patient, orders and the questionnaire URLs from the order-sign decision.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">The forms with their questions.</response>
-    /// <response code="400">Invalid body, missing field, unknown payerName, or an order of another patient.</response>
+    /// <response code="400">Invalid body, missing field, unknown piInsurancePlanId, or an order of another patient.</response>
     /// <response code="404">An order was not found at the FHIR API.</response>
     /// <response code="422">The insurance (coverageId) is not found, belongs to another patient or is not active; or the payer refused / returned no questionnaire.</response>
     /// <response code="502">The payer or the FHIR API failed.</response>
@@ -62,7 +62,7 @@ public class DtrFormsController : ControllerBase
     }
 
     /// <summary>Reads a form: its questions and the answers saved so far.</summary>
-    /// <param name="formId">Form id from POST /api/v1/dtr/forms, e.g. frm-6f1c2a9e.</param>
+    /// <param name="formId">Form id from POST /dtr/forms, e.g. frm-6f1c2a9e.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">The form.</response>
     /// <response code="404">Unknown formId.</response>
@@ -85,10 +85,10 @@ public class DtrFormsController : ControllerBase
     /// - complete = true: all required (shown) questions must be answered, otherwise 422 lists them.
     /// - complete = false: saved as in-progress; missingRequired lists what is still open.
     ///
-    /// The QuestionnaireResponse is saved at the FHIR API. POST /api/v1/pas/requests attaches completed forms
+    /// The QuestionnaireResponse is saved at the FHIR API. POST /pas/requests attaches completed forms
     /// of the same orders automatically; for CDex send questionnaireResponseId in the attachments call.
     /// </remarks>
-    /// <param name="formId">Form id from POST /api/v1/dtr/forms.</param>
+    /// <param name="formId">Form id from POST /dtr/forms.</param>
     /// <param name="request">Required. The answers (one entry per answered question).</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="200">Saved; the QuestionnaireResponse id is returned.</response>
@@ -113,7 +113,7 @@ public class DtrFormsController : ControllerBase
     /// <summary>Lists the DTR forms saved for a patient (by the gateway forms or by a payer's SMART DTR app).</summary>
     /// <remarks>
     /// After the payer's own DTR app was used (it saves its QuestionnaireResponse at the FHIR API), call this to see
-    /// whether the form is completed. POST /api/v1/pas/requests attaches completed forms of the same orders automatically.
+    /// whether the form is completed. POST /pas/requests attaches completed forms of the same orders automatically.
     /// </remarks>
     /// <param name="patientId">Patient id, e.g. pat-1. Required.</param>
     /// <param name="orderId">Optional: only the forms of this order.</param>

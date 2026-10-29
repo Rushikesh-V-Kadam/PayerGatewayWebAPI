@@ -174,7 +174,7 @@ public class PayerClient
             string text = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
             {
-                throw new PayerException(payer.GetDisplayName() + " returned HTTP " + (int)response.StatusCode + " for " + url + ": " + TextHelper.Shorten(text, 300), 502);
+                throw new PayerException(payer.PayerName + " returned HTTP " + (int)response.StatusCode + " for " + url + ": " + TextHelper.Shorten(text, 300), 502);
             }
             return text;
         }
@@ -201,11 +201,11 @@ public class PayerClient
                 {
                     throw;
                 }
-                throw new PayerException(payer.GetDisplayName() + " did not answer within " + timeoutSeconds + " seconds.", 504, ex);
+                throw new PayerException(payer.PayerName + " did not answer within " + timeoutSeconds + " seconds.", 504, ex);
             }
             catch (HttpRequestException ex)
             {
-                throw new PayerException(payer.GetDisplayName() + " could not be reached: " + ex.Message, 502, ex);
+                throw new PayerException(payer.PayerName + " could not be reached: " + ex.Message, 502, ex);
             }
         }
     }
@@ -223,7 +223,7 @@ public class PayerClient
         }
         catch (JsonException ex)
         {
-            throw new PayerException(payer.GetDisplayName() + " returned an answer that could not be read: " + ex.Message, 502, ex);
+            throw new PayerException(payer.PayerName + " returned an answer that could not be read: " + ex.Message, 502, ex);
         }
     }
 }

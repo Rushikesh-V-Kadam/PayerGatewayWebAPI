@@ -1,6 +1,6 @@
 namespace PayerGatewayWebAPI.Models.Responses;
 
-/// <summary>Response of POST /api/v1/cdex/requests/{requestId}/attachments.</summary>
+/// <summary>Response of POST /cdex/requests/{requestId}/attachments.</summary>
 public class AttachmentResult
 {
     /// <example>PA-2026-0001</example>

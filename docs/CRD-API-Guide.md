@@ -18,10 +18,10 @@ The EHR sends plain JSON (ids only). The gateway reads the FHIR data, calls the 
 ```
  EHR                      Payer Gateway (5200)                 FHIR API (5100)              Payer
   |                              |                                   |                        |
-  |  POST /api/v1/crd/order-sign |                                   |                        |
-  |  (eventId, payerName,        |                                   |                        |
+  |  POST /crd/order-sign        |                                   |                        |
+  |  (eventId, piInsurancePlanId,|                                   |                        |
   |   patientId, orderIds)       |                                   |                        |
-  |----------------------------->|  find payer in PA_PAYER           |                        |
+  |----------------------------->|  read payer (GET payers/{id})     |                        |
   |                              |  read Patient, orders, Coverage   |                        |
   |                              |---------------------------------->|                        |
   |                              |  POST /internal/access-tokens     |                        |
@@ -53,10 +53,10 @@ What the EHR does with the answer:
 
 | # | Endpoint | In one sentence | Called by |
 |---|---|---|---|
-| 0a | `GET /api/v1/payers` | Lists the payers the EHR may name in `payerName` | EHR |
-| 0b | `POST /api/v1/payers/{payerName}/discover` | Tests a payer connection (CDS Hooks discovery) | Support / onboarding |
-| 1 | `POST /api/v1/crd/order-sign` | Asks the payer about the signed orders and returns one decision per order | EHR |
-| 2 | `GET /api/v1/crd/decisions/{orderId}` | Returns the latest stored decision of an order (no payer call) | EHR |
+| 0a | `GET /payers/{piInsurancePlanId}` | Shows the payer configuration of one insurance plan id | EHR / support |
+| 0b | `POST /payers/{piInsurancePlanId}/discover` | Tests a payer connection (CDS Hooks discovery) | Support / onboarding |
+| 1 | `POST /crd/order-sign` | Asks the payer about the signed orders and returns one decision per order | EHR |
+| 2 | `GET /crd/decisions/{orderId}` | Returns the latest stored decision of an order (no payer call) | EHR |
 
 ---
 
@@ -64,13 +64,13 @@ What the EHR does with the answer:
 
 - **Base URL:** `http://localhost:5200` locally (`Urls` in `appsettings.json`).
 - **Format:** `Content-Type: application/json`, property names in camelCase.
-- **Payer:** every request carries `payerName`. It must match `PA_PAYER.PAYER_NAME` (upper / lower case does not matter) and the payer must be enabled.
+- **Payer:** every request carries `piInsurancePlanId` (a whole number): the EHR's insurance plan id of the patient's insurance (`PA_PAYER.PI_INSURANCE_PLAN_ID`). The gateway reads that payer's configuration, and the payer must be enabled.
 - **Authentication:** none is built in. It is added outside this code.
 - **Errors:** every error has the same body.
 
 ```json
 {
-  "error": "Payer 'UnknownPayer' is not configured or not enabled. Configured payers: MockPayer.",
+  "error": "No payer is configured or enabled for piInsurancePlanId 9999.",
   "details": [],
   "traceId": "0HN6Q2L3J7K1B:00000001"
 }
@@ -82,37 +82,36 @@ What the EHR does with the answer:
 
 ## 4. Endpoints
 
-### 4.1 `GET /api/v1/payers`: which payers are connected
+### 4.1 `GET /payers/{piInsurancePlanId}`: the payer of an insurance plan id
 
-**Why we use it.** The EHR must send the exact payer name. This call shows the names the gateway knows, with each payer's FHIR release and DTR mode.
+**Why we use it.** Every request names the payer by `piInsurancePlanId`. This call shows the configuration the gateway reads for one id (there is no payer list), with its DTR mode.
 
 **Request**
 
 ```http
-GET /api/v1/payers
+GET /payers/1001
 ```
 
 **Response 200**
 
 ```json
-[
-  {
-    "payerName": "MockPayer",
-    "displayName": "Mock Da Vinci Payer",
-    "enabled": true,
-    "baseUrl": "http://localhost:5080",
-    "dtrMode": "Forms"
-  }
-]
+{
+  "piInsurancePlanId": 1001,
+  "payerName": "MockPayer",
+  "enabled": true,
+  "baseUrl": "http://localhost:5080",
+  "dtrMode": "Forms"
+}
 ```
 
 | Field | Meaning |
 |---|---|
-| `payerName` | The value to send as `payerName` in every other request |
-| `enabled` | `false` = the payer is in the list but switched off; requests for it get "not configured or not enabled" |
+| `piInsurancePlanId` | The EHR's insurance plan id of this payer (`PA_PAYER.PI_INSURANCE_PLAN_ID`): the value to send as `piInsurancePlanId` in every other request |
+| `payerName` | Name of the payer, shown in messages |
+| `enabled` | `false` = the payer is configured but switched off; requests for it get "not configured or enabled" |
 | `dtrMode` | `Forms` = questionnaire through the gateway forms. `SmartApp` = the payer's own SMART DTR app |
 
-The list comes from table `PA_PAYER` (read through the EHR data API) and is kept for `Storage:PayerCacheMinutes` (5 minutes). A name that is not in the kept list is looked up again right away, so a new payer row works without a restart.
+The payer comes from table `PA_PAYER` through the EHR data API (`GET payers/{piInsurancePlanId}`). It is kept for `Storage:PayerCacheMinutes` (5 minutes). An id without a payer is asked again at the next request, so a new payer row works without a restart.
 
 | HTTP | When |
 |---|---|
@@ -121,14 +120,14 @@ The list comes from table `PA_PAYER` (read through the EHR data API) and is kept
 
 ---
 
-### 4.2 `POST /api/v1/payers/{payerName}/discover`: test a payer connection
+### 4.2 `POST /payers/{piInsurancePlanId}/discover`: test a payer connection
 
 **Why we use it.** CDS Hooks says every payer publishes its services at `{payer}/cds-services`. This call reads that list, so you can check that a new payer answers and that it has an `order-sign` service. It also refreshes the gateway's 12-hour discovery cache.
 
 **Request**
 
 ```http
-POST /api/v1/payers/MockPayer/discover
+POST /payers/1001/discover
 ```
 
 No body.
@@ -164,7 +163,7 @@ The gateway uses the first service whose `hook` is `order-sign`. Its `id` become
 
 ---
 
-### 4.3 `POST /api/v1/crd/order-sign`: the order is signed
+### 4.3 `POST /crd/order-sign`: the order is signed
 
 **Why we use it.** This is the CRD step. It tells the EHR, per order, whether the payer covers it, whether prior authorization is needed and whether a questionnaire must be filled in.
 
@@ -175,7 +174,7 @@ The gateway uses the first service whose `hook` is `order-sign`. Its `id` become
 | Field | Required | Meaning |
 |---|---|---|
 | `eventId` | Yes | Id of this signing event in the EHR. Saved with each decision as a reference. Every call asks the payer again, also with an `eventId` sent before |
-| `payerName` | Yes | Payer to ask (`PA_PAYER.PAYER_NAME`) |
+| `piInsurancePlanId` | Yes | Whole number. The EHR's insurance plan id of the patient's insurance (`PA_PAYER.PI_INSURANCE_PLAN_ID`): the payer to ask |
 | `patientId` | Yes | EHR patient id |
 | `orderIds` | Yes, at least one | EHR order ids being signed. An order is a ServiceRequest (service order) or a MedicationRequest (medication order) at the FHIR API. Device orders are not used |
 | `coverageId` | Yes | The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it with `GET Coverage/{coverageId}` at the FHIR API. The orders carry no insurance |
@@ -183,12 +182,12 @@ The gateway uses the first service whose `hook` is `order-sign`. Its `id` become
 | `userPractitionerId` | Yes | Clinician signing (CDS Hooks `context.userId`, 1..1). The order's ordering practitioner is not used instead |
 
 ```http
-POST /api/v1/crd/order-sign
+POST /crd/order-sign
 Content-Type: application/json
 
 {
   "eventId": "evt-ord-2-home-pd-wcbp0q",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-2",
   "orderIds": ["ord-2-home-pd"],
   "encounterId": "enc-2",
@@ -199,7 +198,7 @@ Content-Type: application/json
 #### What the gateway does
 
 1. **Checks the input.** All problems are returned together (400).
-2. **Finds the payer** by `payerName`.
+2. **Reads the payer configuration** of `piInsurancePlanId`.
 3. **Reads from the FHIR API:** `Patient/{patientId}`, the orders (`ServiceRequest?_id=...`, `MedicationRequest?_id=...`) and the insurance `Coverage/{coverageId}`.
 4. **Checks the coverage:** it must exist, belong to the patient and be active. Otherwise the payer is not called and every order gets `unknown` with the reason (see below).
 5. **Discovery:** `GET {payer}/cds-services`, kept 12 hours. Picks the `order-sign` service.
@@ -251,11 +250,11 @@ This example is a real answer from the mock payer.
 ```json
 {
   "eventId": "evt-ord-2-home-pd-wcbp0q",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "decisions": [
     {
       "orderId": "ord-2-home-pd",
-      "payerName": "MockPayer",
+      "piInsurancePlanId": 1001,
       "coverageId": "cov-2",
       "covered": "covered",
       "priorAuthNeeded": "auth-needed",
@@ -285,7 +284,7 @@ This example is a real answer from the mock payer.
           "detail": "Complete the payer documentation for Home peritoneal dialysis (APD cycler). Purpose: withpa.",
           "link": {
             "label": "Launch documentation (DTR)",
-            "url": "http://localhost:5200/api/v1/dtr/launch/3a3df604a18c4d479f4ed4f05b9a1896",
+            "url": "http://localhost:5200/dtr/launch/3a3df604a18c4d479f4ed4f05b9a1896",
             "type": "smart",
             "opensPayerApp": false
           }
@@ -296,6 +295,7 @@ This example is a real answer from the mock payer.
   ],
   "messages": [],
   "payerCall": {
+    "piInsurancePlanId": 1001,
     "payerName": "MockPayer",
     "serviceId": "crd-order-sign",
     "outcome": "ok",
@@ -325,7 +325,7 @@ This example is a real answer from the mock payer.
 | `callPas` | `true` / `false` | Submit a prior authorization request |
 | `documentationPurpose` | `withpa`, `withclaim`, `withorder`, `retain-doc` | What the documentation is for |
 | `informationNeeded` | `performer`, `location`, `timeframe`, `contract-window` | What the payer still needs to decide |
-| `questionnaireUrls` | URLs | Pass them to `POST /api/v1/dtr/forms` |
+| `questionnaireUrls` | URLs | Pass them to `POST /dtr/forms` |
 | `coverageAssertionId` | text | The payer's id of this answer. Pass it to DTR |
 | `satisfiedAuthorizationNumber` | text | An existing authorization already covers the order (`priorAuthNeeded = satisfied`) |
 | `messages` | list | Payer cards and reasons for this order |
@@ -347,10 +347,10 @@ This example is a real answer from the mock payer.
 | `link.type` | `opensPayerApp` | What the EHR does |
 |---|---|---|
 | `absolute` | `false` | A normal web page (for example the coverage policy). Open it in a browser if the user asks |
-| `smart` | `false` | The payer works with the gateway forms (`DTR_MODE = Forms`). Use `POST /api/v1/dtr/forms`. See `DTR-Forms-API-Guide.md` |
+| `smart` | `false` | The payer works with the gateway forms (`DTR_MODE = Forms`). Use `POST /dtr/forms`. See `DTR-Forms-API-Guide.md` |
 | `smart` | `true` | The payer has its own SMART DTR app (`DTR_MODE = SmartApp`). Open `link.url` in a browser window. See `DTR-SmartApp-API-Guide.md` |
 
-A `smart` link is always a gateway URL (`/api/v1/dtr/launch/{linkId}`). The payer's real app URL and launch context are kept in table `PA_DTR_LINK` for `Workflow:DtrLinkHours` (72 hours).
+A `smart` link is always a gateway URL (`/dtr/launch/{linkId}`). The payer's real app URL and launch context are kept in table `PA_DTR_LINK` for `Workflow:DtrLinkHours` (72 hours).
 
 #### Special cases (still HTTP 200)
 
@@ -369,11 +369,11 @@ Example when the payer times out:
 ```json
 {
   "eventId": "evt-ord-1-hd-0001",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "decisions": [
     {
       "orderId": "ord-1-hd",
-      "payerName": "MockPayer",
+      "piInsurancePlanId": 1001,
       "coverageId": "cov-1",
       "covered": "unknown",
       "priorAuthNeeded": null,
@@ -388,8 +388,8 @@ Example when the payer times out:
       "messages": [
         {
           "severity": "warning",
-          "summary": "Mock Da Vinci Payer did not answer the coverage check. Continue; requirements are checked again at prior authorization.",
-          "detail": "Mock Da Vinci Payer did not answer the coverage check. Continue; requirements are checked again at prior authorization.",
+          "summary": "MockPayer did not answer the coverage check. Continue; requirements are checked again at prior authorization.",
+          "detail": "MockPayer did not answer the coverage check. Continue; requirements are checked again at prior authorization.",
           "link": null
         }
       ],
@@ -398,11 +398,12 @@ Example when the payer times out:
   ],
   "messages": [],
   "payerCall": {
+    "piInsurancePlanId": 1001,
     "payerName": "MockPayer",
     "serviceId": "crd-order-sign",
     "outcome": "timeout",
     "durationMs": 5003,
-    "error": "Mock Da Vinci Payer did not answer within 5 seconds."
+    "error": "MockPayer did not answer within 5 seconds."
   }
 }
 ```
@@ -423,7 +424,7 @@ The payer may still have received the hook, but its late answer is lost: the gat
 
 | HTTP | When |
 |---|---|
-| 400 | A required field is missing (`coverageId` and `userPractitionerId` included) or `orderIds` is empty (`details` lists each problem); unknown or disabled `payerName`; an order belongs to another patient; invalid JSON |
+| 400 | A required field is missing (`coverageId` and `userPractitionerId` included) or `orderIds` is empty (`details` lists each problem); unknown or disabled `piInsurancePlanId`; an order belongs to another patient; invalid JSON |
 | 404 | The patient is not found at the FHIR API, or none of the orders are found |
 | 502 | The FHIR API failed or timed out |
 | 503 | The EHR data API is not available (the payer list could not be read, or a decision could not be saved) |
@@ -433,14 +434,14 @@ A payer failure is **not** an HTTP error here. It returns 200 with `covered = "u
 
 ---
 
-### 4.4 `GET /api/v1/crd/decisions/{orderId}`: latest decision of an order
+### 4.4 `GET /crd/decisions/{orderId}`: latest decision of an order
 
 **Why we use it.** The EHR can read the decision again later (for example when the user opens the order) without calling the payer.
 
 **Request**
 
 ```http
-GET /api/v1/crd/decisions/ord-2-home-pd
+GET /crd/decisions/ord-2-home-pd
 ```
 
 **Response 200:** one decision, the same structure as one entry of `decisions` in section 4.3.
@@ -519,7 +520,7 @@ The EHR can read the decision straight from `PA_COVERAGE_DECISION`. The gateway 
 | `PA_PAYER.TIMEOUT_SECONDS` | 30 | Seconds to wait for discovery |
 | `PA_PAYER.DTR_MODE` | `Forms` | Sets `opensPayerApp` on `smart` links |
 | `PA_PAYER.DTR_APP_LAUNCH_URL` | empty | Fixed launch URL of the payer's DTR app |
-| `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the `/api/v1/dtr/launch/{linkId}` links |
+| `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the `/dtr/launch/{linkId}` links |
 | `Workflow:DtrLinkHours` | 72 | How long a launch link stays valid |
 | `Workflow:FhirAuthorizationMinutes` | 5 | Lifetime of the `fhirAuthorization` token |
 | `Storage:PayerCacheMinutes` | 5 | How long the payer list is kept |
@@ -533,18 +534,18 @@ Start the mock EHR (5090), the FHIR API (5100), the mock payer (5080) and the ga
 
 ```http
 ### payers
-GET http://localhost:5200/api/v1/payers
+GET http://localhost:5200/payers
 
 ### connection test
-POST http://localhost:5200/api/v1/payers/MockPayer/discover
+POST http://localhost:5200/payers/1001/discover
 
 ### in-center hemodialysis: prior auth + questionnaire + lab report
-POST http://localhost:5200/api/v1/crd/order-sign
+POST http://localhost:5200/crd/order-sign
 Content-Type: application/json
 
 {
   "eventId": "evt-ord-1-hd-0001",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "encounterId": "enc-1",
@@ -552,7 +553,7 @@ Content-Type: application/json
 }
 
 ### read the decision again
-GET http://localhost:5200/api/v1/crd/decisions/ord-1-hd
+GET http://localhost:5200/crd/decisions/ord-1-hd
 ```
 
 Note: the examples in Swagger and in `PayerGatewayWebAPI.http` use `pat-1001`, `ord-1001`, `prac-2001`. Those ids are not in the mock EHR data. Use `pat-1`, `ord-1-hd`, `prac-1` and so on.
@@ -563,8 +564,8 @@ Note: the examples in Swagger and in `PayerGatewayWebAPI.http` use `pat-1001`, `
 
 | File | What it does |
 |---|---|
-| `Controllers/PayersController.cs` | `GET /api/v1/payers`, `POST .../discover` |
-| `Controllers/CrdController.cs` | `POST /api/v1/crd/order-sign`, `GET /api/v1/crd/decisions/{orderId}` |
+| `Controllers/PayersController.cs` | `GET /payers/{piInsurancePlanId}`, `POST .../discover` |
+| `Controllers/CrdController.cs` | `POST /crd/order-sign`, `GET /crd/decisions/{orderId}` |
 | `Services/Crd/CrdService.cs` | The whole order-sign flow |
 | `Services/Crd/CdsHookBuilder.cs` | Builds `context` and `prefetch` |
 | `Services/Crd/CoverageDecisionReader.cs` | Reads coverage-information, sets `callDtr` / `callPas` |

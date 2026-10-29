@@ -23,13 +23,13 @@ namespace PayerGatewayWebAPI;
 /// <summary>
 /// Wires the application together. Every class has its own file and comments; this class only registers them.
 ///
-///   STEP 0  Payers   GET  /api/v1/payers, POST /api/v1/payers/{payerName}/discover
-///   STEP 1  CRD      POST /api/v1/crd/order-sign, GET /api/v1/crd/decisions/{orderId}
-///   STEP 2  DTR      POST /api/v1/dtr/forms, GET /api/v1/dtr/forms/{formId}, POST /api/v1/dtr/forms/{formId}/answers
-///                    payer SMART apps: GET /api/v1/dtr/launch/{linkId}, GET /api/v1/dtr/saved-forms, relay endpoints
-///   STEP 3  PAS      POST /api/v1/pas/requests, PUT / cancel / GET / inquire, POST /api/v1/pas/notifications/{payerName}
-///   STEP 4  CDex     GET  /api/v1/cdex/requests/{requestId}/information-requests, POST .../attachments,
-///                    POST /api/v1/cdex/tasks/{payerName}
+///   STEP 0  Payers   GET  /payers/{piInsurancePlanId}, POST /payers/{piInsurancePlanId}/discover
+///   STEP 1  CRD      POST /crd/order-sign, GET /crd/decisions/{orderId}
+///   STEP 2  DTR      POST /dtr/forms, GET /dtr/forms/{formId}, POST /dtr/forms/{formId}/answers
+///                    payer SMART apps: GET /dtr/launch/{linkId}, GET /dtr/saved-forms, relay endpoints
+///   STEP 3  PAS      POST /pas/requests, PUT / cancel / GET / inquire, POST /pas/notifications/{piInsurancePlanId}
+///   STEP 4  CDex     GET  /cdex/requests/{requestId}/information-requests, POST .../attachments,
+///                    POST /cdex/tasks/{piInsurancePlanId}
 /// </summary>
 public class Startup
 {
@@ -49,8 +49,6 @@ public class Startup
         services.Configure<EhrSettings>(_configuration.GetSection(EhrSettings.SectionName));
         services.Configure<WorkflowSettings>(_configuration.GetSection(WorkflowSettings.SectionName));
         services.Configure<StorageSettings>(_configuration.GetSection(StorageSettings.SectionName));
-        // appsettings "Payers" is only used in memory mode; with Storage:Provider = EhrApi payers come from table PA_PAYER
-        services.Configure<List<PayerSettings>>(_configuration.GetSection(PayerSettings.SectionName));
 
         StorageSettings storage = new StorageSettings();
         _configuration.GetSection(StorageSettings.SectionName).Bind(storage);
@@ -67,13 +65,15 @@ public class Startup
         services.AddSingleton<PayerClient>();
 
         // ------------------------------------------------------------ 4. storage: the EHR database (through the EHR data API) or in memory
-        // The gateway has no database connection of its own. "EhrApi" keeps every table (PA_*) and the payer list
+        // The gateway has no database connection of its own. "EhrApi" keeps every table (PA_*) and the payer configuration
         // in the EHR's Oracle database; the EHR team's Web API reads and saves the rows (docs/EHR-Data-API.md).
         // Folders: Repositories\Interfaces (what the services use), Repositories\Database (EHR data API),
         // Repositories\InMemory (local testing; data is lost when the app stops).
+        // The payer configuration is read the same way in both modes: one payer by insurance plan id, from the EHR
+        // data API (GET payers/{piInsurancePlanId}, table PA_PAYER).
+        services.AddSingleton<IPayerRepository, EhrApiPayerRepository>();
         if (storage.IsEhrApi())
         {
-            services.AddSingleton<IPayerRepository, EhrApiPayerRepository>();
             services.AddSingleton<ICrdRepository, EhrApiCrdRepository>();
             services.AddSingleton<IDtrLinkRepository, EhrApiDtrLinkRepository>();
             services.AddSingleton<IDtrFormRepository, EhrApiDtrFormRepository>();
@@ -83,7 +83,6 @@ public class Startup
         }
         else
         {
-            services.AddSingleton<IPayerRepository, InMemoryPayerRepository>();
             services.AddSingleton<ICrdRepository, InMemoryCrdRepository>();
             services.AddSingleton<IDtrLinkRepository, InMemoryDtrLinkRepository>();
             services.AddSingleton<IDtrFormRepository, InMemoryDtrFormRepository>();
@@ -102,8 +101,8 @@ public class Startup
         services.AddScoped<PasService>();
         services.AddScoped<CdexService>();
         // No background job: the client EHR decides when to check pended requests. For each pended request in
-        // PA_PRIOR_AUTH it calls POST /api/v1/pas/requests/{requestId}/inquire (latest decision) and
-        // GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true (payer requests for documents).
+        // PA_PRIOR_AUTH it calls POST /pas/requests/{requestId}/inquire (latest decision) and
+        // GET /cdex/requests/{requestId}/information-requests?refresh=true (payer requests for documents).
 
         // ------------------------------------------------------------ 6. MVC controllers, validation errors, exceptions
         services.AddControllers(ConfigureMvc);
@@ -180,9 +179,9 @@ public class Startup
         info.Version = "v1";
         info.Description =
             "Da Vinci prior authorization for the EHR. Call order: " +
-            "1) POST /api/v1/crd/order-sign  2) DTR forms (when documentation is needed)  " +
-            "3) POST /api/v1/pas/requests (when prior auth is needed)  4) CDex attachments (when the payer pends and asks for more). " +
-            "Every EHR request carries payerName; the gateway finds that payer in table PA_PAYER. " +
+            "1) POST /crd/order-sign  2) DTR forms (when documentation is needed)  " +
+            "3) POST /pas/requests (when prior auth is needed)  4) CDex attachments (when the payer pends and asks for more). " +
+            "Every EHR request carries piInsurancePlanId (the insurance plan id); the gateway reads that payer's configuration (table PA_PAYER). " +
             "All gateway data is stored in the EHR database through the EHR data API, so decisions are not written back separately. " +
             "No authentication is built in (it is added outside this code). " +
             "Errors always return { \"error\": \"...\", \"details\": [ ... ], \"traceId\": \"...\" }.";

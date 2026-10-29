@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using PayerGatewayWebAPI.Clients;
 using PayerGatewayWebAPI.Configuration;
 using PayerGatewayWebAPI.Repositories.Interfaces;
@@ -7,14 +8,15 @@ using PayerGatewayWebAPI.Repositories.Interfaces;
 namespace PayerGatewayWebAPI.Repositories.Database;
 
 /// <summary>
-/// Payers from the EHR database: table PA_PAYER, read with GET payers on the EHR data API.
-/// The EHR team adds and changes payers in that table; nothing in the gateway changes when a payer is onboarded.
+/// One payer's configuration, read by the EHR's insurance plan id: GET payers/{piInsurancePlanId} on the EHR data API,
+/// one row of table PA_PAYER (404 = no such payer). There is no payer list.
+/// The EHR team adds and changes payers in PA_PAYER; nothing in the gateway changes when a payer is onboarded.
 ///
-/// One row of GET payers = one JSON object; one property = one column (payerName = PAYER_NAME ...).
-/// Only payerName and baseUrl must be filled. Every other property is optional: it may be missing, null or an
-/// empty text, and the gateway then uses its default. The properties the gateway reads:
+/// One row = one JSON object; one property = one column (payerName = PAYER_NAME ...).
+/// piInsurancePlanId, payerName and baseUrl are needed to call the payer. Every other property is optional: it may be
+/// missing, null or an empty text, and the gateway then uses its default. The properties the gateway reads:
+///   piInsurancePlanId                        whole number (1001 or "1001"); required
 ///   payerName, baseUrl                       required
-///   displayName                              text; empty = payerName is shown
 ///   enabled, useSubscriptions                true / false; empty = true
 ///   cdsServicesPath, fhirPath                text; empty = "cds-services" / "fhir"; "/" = no extra path
 ///   crdTimeoutSeconds, timeoutSeconds        whole number; empty or 0 = 5 / 30
@@ -26,6 +28,7 @@ namespace PayerGatewayWebAPI.Repositories.Database;
 /// Every value is read on its own and in a forgiving way (a yes / no column may arrive as true, 1, "1" or "Y";
 /// a number as 30 or "30"). An optional value that still cannot be understood is reported in the log and its
 /// default is used - one bad optional value never switches a payer off.
+/// The payer is not kept here: PayerRegistry keeps it for Storage:PayerCacheMinutes.
 /// </summary>
 public class EhrApiPayerRepository : IPayerRepository
 {
@@ -40,22 +43,28 @@ public class EhrApiPayerRepository : IPayerRepository
     }
 
     /// <summary>
-    /// All rows of PA_PAYER as PayerSettings. Rows are returned as they are; PayerRegistry fills in the defaults
-    /// and leaves out a row that cannot be used (no name or no valid base URL).
+    /// GET payers/{piInsurancePlanId} on the EHR data API: one JSON object (not an array). Null when the EHR answers
+    /// 404, or when the row it returns belongs to another insurance plan id (reported in the log). The row is returned
+    /// as it is; PayerRegistry fills in the defaults and refuses a row that cannot be used (no name or no valid base URL).
     /// </summary>
-    public async Task<List<PayerSettings>> GetAllAsync(CancellationToken ct)
+    public async Task<PayerSettings?> GetByPiInsurancePlanIdAsync(int piInsurancePlanId, CancellationToken ct)
     {
-        List<JsonElement> rows = await _ehr.GetListAsync<JsonElement>("payers", ct);
-        List<PayerSettings> payers = new List<PayerSettings>();
-        foreach (JsonElement row in rows)
+        string path = "payers/" + piInsurancePlanId.ToString(CultureInfo.InvariantCulture);
+        JsonObject? body = await _ehr.GetAsync<JsonObject>(path, ct);
+        if (body == null)
         {
-            if (row.ValueKind != JsonValueKind.Object)
-            {
-                continue;   // a null (or other non-object) entry in the JSON array
-            }
-            payers.Add(ToSettings(row));
+            return null;
         }
-        return payers;
+
+        JsonElement row = JsonSerializer.SerializeToElement(body);
+        int? rowId = ReadNumber(row, "piInsurancePlanId", "piInsurancePlanId " + piInsurancePlanId);
+        if (rowId == null || rowId.Value != piInsurancePlanId)
+        {
+            _logger.LogWarning("GET {Path} returned a payer row whose piInsurancePlanId is '{RowId}', not {Requested}; the row is not used. Correct the EHR data API.",
+                path, rowId, piInsurancePlanId);
+            return null;
+        }
+        return ToSettings(row);
     }
 
     /// <summary>
@@ -67,7 +76,11 @@ public class EhrApiPayerRepository : IPayerRepository
         PayerSettings payer = new PayerSettings();
         payer.PayerName = ReadText(row, "payerName") ?? string.Empty;
         payer.BaseUrl = ReadText(row, "baseUrl") ?? string.Empty;
-        payer.DisplayName = ReadText(row, "displayName") ?? string.Empty;
+        int? piInsurancePlanId = ReadNumber(row, "piInsurancePlanId", payer.PayerName);
+        if (piInsurancePlanId != null)
+        {
+            payer.PiInsurancePlanId = piInsurancePlanId.Value;
+        }
 
         bool? enabled = ReadFlag(row, "enabled", payer.PayerName);
         if (enabled != null)

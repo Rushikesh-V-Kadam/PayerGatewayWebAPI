@@ -1,15 +1,15 @@
 namespace PayerGatewayWebAPI.Models.Entities;
 
 /// <summary>
-/// A payer SMART DTR app link given to the EHR (table PA_DTR_LINK). Opening /api/v1/dtr/launch/{LinkId} uses these
+/// A payer SMART DTR app link given to the EHR (table PA_DTR_LINK). Opening /dtr/launch/{LinkId} uses these
 /// values to create the SMART launch and open the payer's DTR app. Used when payers bring their own SMART apps.
 /// </summary>
 public class DtrLinkRecord
 {
     /// <summary>Link id created by the gateway (key); part of the URL given to the EHR.</summary>
     public string LinkId { get; set; } = Guid.NewGuid().ToString("N");
-    /// <summary>Payer whose DTR app is opened.</summary>
-    public string PayerName { get; set; } = string.Empty;
+    /// <summary>Insurance plan id of the payer whose DTR app is opened.</summary>
+    public int PiInsurancePlanId { get; set; }
     /// <summary>EHR patient id.</summary>
     public string PatientId { get; set; } = string.Empty;
     /// <summary>Encounter in context, if any.</summary>

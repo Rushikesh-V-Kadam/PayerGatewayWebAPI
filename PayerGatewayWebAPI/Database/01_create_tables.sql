@@ -27,18 +27,20 @@
 -- =====================================================================================================
 
 -- ------------------------------------------------------------------ PAYERS (maintained by the EHR team)
--- One row per connected payer. The gateway only READS this table (GET payers) and keeps the list for a few minutes.
--- To onboard a payer: insert a row. Nothing changes in the gateway.
--- PAYER_NAME is the value the EHR sends as "payerName" in every gateway request (upper / lower case does not matter).
+-- One row per connected payer. The gateway only READS this table, one row at a time: GET payers/{piInsurancePlanId}
+-- (there is no payer list), and keeps the row for a few minutes. To onboard a payer: insert a row. Nothing changes in the gateway.
+-- PI_INSURANCE_PLAN_ID is the EHR's insurance plan id of this payer (a whole number), the key of the table. The EHR sends it
+-- as "piInsurancePlanId" in every gateway request, and every gateway table below stores it to know the payer of a row.
+-- PAYER_NAME is only shown in the gateway's log lines and messages.
 --
--- ONLY TWO COLUMNS MUST BE FILLED: PAYER_NAME and BASE_URL. Every other column is optional: when it is empty the
--- gateway uses the default written next to the column. A row with only those two values is a working payer.
+-- ONLY THREE COLUMNS MUST BE FILLED: PI_INSURANCE_PLAN_ID, PAYER_NAME and BASE_URL. Every other column is optional: when it is
+-- empty the gateway uses the default written next to the column. A row with only those three values is a working payer.
 --
--- The payer's own id and the member id are NOT columns of this table. They belong to the patient's insurance in
--- the EHR (payer id and member id of the insurance) and reach the gateway through the FHIR API (Coverage).
+-- The member id is NOT a column of this table: it belongs to the patient's insurance in the EHR and reaches the
+-- gateway through the FHIR API (Coverage.subscriberId).
 CREATE TABLE PA_PAYER (
+    PI_INSURANCE_PLAN_ID     NUMBER(10)     NOT NULL,               -- REQUIRED. The EHR's insurance plan id of this payer (key)
     PAYER_NAME               VARCHAR2(64)   NOT NULL,               -- REQUIRED
-    DISPLAY_NAME             VARCHAR2(200),                         -- friendly name for messages and logs; empty = PAYER_NAME is shown
     ENABLED                  NUMBER(1)      DEFAULT 1 NOT NULL,     -- 0 = configured but switched off
     BASE_URL                 VARCHAR2(500)  NOT NULL,               -- REQUIRED. A complete http / https address, e.g. https://api.payer.com
     CDS_SERVICES_PATH        VARCHAR2(200)  DEFAULT 'cds-services', -- CRD:  {BASE_URL}/{CDS_SERVICES_PATH}.  '/' = no extra path
@@ -56,30 +58,36 @@ CREATE TABLE PA_PAYER (
     -- DTR (questionnaire) settings. Every payer works in FHIR R4.
     DTR_MODE                 VARCHAR2(10)   DEFAULT 'Forms' NOT NULL, -- Forms = EHR shows the questions | SmartApp = payer's own SMART DTR app
     DTR_APP_LAUNCH_URL       VARCHAR2(500),                         -- payer app launch URL; empty = the URL on the payer's CRD card
-    CONSTRAINT PK_PA_PAYER PRIMARY KEY (PAYER_NAME),
+    CONSTRAINT PK_PA_PAYER PRIMARY KEY (PI_INSURANCE_PLAN_ID),
     CONSTRAINT CK_PA_PAYER_ENABLED CHECK (ENABLED IN (0, 1)),
     CONSTRAINT CK_PA_PAYER_SIGN CHECK (SIGN_CDS_HOOKS_REQUESTS IN (0, 1)),
     CONSTRAINT CK_PA_PAYER_SUBS CHECK (USE_SUBSCRIPTIONS IN (0, 1)),
     CONSTRAINT CK_PA_PAYER_AUTH CHECK (AUTH_TYPE IN ('none', 'client-secret', 'smart-backend')),
     CONSTRAINT CK_PA_PAYER_DTR CHECK (DTR_MODE IN ('Forms', 'SmartApp'))
 );
--- The name must be unique without regard to upper / lower case
-CREATE UNIQUE INDEX UX_PA_PAYER_NAME ON PA_PAYER (UPPER(PAYER_NAME));
+-- GET payers/{piInsurancePlanId} reads the row by its primary key: WHERE PI_INSURANCE_PLAN_ID = :piInsurancePlanId
 
 -- NOTE: the gateway has no authentication code. AUTH_*, SIGN_CDS_HOOKS_REQUESTS and NOTIFICATION_SECRET are kept for the
 -- authentication layer added outside the gateway; the gateway does not read them. AUTH_CLIENT_SECRET and
 -- NOTIFICATION_SECRET are credentials: limit who can select this table, and consider encrypting the two columns.
 
 -- Example: the smallest row that works (everything else uses the defaults)
--- INSERT INTO PA_PAYER (PAYER_NAME, BASE_URL) VALUES ('AcmeHealth', 'https://api.acmehealth.example');
+-- INSERT INTO PA_PAYER (PI_INSURANCE_PLAN_ID, PAYER_NAME, BASE_URL) VALUES (2001, 'AcmeHealth', 'https://api.acmehealth.example');
 
 -- Example: a payer with its own SMART DTR app
--- INSERT INTO PA_PAYER (PAYER_NAME, DISPLAY_NAME, BASE_URL, DTR_MODE)
--- VALUES ('AcmeHealth', 'Acme Health Plan', 'https://api.acmehealth.example', 'SmartApp');
+-- INSERT INTO PA_PAYER (PI_INSURANCE_PLAN_ID, PAYER_NAME, BASE_URL, DTR_MODE)
+-- VALUES (2001, 'AcmeHealth', 'https://api.acmehealth.example', 'SmartApp');
 
--- Example: the local mock payer used for testing
--- INSERT INTO PA_PAYER (PAYER_NAME, DISPLAY_NAME, BASE_URL, AUTH_TYPE)
--- VALUES ('MockPayer', 'Mock Da Vinci Payer', 'http://localhost:5080', 'none');
+-- Example: the local mock payer used for testing (every column filled).
+-- PI_INSURANCE_PLAN_ID must be the insurance plan id the EHR uses for the test patients' insurance.
+-- INSERT INTO PA_PAYER (PI_INSURANCE_PLAN_ID, PAYER_NAME, ENABLED, BASE_URL, CDS_SERVICES_PATH, FHIR_PATH,
+--                       AUTH_TYPE, AUTH_TOKEN_URL, AUTH_CLIENT_ID, AUTH_CLIENT_SECRET, AUTH_SCOPE,
+--                       SIGN_CDS_HOOKS_REQUESTS, USE_SUBSCRIPTIONS, NOTIFICATION_SECRET,
+--                       CRD_TIMEOUT_SECONDS, TIMEOUT_SECONDS, DTR_MODE, DTR_APP_LAUNCH_URL)
+-- VALUES (1001, 'MockPayer', 1, 'http://localhost:5080', 'cds-services', 'fhir',
+--         'none', NULL, NULL, NULL, NULL,
+--         1, 1, NULL,
+--         10, 30, 'Forms', NULL);
 
 -- ------------------------------------------------------------------ STEP 1: CRD (order-sign)
 -- Latest coverage decision per order. THE EHR ORDER SCREEN READS THIS TABLE (replaces the old write-back
@@ -87,7 +95,7 @@ CREATE UNIQUE INDEX UX_PA_PAYER_NAME ON PA_PAYER (UPPER(PAYER_NAME));
 CREATE TABLE PA_COVERAGE_DECISION (
     ORDER_ID               VARCHAR2(64)  NOT NULL,
     EVENT_ID               VARCHAR2(100) NOT NULL,
-    PAYER_NAME             VARCHAR2(64),
+    PI_INSURANCE_PLAN_ID   NUMBER(10),               -- payer that answered (= PA_PAYER.PI_INSURANCE_PLAN_ID)
     PATIENT_ID             VARCHAR2(64)  NOT NULL,
     COVERAGE_ASSERTION_ID  VARCHAR2(100),            -- the payer's id for this answer (needed for DTR)
     COVERED                VARCHAR2(20)  NOT NULL,   -- covered | not-covered | conditional | unknown
@@ -101,10 +109,10 @@ CREATE TABLE PA_COVERAGE_DECISION (
 CREATE INDEX IX_PA_COVERAGE_DECISION_PAT ON PA_COVERAGE_DECISION (PATIENT_ID);
 
 -- ------------------------------------------------------------------ STEP 2: DTR
--- Payer questionnaires fetched for orders (POST /api/v1/dtr/forms) and their latest plain answers.
+-- Payer questionnaires fetched for orders (POST /dtr/forms) and their latest plain answers.
 CREATE TABLE PA_DTR_FORM (
     FORM_ID                    VARCHAR2(64)   NOT NULL,
-    PAYER_NAME                 VARCHAR2(64)   NOT NULL,
+    PI_INSURANCE_PLAN_ID       NUMBER(10)     NOT NULL,   -- payer of the questionnaire (= PA_PAYER.PI_INSURANCE_PLAN_ID)
     PATIENT_ID                 VARCHAR2(64)   NOT NULL,
     COVERAGE_ID                VARCHAR2(64),
     ORDER_IDS_JSON             CLOB,                      -- ["ord-1001"]
@@ -145,7 +153,7 @@ CREATE INDEX IX_PA_QR_ORDER   ON PA_QUESTIONNAIRE_RESPONSE (ORDER_ID);
 -- Payer SMART DTR app links (future: when payers bring their own SMART apps).
 CREATE TABLE PA_DTR_LINK (
     LINK_ID               VARCHAR2(64)   NOT NULL,
-    PAYER_NAME            VARCHAR2(64)   NOT NULL,
+    PI_INSURANCE_PLAN_ID  NUMBER(10)     NOT NULL,    -- payer of the DTR app (= PA_PAYER.PI_INSURANCE_PLAN_ID)
     PATIENT_ID            VARCHAR2(64)   NOT NULL,
     ENCOUNTER_ID          VARCHAR2(64),
     USER_PRACTITIONER_ID  VARCHAR2(64),
@@ -161,7 +169,7 @@ CREATE TABLE PA_DTR_LINK (
 -- THE EHR PRIOR AUTHORIZATION SCREEN READS THIS TABLE (replaces the old write-back PUT api/prior-auth-requests/{id}).
 CREATE TABLE PA_PRIOR_AUTH (
     REQUEST_ID            VARCHAR2(64)  NOT NULL,     -- the EHR's request id
-    PAYER_NAME            VARCHAR2(64)  NOT NULL,
+    PI_INSURANCE_PLAN_ID  NUMBER(10)    NOT NULL,     -- payer of the request (= PA_PAYER.PI_INSURANCE_PLAN_ID)
     PATIENT_ID            VARCHAR2(64)  NOT NULL,
     COVERAGE_ID           VARCHAR2(64)  NOT NULL,
     MEMBER_ID             VARCHAR2(64),                -- member id of the patient's insurance, as sent to the payer
@@ -183,24 +191,24 @@ CREATE TABLE PA_PRIOR_AUTH (
     CONSTRAINT PK_PA_PRIOR_AUTH PRIMARY KEY (REQUEST_ID),
     CONSTRAINT CK_PA_PRIOR_AUTH_DECISION CHECK (DECISION_JSON IS JSON)
 );
-CREATE INDEX IX_PA_PRIOR_AUTH_STATUS ON PA_PRIOR_AUTH (STATUS, PAYER_NAME);   -- GET prior-auths?status=pended
+CREATE INDEX IX_PA_PRIOR_AUTH_STATUS ON PA_PRIOR_AUTH (STATUS, PI_INSURANCE_PLAN_ID);   -- GET prior-auths?status=pended
 CREATE INDEX IX_PA_PRIOR_AUTH_PAT    ON PA_PRIOR_AUTH (PATIENT_ID);
 CREATE INDEX IX_PA_PRIOR_AUTH_UPD    ON PA_PRIOR_AUTH (UPDATED_AT);            -- "what changed since my last check"
 
 -- PAS Subscriptions the gateway created at payers (one per payer + provider organization NPI).
 CREATE TABLE PA_PAYER_SUBSCRIPTION (
-    PAYER_NAME        VARCHAR2(64)  NOT NULL,
+    PI_INSURANCE_PLAN_ID  NUMBER(10)    NOT NULL,     -- payer (= PA_PAYER.PI_INSURANCE_PLAN_ID)
     ORGANIZATION_NPI  VARCHAR2(20)  NOT NULL,
     SUBSCRIPTION_ID   VARCHAR2(100),
     STATUS            VARCHAR2(10)  NOT NULL,         -- active | error
     CREATED_AT        TIMESTAMP     NOT NULL,         -- UTC
-    CONSTRAINT PK_PA_PAYER_SUBSCRIPTION PRIMARY KEY (PAYER_NAME, ORGANIZATION_NPI)
+    CONSTRAINT PK_PA_PAYER_SUBSCRIPTION PRIMARY KEY (PI_INSURANCE_PLAN_ID, ORGANIZATION_NPI)
 );
 
 -- ------------------------------------------------------------------ STEP 4: CDex
 -- Payer information requests (FHIR Tasks) received for our prior authorization requests.
 CREATE TABLE PA_CDEX_TASK (
-    PAYER_NAME       VARCHAR2(64)   NOT NULL,
+    PI_INSURANCE_PLAN_ID  NUMBER(10)  NOT NULL,       -- payer that sent the Task (= PA_PAYER.PI_INSURANCE_PLAN_ID)
     TASK_ID          VARCHAR2(100)  NOT NULL,
     REQUEST_ID       VARCHAR2(64)   NOT NULL,         -- = PA_PRIOR_AUTH.REQUEST_ID
     TRACKING_ID      VARCHAR2(100)  NOT NULL,         -- sent back to the payer with the documents
@@ -209,7 +217,7 @@ CREATE TABLE PA_CDEX_TASK (
     DUE_DATE         VARCHAR2(30),                    -- date text as the payer sent it, e.g. 2026-10-21
     TASK_JSON        CLOB           NOT NULL,         -- the FHIR Task as received
     RECEIVED_AT      TIMESTAMP      NOT NULL,         -- UTC. Changes only when the payer changed the Task
-    CONSTRAINT PK_PA_CDEX_TASK PRIMARY KEY (PAYER_NAME, TASK_ID),
+    CONSTRAINT PK_PA_CDEX_TASK PRIMARY KEY (PI_INSURANCE_PLAN_ID, TASK_ID),
     CONSTRAINT CK_PA_CDEX_TASK_JSON CHECK (TASK_JSON IS JSON)
 );
 CREATE INDEX IX_PA_CDEX_TASK_REQUEST ON PA_CDEX_TASK (REQUEST_ID);   -- GET cdex-tasks?requestId=...
@@ -259,7 +267,7 @@ CREATE INDEX IX_PA_CDEX_TASK_REQUEST ON PA_CDEX_TASK (REQUEST_ID);   -- GET cdex
 --   SELECT REQUEST_ID, STATUS, AUTHORIZATION_NUMBER, UPDATED_AT FROM PA_PRIOR_AUTH WHERE UPDATED_AT > :lastCheckUtc;
 --
 -- Requests still waiting for the payer:
---   SELECT REQUEST_ID, PAYER_NAME, SUBMITTED_AT FROM PA_PRIOR_AUTH WHERE STATUS = 'pended';
+--   SELECT REQUEST_ID, PI_INSURANCE_PLAN_ID, SUBMITTED_AT FROM PA_PRIOR_AUTH WHERE STATUS = 'pended';
 --
 -- Forms not finished:
 --   SELECT FORM_ID, PATIENT_ID, QUESTIONNAIRE_URL FROM PA_DTR_FORM WHERE STATUS <> 'completed';

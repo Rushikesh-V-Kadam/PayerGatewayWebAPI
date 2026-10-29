@@ -4,8 +4,8 @@ namespace PayerGatewayWebAPI.Models.Responses;
 /// CRD answer for one order. Also saved in table PA_COVERAGE_DECISION of the EHR database (column DECISION_JSON),
 /// where the EHR reads it.
 /// What to do next:
-///   callDtr = true  -> DTR: POST /api/v1/dtr/forms with questionnaireUrls, then POST .../answers
-///   callPas = true  -> PAS: POST /api/v1/pas/requests (after DTR when both are true)
+///   callDtr = true  -> DTR: POST /dtr/forms with questionnaireUrls, then POST .../answers
+///   callPas = true  -> PAS: POST /pas/requests (after DTR when both are true)
 ///   both false      -> nothing more for this order (see covered / priorAuthNeeded)
 /// </summary>
 public class CoverageDecision
@@ -13,8 +13,9 @@ public class CoverageDecision
     /// <example>ord-1-hd</example>
     public string OrderId { get; set; } = string.Empty;
 
-    /// <example>MockPayer</example>
-    public string? PayerName { get; set; }
+    /// <summary>The EHR's insurance plan id of the payer.</summary>
+    /// <example>1001</example>
+    public int? PiInsurancePlanId { get; set; }
 
     /// <example>cov-1</example>
     public string? CoverageId { get; set; }
@@ -47,7 +48,7 @@ public class CoverageDecision
     /// <example>[]</example>
     public List<string> InformationNeeded { get; set; } = new();
 
-    /// <summary>Payer questionnaires to fill in (pass them to POST /api/v1/dtr/forms).</summary>
+    /// <summary>Payer questionnaires to fill in (pass them to POST /dtr/forms).</summary>
     /// <example>["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"]</example>
     public List<string> QuestionnaireUrls { get; set; } = new();
 

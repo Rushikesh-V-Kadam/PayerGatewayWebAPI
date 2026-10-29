@@ -18,7 +18,7 @@ When order-sign says `callPas = true`, the EHR asks the payer for a prior author
 ```
  EHR                      Payer Gateway (5200)                   FHIR API (5100)              Payer
   |                              |                                     |                        |
-  | POST /api/v1/pas/requests    |                                     |                        |
+  | POST /pas/requests    |                                     |                        |
   |----------------------------->|  read Patient, orders, Coverage,    |                        |
   |                              |  Organization, Practitioner,        |                        |
   |                              |  completed DTR forms, documents     |                        |
@@ -35,12 +35,12 @@ When order-sign says `callPas = true`, the EHR asks the payer for a prior author
   |<-----------------------------|                                     |                        |
   |                              |                                     |                        |
   |   later, when the request is pended (payer notification, or the EHR calls inquire):         |
-  |                              |  POST /api/v1/pas/notifications/{payerName}  (from the payer) |
+  |                              |  POST /pas/notifications/{piInsurancePlanId}  (from the payer) |
   |                              |<-------------------------------------------------------------|
   |                              |  POST {payer}/fhir/Claim/$inquire                             |
   |                              |------------------------------------------------------------->|
   |                              |  save the new decision in PA_PRIOR_AUTH                      |
-  | GET /api/v1/pas/requests/{id}  (or read PA_PRIOR_AUTH)             |                        |
+  | GET /pas/requests/{id}  (or read PA_PRIOR_AUTH)             |                        |
   |----------------------------->|                                     |                        |
 ```
 
@@ -52,12 +52,12 @@ When order-sign says `callPas = true`, the EHR asks the payer for a prior author
 
 | # | Endpoint | In one sentence | Called by |
 |---|---|---|---|
-| 1 | `POST /api/v1/pas/requests` | Submits a new prior authorization request | EHR |
-| 2 | `PUT /api/v1/pas/requests/{requestId}` | Changes a request: add / remove orders, add forms or documents | EHR |
-| 3 | `POST /api/v1/pas/requests/{requestId}/cancel` | Cancels the whole request | EHR |
-| 4 | `GET /api/v1/pas/requests/{requestId}` | Returns the latest stored decision (no payer call) | EHR |
-| 5 | `POST /api/v1/pas/requests/{requestId}/inquire` | Asks the payer for the latest decision now | EHR |
-| 6 | `POST /api/v1/pas/notifications/{payerName}` | The payer tells the gateway that a decision changed | Payer |
+| 1 | `POST /pas/requests` | Submits a new prior authorization request | EHR |
+| 2 | `PUT /pas/requests/{requestId}` | Changes a request: add / remove orders, add forms or documents | EHR |
+| 3 | `POST /pas/requests/{requestId}/cancel` | Cancels the whole request | EHR |
+| 4 | `GET /pas/requests/{requestId}` | Returns the latest stored decision (no payer call) | EHR |
+| 5 | `POST /pas/requests/{requestId}/inquire` | Asks the payer for the latest decision now | EHR |
+| 6 | `POST /pas/notifications/{piInsurancePlanId}` | The payer tells the gateway that a decision changed | Payer |
 
 Every endpoint 1 to 5 returns the same object: the **decision** (section 5).
 
@@ -67,7 +67,7 @@ Every endpoint 1 to 5 returns the same object: the **decision** (section 5).
 
 - **Base URL:** `http://localhost:5200` locally.
 - **Format:** `Content-Type: application/json`, camelCase. Endpoint 6 also accepts `application/fhir+json`.
-- **Payer:** `payerName` must match `PA_PAYER.PAYER_NAME` (case does not matter) and the payer must be enabled.
+- **Payer:** `piInsurancePlanId` (a whole number) must have a payer configuration (`PA_PAYER.PI_INSURANCE_PLAN_ID`), and the payer must be enabled.
 - **Authentication:** none is built in. It is added outside this code.
 - **Errors:** `{ "error": "...", "details": ["..."], "traceId": "..." }`. One exception: when the **payer rejects** a request, the body is a decision with `overallStatus = "error"` and the payer's messages in `errors` (section 4.1).
 - **`requestId`** is the EHR's own id of the request. It becomes `Claim.identifier` and is the key for update, cancel, inquire and CDex.
@@ -87,12 +87,12 @@ The gateway requires only what FHIR R4 itself requires ([resource list](https://
 | `Claim.priority` (1..1) | `priority` (default `routine`) | — |
 | `Claim.insurance` (1..*) with `coverage` (1..1) | The patient's active insurance | 422 |
 | `Claim.item.sequence`, `productOrService` (1..1 per item) | Line number; the order's CPT / HCPCS / drug code | 422 order without code |
-| `Coverage.status`, `beneficiary` (1..1), `payor` (1..*) | The insurance; `payor` = the payer of `payerName` | — |
+| `Coverage.status`, `beneficiary` (1..1), `payor` (1..*) | The insurance; `payor` = the payer of `piInsurancePlanId` | — |
 | `Claim.careTeam.sequence`, `provider` / `diagnosis.sequence`, `diagnosis[x]` / `supportingInfo.sequence`, `category` | Only when such an entry is sent; the gateway fills them | — |
 
 Optional, sent only when present (null otherwise): member id (`Coverage.subscriberId`), facility NPI and tax id (`Organization.identifier`), referring practitioner (`Claim.careTeam`), practitioner NPI, diagnoses (`Claim.diagnosis`), the renewed authorization number (`Claim.related`), quantity, service dates, place of service, forms, documents and notes.
 
-Not FHIR fields, but needed to run the gateway: `requestId` (the key for update, cancel, inquire and CDex), `payerName` (which payer to call), at least one `orderIds` entry (a request without lines has nothing to authorize), `orderLocationCode` (the facility, see above) and `requestingPractitionerId` (`Claim.careTeam` is 0..* in R4, but the gateway requires the requesting clinician).
+Not FHIR fields, but needed to run the gateway: `requestId` (the key for update, cancel, inquire and CDex), `piInsurancePlanId` (which payer to call), at least one `orderIds` entry (a request without lines has nothing to authorize), `orderLocationCode` (the facility, see above) and `requestingPractitionerId` (`Claim.careTeam` is 0..* in R4, but the gateway requires the requesting clinician).
 
 Two values are worked out by the gateway rather than taken from the EHR: `Claim.type` = `professional`, and `Claim.item.category` (X12 service type) from the order's code (e.g. CPT 90935-90999 = 76 dialysis, medication = 88 pharmacy, otherwise 1 medical care). Both are listed here so they can be changed when a real payer asks for other values.
 
@@ -100,7 +100,7 @@ Two values are worked out by the gateway rather than taken from the EHR: `Claim.
 
 ## 4. Endpoints
 
-### 4.1 `POST /api/v1/pas/requests`: submit
+### 4.1 `POST /pas/requests`: submit
 
 **Why we use it.** PAS says a prior authorization is requested with `Claim/$submit` and a Bundle that holds the Claim and everything it points to. The gateway builds that Bundle, so the EHR only sends ids.
 
@@ -111,7 +111,7 @@ Two values are worked out by the gateway rather than taken from the EHR: `Claim.
 | Field | Required | Default | Meaning |
 |---|---|---|---|
 | `requestId` | Yes | | EHR id of the request, for example `PA-2026-0001` |
-| `payerName` | Yes | | Payer to send the request to |
+| `piInsurancePlanId` | Yes | | Whole number. The EHR's insurance plan id: the payer to send the request to |
 | `patientId` | Yes | | EHR patient id |
 | `orderLocationCode` | Yes | | Id of the location (facility) in the EHR that asks for the authorization. The facility, with its own NPI, becomes `Claim.provider` (section 3); its CMS place-of-service code becomes the place of service of every line |
 | `orderIds` | Yes, at least one | | Orders to authorize. One claim line per order |
@@ -133,12 +133,12 @@ Two values are worked out by the gateway rather than taken from the EHR: `Claim.
 A new request:
 
 ```http
-POST /api/v1/pas/requests
+POST /pas/requests
 Content-Type: application/json
 
 {
   "requestId": "PA-ORD-2-HOME-PD-UAV6LK",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-2",
   "requestingPractitionerId": "prac-3",
   "orderLocationCode": "loc-main",
@@ -155,7 +155,7 @@ A renewal for a transient patient:
 ```json
 {
   "requestId": "PA-2026-0102",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderLocationCode": "loc-main",
   "requestingPractitionerId": "prac-1",
@@ -192,7 +192,7 @@ This example is a real answer from the mock payer.
 ```json
 {
   "requestId": "PA-ORD-2-HOME-PD-UAV6LK",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-2",
   "orderIds": ["ord-2-home-pd"],
   "overallStatus": "approved",
@@ -226,7 +226,7 @@ A pended request looks like this (example):
 ```json
 {
   "requestId": "PA-2026-0102",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "overallStatus": "pended",
@@ -255,7 +255,7 @@ A pended request looks like this (example):
 }
 ```
 
-`informationRequests` is empty right after the submit. It is filled when the gateway receives the payer's Task: when the EHR calls `GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true` (section 8), or when the payer pushes the Task. See `CDex-API-Guide.md`.
+`informationRequests` is empty right after the submit. It is filled when the gateway receives the payer's Task: when the EHR calls `GET /cdex/requests/{requestId}/information-requests?refresh=true` (section 8), or when the payer pushes the Task. See `CDex-API-Guide.md`.
 
 #### When the payer rejects the request
 
@@ -264,7 +264,7 @@ The payer answered, but with an error (for example a validation error with an `O
 ```json
 {
   "requestId": "PA-2026-0102",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "overallStatus": "error",
@@ -293,7 +293,7 @@ So for 502 the EHR should accept both bodies: look for `errors` first, then for 
 | HTTP | When |
 |---|---|
 | 201 | Accepted by the payer. The decision may be `pended` |
-| 400 | Missing field (`orderLocationCode` and `requestingPractitionerId` included); `priority`, `requestType` or `patientType` has a wrong value; negative `previousTreatments`; unknown `payerName`; an order of another patient |
+| 400 | Missing field (`orderLocationCode` and `requestingPractitionerId` included); `priority`, `requestType` or `patientType` has a wrong value; negative `previousTreatments`; unknown `piInsurancePlanId`; an order of another patient |
 | 404 | Patient, order, facility (`orderLocationCode`), organization, requesting or referring practitioner, form or document not found at the FHIR API |
 | 409 | `requestId` was already submitted. Use `PUT` to change it |
 | 422 | The insurance (`coverageId`) is not found, belongs to another patient, or is not active; or the payer rejected the request (decision body) |
@@ -303,18 +303,18 @@ So for 502 the EHR should accept both bodies: look for `errors` first, then for 
 
 ---
 
-### 4.2 `PUT /api/v1/pas/requests/{requestId}`: update
+### 4.2 `PUT /pas/requests/{requestId}`: update
 
 **Why we use it.** PAS allows a request to be changed after it was sent (Claim Update): orders added or removed, more forms or documents. The payer answers with a new decision.
 
 **Request.** The same body as the submit. `requestId` in the body may be empty; when it is sent it must match the URL.
 
 ```http
-PUT /api/v1/pas/requests/PA-2026-0102
+PUT /pas/requests/PA-2026-0102
 Content-Type: application/json
 
 {
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderLocationCode": "loc-main",
   "requestingPractitionerId": "prac-1",
@@ -346,14 +346,14 @@ Content-Type: application/json
 
 ---
 
-### 4.3 `POST /api/v1/pas/requests/{requestId}/cancel`: cancel
+### 4.3 `POST /pas/requests/{requestId}/cancel`: cancel
 
 **Why we use it.** The order was cancelled or the authorization is no longer needed. Every line is sent to the payer again as cancelled.
 
 **Request.** The body is optional.
 
 ```http
-POST /api/v1/pas/requests/PA-2026-0102/cancel
+POST /pas/requests/PA-2026-0102/cancel
 Content-Type: application/json
 
 { "reason": "Order cancelled by the physician." }
@@ -378,12 +378,12 @@ Notes:
 
 ---
 
-### 4.4 `GET /api/v1/pas/requests/{requestId}`: latest stored decision
+### 4.4 `GET /pas/requests/{requestId}`: latest stored decision
 
 **Why we use it.** To show the current state without calling the payer. For a pended request the stored decision changes only when the payer sends a notification or the EHR calls inquire (section 8).
 
 ```http
-GET /api/v1/pas/requests/PA-ORD-2-HOME-PD-UAV6LK
+GET /pas/requests/PA-ORD-2-HOME-PD-UAV6LK
 ```
 
 **Response 200:** the decision (section 5).
@@ -398,12 +398,12 @@ The EHR can also read the same JSON straight from `PA_PRIOR_AUTH.DECISION_JSON`.
 
 ---
 
-### 4.5 `POST /api/v1/pas/requests/{requestId}/inquire`: ask the payer now
+### 4.5 `POST /pas/requests/{requestId}/inquire`: ask the payer now
 
 **Why we use it.** A pended request can take days. `Claim/$inquire` asks the payer for its latest decision. The gateway has no background job: **the EHR calls this endpoint for each pended request, on its own schedule** (section 8).
 
 ```http
-POST /api/v1/pas/requests/PA-2026-0102/inquire
+POST /pas/requests/PA-2026-0102/inquire
 ```
 
 No body.
@@ -422,14 +422,14 @@ No body.
 
 ---
 
-### 4.6 `POST /api/v1/pas/notifications/{payerName}`: called by the payer
+### 4.6 `POST /pas/notifications/{piInsurancePlanId}`: called by the payer
 
 **Why it exists.** With a PAS Subscription the payer tells the gateway when a pended decision changes, so the gateway does not have to ask again and again. The gateway registers this URL at the payer (section 8).
 
 **Request** (from the payer; `application/fhir+json` or `application/json`)
 
 ```http
-POST /api/v1/pas/notifications/MockPayer
+POST /pas/notifications/1001
 Content-Type: application/fhir+json
 
 {
@@ -468,7 +468,7 @@ A failed inquiry of one request is logged and does not stop the others.
 |---|---|
 | 200 | Handled |
 | 400 | The body is not a valid FHIR Bundle |
-| 404 | `payerName` is not configured or not enabled |
+| 404 | No payer is configured or enabled for this `piInsurancePlanId` |
 | 503 | The EHR data API is not available |
 
 ---
@@ -477,7 +477,7 @@ A failed inquiry of one request is logged and does not stop the others.
 
 | Field | Meaning |
 |---|---|
-| `requestId`, `payerName`, `patientId`, `orderIds` | The request |
+| `requestId`, `piInsurancePlanId`, `patientId`, `orderIds` | The request |
 | `overallStatus` | `approved`, `partially-approved`, `denied`, `pended`, `not-required`, `cancelled`, `contact-payer`, `error` |
 | `authorizationNumber` | The payer's authorization number. Put it on the claim later |
 | `validFrom`, `validTo` | The period the authorization covers |
@@ -572,7 +572,7 @@ Each `fullUrl` is `{FHIR API}/{type}/{id}`, for example `http://localhost:5100/f
 | first submit / update | `meta.profile` = `profile-claim` (version 1) or `profile-claim-update` (version 2 and up) |
 | | `status` = `active`, `use` = `preauthorization`, `type` = `professional` |
 | `patientId` | `Claim.patient` |
-| `payerName` | Chooses the payer to call. `Claim.insurer` = an Organization built from the patient's insurance (payer name and payer id, `Coverage.payor`); no identifier when the insurance has no payer id |
+| `piInsurancePlanId` | Chooses the payer to call. `Claim.insurer` = an Organization built from the patient's insurance (payer name and payer id, `Coverage.payor`); no identifier when the insurance has no payer id |
 | `orderLocationCode` (section 3) | `Claim.provider`, and the place of service of every line (`Claim.item.locationCodeableConcept`) |
 | `priority` | `Claim.priority`: `routine` = `normal`, `urgent` = `stat` |
 | coverage | `Claim.insurance[1]`, focal. The Coverage is sent as the FHIR API returns it; the gateway adds no identifier system |
@@ -705,7 +705,7 @@ Two ways: the payer tells the gateway (automatic), and the EHR asks (the EHR dec
   },
   "channel": {
     "type": "rest-hook",
-    "endpoint": "http://localhost:5200/api/v1/pas/notifications/MockPayer",
+    "endpoint": "http://localhost:5200/pas/notifications/1001",
     "payload": "application/fhir+json",
     "_payload": {
       "extension": [
@@ -721,13 +721,13 @@ The result is saved in `PA_PAYER_SUBSCRIPTION` (`active` or `error`). A refused 
 **2. The EHR checks its pended requests (the safety net).** The gateway has no background job. The EHR decides when to check, for example with a scheduled job of its own. Not every payer sends notifications and a notification can be lost, so this check is what makes sure nothing is missed:
 
 1. Read the requests with `STATUS = 'pended'` from `PA_PRIOR_AUTH`.
-2. For each one, call `POST /api/v1/pas/requests/{requestId}/inquire` (section 4.5). The gateway asks the payer and saves the new decision in `PA_PRIOR_AUTH`.
-3. For each one, also call `GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true` (CDex guide). The gateway searches the payer's Tasks, so a payer request for more documents is found. Inquire alone does not find these. Skipped by the gateway when the request's organization has no NPI.
+2. For each one, call `POST /pas/requests/{requestId}/inquire` (section 4.5). The gateway asks the payer and saves the new decision in `PA_PRIOR_AUTH`.
+3. For each one, also call `GET /cdex/requests/{requestId}/information-requests?refresh=true` (CDex guide). The gateway searches the payer's Tasks, so a payer request for more documents is found. Inquire alone does not find these. Skipped by the gateway when the request's organization has no NPI.
 4. When documents are requested, send them with CDex. When the decision is final, the request is no longer `pended` and drops out of step 1.
 
 A failed call (payer down, timeout) leaves the stored decision unchanged; call it again next time. If the EHR never runs this check, a payer that sends no notification is never asked again, and a request for documents can pass its due date unseen.
 
-The EHR reads the result with `GET /api/v1/pas/requests/{requestId}` or straight from `PA_PRIOR_AUTH`. The gateway does not send a second copy to the EHR.
+The EHR reads the result with `GET /pas/requests/{requestId}` or straight from `PA_PRIOR_AUTH`. The gateway does not send a second copy to the EHR.
 
 ---
 
@@ -782,12 +782,12 @@ Run order-sign and DTR for the order first, so a completed form exists. The ids 
 
 ```http
 ### 1. submit without the lab report: the mock payer pends (it needs LOINC 11502-2 for CPT 90935)
-POST http://localhost:5200/api/v1/pas/requests
+POST http://localhost:5200/pas/requests
 Content-Type: application/json
 
 {
   "requestId": "PA-2026-0102",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderLocationCode": "loc-main",
   "requestingPractitionerId": "prac-1",
@@ -797,17 +797,17 @@ Content-Type: application/json
 }
 
 ### 2. stored decision
-GET http://localhost:5200/api/v1/pas/requests/PA-2026-0102
+GET http://localhost:5200/pas/requests/PA-2026-0102
 
 ### 3. ask the payer now
-POST http://localhost:5200/api/v1/pas/requests/PA-2026-0102/inquire
+POST http://localhost:5200/pas/requests/PA-2026-0102/inquire
 
 ### 4. add an order and the lab report
-PUT http://localhost:5200/api/v1/pas/requests/PA-2026-0102
+PUT http://localhost:5200/pas/requests/PA-2026-0102
 Content-Type: application/json
 
 {
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderLocationCode": "loc-main",
   "requestingPractitionerId": "prac-1",
@@ -816,7 +816,7 @@ Content-Type: application/json
 }
 
 ### 5. cancel
-POST http://localhost:5200/api/v1/pas/requests/PA-2026-0102/cancel
+POST http://localhost:5200/pas/requests/PA-2026-0102/cancel
 Content-Type: application/json
 
 { "reason": "Order cancelled by the physician." }
@@ -836,7 +836,7 @@ If you still have the earlier PAS guide, these are the points where it no longer
 | Renewal lines are sent with X12 certification type `R`, and the previous authorization goes in `Claim.related` | Section 6 |
 | No write-back. The decision is saved in `PA_PRIOR_AUTH` in the EHR database and the EHR reads it there. The `writeBack` request fields no longer exist and are ignored when sent | Sections 8 and 10 |
 | No database of its own. All rows go through the EHR data API. A new status 503 means the EHR data API is not available | Sections 3 and 10 |
-| The payer is found by `payerName` in table `PA_PAYER`, not in `appsettings.json` (that list is used only with `Storage:Provider = InMemory`) | Section 3 |
+| The payer is read by `piInsurancePlanId` (`GET payers/{piInsurancePlanId}` on the EHR data API); there is no payer list in `appsettings.json` | Section 3 |
 | No authentication on any call (gateway to payer, payer to gateway) | Section 3 |
 | No background job. The EHR checks its pended requests by calling inquire and `information-requests?refresh=true` for each one. `Workflow:PollMinutes` is removed | Sections 4.5 and 8 |
 | Project and namespaces renamed to `PayerGatewayWebAPI` | Section 14 |

@@ -3,6 +3,11 @@ namespace PayerGatewayWebAPI.Models.Responses;
 /// <summary>How the payer call went (shown in the order-sign response for troubleshooting).</summary>
 public class PayerCallSummary
 {
+    /// <summary>The EHR's insurance plan id of the payer.</summary>
+    /// <example>1001</example>
+    public int PiInsurancePlanId { get; set; }
+
+    /// <summary>Name of the payer that was asked (from its configuration).</summary>
     /// <example>MockPayer</example>
     public string PayerName { get; set; } = string.Empty;
 

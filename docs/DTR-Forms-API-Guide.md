@@ -23,7 +23,7 @@ The payer wants a questionnaire filled in before it decides. In this flow the **
 ```
  EHR / questionnaire app        Payer Gateway (5200)              FHIR API (5100)            Payer
         |                              |                                |                      |
-        | POST /api/v1/dtr/forms       |                                |                      |
+        | POST /dtr/forms       |                                |                      |
         |----------------------------->|  read orders + Coverage        |                      |
         |                              |------------------------------->|                      |
         |                              |  POST {payer}/fhir/Questionnaire/$questionnaire-package
@@ -56,10 +56,10 @@ The payer wants a questionnaire filled in before it decides. In this flow the **
 
 | # | Endpoint | In one sentence |
 |---|---|---|
-| 1 | `POST /api/v1/dtr/forms` | Gets the payer's questionnaire(s) for the orders, as simple questions |
-| 2 | `GET /api/v1/dtr/forms/{formId}` | Reads one form: its questions and the answers saved so far |
-| 3 | `POST /api/v1/dtr/forms/{formId}/answers` | Saves answers; builds and stores the FHIR QuestionnaireResponse |
-| 4 | `GET /api/v1/dtr/saved-forms?patientId=...&orderId=...` | Lists the forms saved for a patient (used by both DTR flows) |
+| 1 | `POST /dtr/forms` | Gets the payer's questionnaire(s) for the orders, as simple questions |
+| 2 | `GET /dtr/forms/{formId}` | Reads one form: its questions and the answers saved so far |
+| 3 | `POST /dtr/forms/{formId}/answers` | Saves answers; builds and stores the FHIR QuestionnaireResponse |
+| 4 | `GET /dtr/saved-forms?patientId=...&orderId=...` | Lists the forms saved for a patient (used by both DTR flows) |
 
 ---
 
@@ -74,7 +74,7 @@ The payer wants a questionnaire filled in before it decides. In this flow the **
 
 ## 4. Endpoints
 
-### 4.1 `POST /api/v1/dtr/forms`: get the questionnaire
+### 4.1 `POST /dtr/forms`: get the questionnaire
 
 **Why we use it.** DTR says the payer's questionnaire is fetched with `Questionnaire/$questionnaire-package`. That operation needs FHIR `Parameters` with the coverage and the orders. The gateway builds that, calls the payer and turns each FHIR `Questionnaire` into a flat list of questions.
 
@@ -84,7 +84,7 @@ The payer wants a questionnaire filled in before it decides. In this flow the **
 
 | Field | Required | Meaning |
 |---|---|---|
-| `payerName` | Yes | Payer to ask |
+| `piInsurancePlanId` | Yes | Whole number. The EHR's insurance plan id: the payer to ask |
 | `patientId` | Yes | EHR patient id |
 | `orderIds` | Yes, at least one | Orders the documentation is for |
 | `coverageId` | Yes | The patient's active insurance for these orders: the EHR's coverage id (unique in the EHR). The gateway reads it with `GET Coverage/{coverageId}` at the FHIR API. The orders carry no insurance |
@@ -92,11 +92,11 @@ The payer wants a questionnaire filled in before it decides. In this flow the **
 | `coverageAssertionId` | No | From the order-sign decision (DTR `context`), or a CDex tracking id |
 
 ```http
-POST /api/v1/dtr/forms
+POST /dtr/forms
 Content-Type: application/json
 
 {
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "questionnaireUrls": ["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"],
@@ -133,7 +133,7 @@ A list with one form per questionnaire (shortened: 5 of the questions).
 [
   {
     "formId": "frm-235b7ad69e85",
-    "payerName": "MockPayer",
+    "piInsurancePlanId": 1001,
     "patientId": "pat-1",
     "orderIds": ["ord-1-hd"],
     "coverageId": "cov-1",
@@ -278,7 +278,7 @@ A list with one form per questionnaire (shortened: 5 of the questions).
 
 | HTTP | When |
 |---|---|
-| 400 | Missing field, empty `orderIds`, unknown `payerName`, or an order belongs to another patient |
+| 400 | Missing field, empty `orderIds`, unknown `piInsurancePlanId`, or an order belongs to another patient |
 | 404 | An order was not found at the FHIR API |
 | 422 | The insurance (`coverageId`) is not found, belongs to another patient, or is not active; the payer refused the request (HTTP 4xx, `details` has the payer's messages); or the payer returned no questionnaire |
 | 502 | The payer answered with HTTP 5xx or could not be reached; or the FHIR API failed |
@@ -287,12 +287,12 @@ A list with one form per questionnaire (shortened: 5 of the questions).
 
 ---
 
-### 4.2 `GET /api/v1/dtr/forms/{formId}`: read a form
+### 4.2 `GET /dtr/forms/{formId}`: read a form
 
 **Why we use it.** The screen that shows the questions loads the form with it, and reads it again to show saved answers (`currentValues`) or, for an adaptive form, the questions the payer added.
 
 ```http
-GET /api/v1/dtr/forms/frm-235b7ad69e85
+GET /dtr/forms/frm-235b7ad69e85
 ```
 
 **Response 200:** one form, the same structure as in section 4.1. No payer call is made.
@@ -305,7 +305,7 @@ GET /api/v1/dtr/forms/frm-235b7ad69e85
 
 ---
 
-### 4.3 `POST /api/v1/dtr/forms/{formId}/answers`: save the answers
+### 4.3 `POST /dtr/forms/{formId}/answers`: save the answers
 
 **Why we use it.** The payer needs a FHIR `QuestionnaireResponse` with the same structure as its `Questionnaire`. The gateway builds it from plain text answers, so the EHR screen needs no FHIR knowledge.
 
@@ -318,7 +318,7 @@ GET /api/v1/dtr/forms/frm-235b7ad69e85
 | `authorPractitionerId` | No | Clinician who answered (`QuestionnaireResponse.author`) |
 
 ```http
-POST /api/v1/dtr/forms/frm-235b7ad69e85/answers
+POST /dtr/forms/frm-235b7ad69e85/answers
 Content-Type: application/json
 
 {
@@ -439,12 +439,12 @@ Required questions missing with `complete = true` (422):
 
 ---
 
-### 4.4 `GET /api/v1/dtr/saved-forms`: forms saved for a patient
+### 4.4 `GET /dtr/saved-forms`: forms saved for a patient
 
 **Why we use it.** It shows which QuestionnaireResponses exist at the FHIR API for a patient, with their status and order. Use it to check that a form is completed before PAS, or to find a `questionnaireResponseId` for CDex.
 
 ```http
-GET /api/v1/dtr/saved-forms?patientId=pat-2&orderId=ord-2-home-pd
+GET /dtr/saved-forms?patientId=pat-2&orderId=ord-2-home-pd
 ```
 
 | Parameter | Required | Meaning |
@@ -548,10 +548,10 @@ Some payers do not send all questions at once. They send the next questions afte
 
 How it works for the EHR:
 
-1. `POST /api/v1/dtr/forms` returns the form with `adaptive = true`, `moreQuestionsExpected = true` and the first questions. The gateway has already asked the payer for them.
+1. `POST /dtr/forms` returns the form with `adaptive = true`, `moreQuestionsExpected = true` and the first questions. The gateway has already asked the payer for them.
 2. Send the answers with `POST .../answers`. The gateway passes them to the payer.
 3. If the payer adds questions, the answer has `newQuestions > 0` and `moreQuestionsExpected = true`. The form stays `in-progress`, also when `complete = true` was sent. A warning says "The payer has more questions".
-4. Read the form again (`GET /api/v1/dtr/forms/{formId}`), answer the new questions, save again.
+4. Read the form again (`GET /dtr/forms/{formId}`), answer the new questions, save again.
 5. When the payer says it is finished, `moreQuestionsExpected = false`. The save with `complete = true` now completes the form.
 
 Example answer when the payer added two questions:
@@ -583,8 +583,8 @@ In the mock data, order `ord-2-home-pd` (patient `pat-2`) uses an adaptive quest
 
 | Next step | What to do |
 |---|---|
-| **PAS** | Call `POST /api/v1/pas/requests` with the same `orderIds`. Every `completed` (or `amended`) form whose qr-context names one of those orders is attached automatically. Nothing to send |
-| **CDex** | Send the `questionnaireResponseId` in `POST /api/v1/cdex/requests/{requestId}/attachments` (`questionnaireResponseIds`) |
+| **PAS** | Call `POST /pas/requests` with the same `orderIds`. Every `completed` (or `amended`) form whose qr-context names one of those orders is attached automatically. Nothing to send |
+| **CDex** | Send the `questionnaireResponseId` in `POST /cdex/requests/{requestId}/attachments` (`questionnaireResponseIds`) |
 
 ---
 
@@ -592,8 +592,8 @@ In the mock data, order `ord-2-home-pd` (patient `pat-2`) uses an adaptive quest
 
 `E:\FHIR\dtr-questionnaire-app` is a small React app that shows a form and sends the answers. It uses only two endpoints of this guide:
 
-- `GET /api/v1/dtr/forms/{formId}`
-- `POST /api/v1/dtr/forms/{formId}/answers`
+- `GET /dtr/forms/{formId}`
+- `POST /dtr/forms/{formId}/answers`
 
 Open it with the form id and the gateway URL:
 
@@ -601,7 +601,7 @@ Open it with the form id and the gateway URL:
 http://localhost:5174/?formId=frm-235b7ad69e85&gateway=http://localhost:5200
 ```
 
-The mock EHR UI (`mock-ehr-ui`) calls `POST /api/v1/dtr/forms` and then opens this app. In production the EHR team can show the same questions on an EHR screen instead.
+The mock EHR UI (`mock-ehr-ui`) calls `POST /dtr/forms` and then opens this app. In production the EHR team can show the same questions on an EHR screen instead.
 
 ---
 
@@ -629,18 +629,18 @@ Both are in the EHR's Oracle database, through the EHR data API (`docs/EHR-Data-
 
 ```http
 ### 1. get the form (use questionnaireUrls and coverageAssertionId from order-sign)
-POST http://localhost:5200/api/v1/dtr/forms
+POST http://localhost:5200/dtr/forms
 Content-Type: application/json
 
 {
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "questionnaireUrls": ["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"]
 }
 
 ### 2. save part of the answers (replace the formId)
-POST http://localhost:5200/api/v1/dtr/forms/frm-000000000000/answers
+POST http://localhost:5200/dtr/forms/frm-000000000000/answers
 Content-Type: application/json
 
 {
@@ -652,10 +652,10 @@ Content-Type: application/json
 }
 
 ### 3. read the form back (currentValues are filled)
-GET http://localhost:5200/api/v1/dtr/forms/frm-000000000000
+GET http://localhost:5200/dtr/forms/frm-000000000000
 
 ### 4. forms saved for the order
-GET http://localhost:5200/api/v1/dtr/saved-forms?patientId=pat-1&orderId=ord-1-hd
+GET http://localhost:5200/dtr/saved-forms?patientId=pat-1&orderId=ord-1-hd
 ```
 
 ---

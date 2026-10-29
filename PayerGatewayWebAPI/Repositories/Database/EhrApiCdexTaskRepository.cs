@@ -1,3 +1,4 @@
+using System.Globalization;
 using PayerGatewayWebAPI.Clients;
 using PayerGatewayWebAPI.Models.Entities;
 using PayerGatewayWebAPI.Repositories.Interfaces;
@@ -6,8 +7,8 @@ namespace PayerGatewayWebAPI.Repositories.Database;
 
 /// <summary>
 /// Payer information requests (Tasks) in the EHR database, through the EHR data API (table PA_CDEX_TASK):
-///   cdex-tasks/{payerName}/{taskId}   save one Task
-///   cdex-tasks?requestId=...          all Tasks of one prior auth request
+///   cdex-tasks/{piInsurancePlanId}/{taskId}   save one Task
+///   cdex-tasks?requestId=...                  all Tasks of one prior auth request
 /// The record is sent as it is: every property is one column.
 /// </summary>
 public class EhrApiCdexTaskRepository : ICdexTaskRepository
@@ -20,10 +21,10 @@ public class EhrApiCdexTaskRepository : ICdexTaskRepository
         _ehr = ehr;
     }
 
-    /// <summary>Inserts or updates one Task: PUT cdex-tasks/{payerName}/{taskId}.</summary>
+    /// <summary>Inserts or updates one Task: PUT cdex-tasks/{piInsurancePlanId}/{taskId}.</summary>
     public async Task SaveAsync(CdexTaskRecord record, CancellationToken ct)
     {
-        string path = "cdex-tasks/" + EhrDataClient.Esc(record.PayerName) + "/" + EhrDataClient.Esc(record.TaskId);
+        string path = "cdex-tasks/" + EhrDataClient.Esc(record.PiInsurancePlanId.ToString(CultureInfo.InvariantCulture)) + "/" + EhrDataClient.Esc(record.TaskId);
         await _ehr.PutAsync(path, record, ct);
     }
 

@@ -9,8 +9,8 @@ public class PriorAuthRow
 {
     /// <summary>Column REQUEST_ID (key).</summary>
     public string RequestId { get; set; } = string.Empty;
-    /// <summary>Column PAYER_NAME.</summary>
-    public string PayerName { get; set; } = string.Empty;
+    /// <summary>Column PI_INSURANCE_PLAN_ID: insurance plan id of the payer.</summary>
+    public int PiInsurancePlanId { get; set; }
     /// <summary>Column PATIENT_ID.</summary>
     public string PatientId { get; set; } = string.Empty;
     /// <summary>Column COVERAGE_ID.</summary>
@@ -37,7 +37,7 @@ public class PriorAuthRow
     public string? OrderIdsJson { get; set; }
     /// <summary>JSON object orderId -> line number, e.g. {"ord-1001":1}.</summary>
     public string? LineNumbersJson { get; set; }
-    /// <summary>The PriorAuthDecision as JSON (same structure as the response of POST /api/v1/pas/requests).</summary>
+    /// <summary>The PriorAuthDecision as JSON (same structure as the response of POST /pas/requests).</summary>
     public string? DecisionJson { get; set; }
     /// <summary>Last PAS Bundle sent to the payer (FHIR JSON).</summary>
     public string? LastRequestBundle { get; set; }

@@ -21,7 +21,7 @@ namespace PayerGatewayWebAPI.Services.Crd;
 /// <summary>
 /// STEP 1 - CRD (Coverage Requirements Discovery), order-sign only. Called when the clinician signs orders.
 ///
-///   1. find the payer by payerName (PayerRegistry: table PA_PAYER, or appsettings "Payers" in memory mode)
+///   1. read the payer of piInsurancePlanId (PayerRegistry: EHR data API GET payers/{piInsurancePlanId})
 ///   2. read the patient, the orders and the coverage from the FHIR API
 ///   3. get the payer's CDS services (discovery, cached 12 h) -> the order-sign service id + prefetch templates
 ///   4. call POST {payer}/cds-services/{id} with context, prefetch and a fhirAuthorization token
@@ -65,9 +65,9 @@ public class CrdService
             problems.Add("eventId is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.PayerName))
+        if (request.PiInsurancePlanId == null || request.PiInsurancePlanId.Value <= 0)
         {
-            problems.Add("payerName is required.");
+            problems.Add("piInsurancePlanId is required (a whole number above 0).");
         }
 
         if (string.IsNullOrWhiteSpace(request.PatientId))
@@ -98,7 +98,7 @@ public class CrdService
         }
 
         // ---- 1. the payer
-        PayerSettings payer = await _payers.GetRequiredAsync(request.PayerName, 400, ct);
+        PayerSettings payer = await _payers.GetRequiredAsync(request.PiInsurancePlanId, 400, ct);
 
         // No stored answer per eventId: every call asks the payer, so a retry (also after a timeout) gets a fresh
         // answer. eventId is only kept with each saved decision as a reference.
@@ -112,7 +112,8 @@ public class CrdService
 
         OrderSignResponse response = new OrderSignResponse();
         response.EventId = request.EventId;
-        response.PayerName = payer.PayerName;
+        response.PiInsurancePlanId = payer.PiInsurancePlanId;
+        response.PayerCall.PiInsurancePlanId = payer.PiInsurancePlanId;
         response.PayerCall.PayerName = payer.PayerName;
 
         List<JsonObject> orders = await ReadOrdersAsync(request, response, ct);
@@ -153,7 +154,7 @@ public class CrdService
             CoverageDecisionRecord record = new CoverageDecisionRecord();
             record.OrderId = decision.OrderId;
             record.EventId = request.EventId;
-            record.PayerName = decision.PayerName;
+            record.PiInsurancePlanId = decision.PiInsurancePlanId;
             record.PatientId = request.PatientId;
             record.CoverageAssertionId = decision.CoverageAssertionId;
             record.Covered = decision.Covered;
@@ -173,7 +174,7 @@ public class CrdService
         CoverageDecisionRecord? record = await _crdRepository.GetDecisionAsync(orderId, ct);
         if (record == null)
         {
-            throw new ApiException(404, "No coverage decision for order " + orderId + ". Call POST /api/v1/crd/order-sign first.");
+            throw new ApiException(404, "No coverage decision for order " + orderId + ". Call POST /crd/order-sign first.");
         }
         CoverageDecision? decision = JsonSerializer.Deserialize<CoverageDecision>(record.DecisionJson, ApiJson.Options);
         if (decision == null)
@@ -238,7 +239,7 @@ public class CrdService
             if (service == null)
             {
                 response.PayerCall.Outcome = "skipped";
-                response.PayerCall.Error = payer.GetDisplayName() + " has no CDS service for order-sign.";
+                response.PayerCall.Error = payer.PayerName + " has no CDS service for order-sign.";
                 AddUnknownDecisions(response, orders, payer, coverage.Id, response.PayerCall.Error);
                 return;
             }
@@ -267,7 +268,7 @@ public class CrdService
                 if (byReference.TryGetValue(order.GetReference(), out decision))
                 {
                     decision.OrderId = order.Id ?? string.Empty;
-                    decision.PayerName = payer.PayerName;
+                    decision.PiInsurancePlanId = payer.PiInsurancePlanId;
                     if (decision.CoverageId == null)
                     {
                         decision.CoverageId = coverage.Id;
@@ -277,7 +278,7 @@ public class CrdService
                 else
                 {
                     response.Decisions.Add(UnknownDecision(order.Id ?? string.Empty, payer, coverage.Id,
-                        payer.GetDisplayName() + " returned no coverage information for this order."));
+                        payer.PayerName + " returned no coverage information for this order."));
                 }
             }
 
@@ -303,7 +304,7 @@ public class CrdService
             response.PayerCall.Outcome = ex.StatusCode == 504 ? "timeout" : "error";
             response.PayerCall.Error = ex.Message;
             AddUnknownDecisions(response, orders, payer, coverage.Id,
-                payer.GetDisplayName() + " did not answer the coverage check. Continue; requirements are checked again at prior authorization.");
+                payer.PayerName + " did not answer the coverage check. Continue; requirements are checked again at prior authorization.");
         }
         catch (JsonException ex)
         {
@@ -311,10 +312,10 @@ public class CrdService
             // coverage-information extension). Treated like no answer: no half-read decision is returned.
             _logger.LogWarning(ex, "The order-sign answer of {Payer} could not be read", payer.PayerName);
             response.PayerCall.Outcome = "error";
-            response.PayerCall.Error = payer.GetDisplayName() + " returned an answer that could not be read: " + ex.Message;
+            response.PayerCall.Error = payer.PayerName + " returned an answer that could not be read: " + ex.Message;
             response.Decisions.Clear();
             AddUnknownDecisions(response, orders, payer, coverage.Id,
-                payer.GetDisplayName() + " returned a coverage answer that could not be read. Continue; requirements are checked again at prior authorization.");
+                payer.PayerName + " returned a coverage answer that could not be read. Continue; requirements are checked again at prior authorization.");
         }
         finally
         {
@@ -420,7 +421,7 @@ public class CrdService
 
     /// <summary>
     /// Card -> EHR message. A SMART link (a payer DTR app) cannot be opened by the EHR directly, so the launch details are
-    /// saved and the EHR gets a plain gateway URL: /api/v1/dtr/launch/{linkId}.
+    /// saved and the EHR gets a plain gateway URL: /dtr/launch/{linkId}.
     /// </summary>
     private async Task<EhrMessage> ToMessageAsync(CdsCard card, PayerSettings payer, OrderSignRequest request, List<JsonObject> orders,
         string? orderId, string? coverageId, string userPractitionerId, CancellationToken ct)
@@ -459,7 +460,7 @@ public class CrdService
 
         // SMART link: remember the launch context, give the EHR a gateway URL
         DtrLinkRecord dtrLink = new DtrLinkRecord();
-        dtrLink.PayerName = payer.PayerName;
+        dtrLink.PiInsurancePlanId = payer.PiInsurancePlanId;
         dtrLink.PatientId = request.PatientId;
         dtrLink.EncounterId = request.EncounterId;
         dtrLink.UserPractitionerId = userPractitionerId;
@@ -480,7 +481,7 @@ public class CrdService
         dtrLink.ExpiresAt = DateTime.UtcNow.AddHours(_workflow.DtrLinkHours);
         await _linkRepository.SaveAsync(dtrLink, ct);
 
-        message.Link.Url = _workflow.GetGatewayBaseUrl() + "/api/v1/dtr/launch/" + dtrLink.LinkId;
+        message.Link.Url = _workflow.GetGatewayBaseUrl() + "/dtr/launch/" + dtrLink.LinkId;
         message.Link.Type = CrdCodes.LinkTypeSmart;
         message.Link.OpensPayerApp = payer.UsesSmartApp();
         return message;
@@ -533,7 +534,7 @@ public class CrdService
     {
         CoverageDecision decision = new CoverageDecision();
         decision.OrderId = orderId;
-        decision.PayerName = payer.PayerName;
+        decision.PiInsurancePlanId = payer.PiInsurancePlanId;
         decision.CoverageId = coverageId;
         decision.Covered = CrdCodes.Unknown;
         decision.DecidedAt = FhirDate.Now();

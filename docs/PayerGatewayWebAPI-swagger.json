@@ -2,17 +2,17 @@
   "openapi": "3.0.4",
   "info": {
     "title": "Payer Gateway Web API",
-    "description": "Da Vinci prior authorization for the EHR. Call order: 1) POST /api/v1/crd/order-sign  2) DTR forms (when documentation is needed)  3) POST /api/v1/pas/requests (when prior auth is needed)  4) CDex attachments (when the payer pends and asks for more). Every EHR request carries payerName; the gateway finds that payer in table PA_PAYER. All gateway data is stored in the EHR database through the EHR data API, so decisions are not written back separately. No authentication is built in (it is added outside this code). Errors always return { \"error\": \"...\", \"details\": [ ... ], \"traceId\": \"...\" }.",
+    "description": "Da Vinci prior authorization for the EHR. Call order: 1) POST /crd/order-sign  2) DTR forms (when documentation is needed)  3) POST /pas/requests (when prior auth is needed)  4) CDex attachments (when the payer pends and asks for more). Every EHR request carries piInsurancePlanId (the insurance plan id); the gateway reads that payer's configuration (table PA_PAYER). All gateway data is stored in the EHR database through the EHR data API, so decisions are not written back separately. No authentication is built in (it is added outside this code). Errors always return { \"error\": \"...\", \"details\": [ ... ], \"traceId\": \"...\" }.",
     "version": "v1"
   },
   "paths": {
-    "/api/v1/cdex/requests/{requestId}/information-requests": {
+    "/cdex/requests/{requestId}/information-requests": {
       "get": {
         "tags": [
           "Cdex"
         ],
         "summary": "Documents / forms the payer asked for on a pended request.",
-        "description": "Each information request lists LOINC document types (documentsNeeded) and / or questionnaires (questionnairesNeeded).\nFor questionnaires: POST /api/v1/dtr/forms with those URLs, answer them, then send the questionnaireResponseId.",
+        "description": "Each information request lists LOINC document types (documentsNeeded) and / or questionnaires (questionnairesNeeded).\nFor questionnaires: POST /dtr/forms with those URLs, answer them, then send the questionnaireResponseId.",
         "parameters": [
           {
             "name": "requestId",
@@ -70,7 +70,7 @@
         }
       }
     },
-    "/api/v1/cdex/requests/{requestId}/attachments": {
+    "/cdex/requests/{requestId}/attachments": {
       "post": {
         "tags": [
           "Cdex"
@@ -163,7 +163,7 @@
         }
       }
     },
-    "/api/v1/cdex/tasks/{payerName}": {
+    "/cdex/tasks/{piInsurancePlanId}": {
       "post": {
         "tags": [
           "Cdex"
@@ -171,12 +171,13 @@
         "summary": "Called BY THE PAYER to push a Task (or a Bundle of Tasks) asking for more information.",
         "parameters": [
           {
-            "name": "payerName",
+            "name": "piInsurancePlanId",
             "in": "path",
-            "description": "Payer name.",
+            "description": "The EHR's insurance plan id of the payer.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer",
+              "format": "int32"
             }
           }
         ],
@@ -223,7 +224,7 @@
             }
           },
           "404": {
-            "description": "The payer is not configured.",
+            "description": "No payer is configured or enabled for this insurance plan id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -245,15 +246,15 @@
         }
       }
     },
-    "/api/v1/crd/order-sign": {
+    "/crd/order-sign": {
       "post": {
         "tags": [
           "Crd"
         ],
         "summary": "Order signed: asks the payer (CDS Hooks order-sign) and returns one coverage decision per order.",
-        "description": "The gateway reads the patient, orders and coverage from the FHIR API, calls the payer named in\npayerName, and reads pa-needed / doc-needed from the payer's answer.\n            \nWhat to do with each decision:\n- **callDtr = true** → POST /api/v1/dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.\n- **callPas = true** → POST /api/v1/pas/requests (after DTR when both are true).\n- both false → nothing more is needed for that order.\n            \nIf the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = \"unknown\" and payerCall.outcome = \"timeout\" / \"error\".\nOrders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).\nEvery call asks the payer again; sending the same eventId again (for example after a timeout) gets a fresh answer.",
+        "description": "The gateway reads the patient, orders and coverage from the FHIR API, calls the payer of\npiInsurancePlanId, and reads pa-needed / doc-needed from the payer's answer.\n            \nWhat to do with each decision:\n- **callDtr = true** → POST /dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.\n- **callPas = true** → POST /pas/requests (after DTR when both are true).\n- both false → nothing more is needed for that order.\n            \nIf the payer cannot be reached (or its answer cannot be read), the call still returns 200 with covered = \"unknown\" and payerCall.outcome = \"timeout\" / \"error\".\nOrders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).\nEvery call asks the payer again; sending the same eventId again (for example after a timeout) gets a fresh answer.",
         "requestBody": {
-          "description": "Required. The signing event: eventId, payerName, patientId and orderIds must be filled.",
+          "description": "Required. The signing event: eventId, piInsurancePlanId, patientId and orderIds must be filled.",
           "content": {
             "application/json": {
               "schema": {
@@ -275,7 +276,7 @@
             }
           },
           "400": {
-            "description": "Invalid body, missing field (coverageId / userPractitionerId included), unknown payerName, or an order of another patient.",
+            "description": "Invalid body, missing field (coverageId / userPractitionerId included), unknown piInsurancePlanId, or an order of another patient.",
             "content": {
               "application/json": {
                 "schema": {
@@ -317,7 +318,7 @@
         }
       }
     },
-    "/api/v1/crd/decisions/{orderId}": {
+    "/crd/decisions/{orderId}": {
       "get": {
         "tags": [
           "Crd"
@@ -358,13 +359,13 @@
         }
       }
     },
-    "/api/v1/dtr/forms": {
+    "/dtr/forms": {
       "post": {
         "tags": [
           "DTR 1 - Forms (our questionnaire app or EHR screen)"
         ],
         "summary": "Gets the payer's questionnaire(s) for the orders, as simple questions.",
-        "description": "Call when order-sign returned callDtr = true. The gateway calls the payer's Questionnaire/$questionnaire-package\nwith the orders and coverage, and returns one form per questionnaire.\n            \nNext: show each question (text, type, options, required, showWhen) on the EHR screen and send the answers to\nPOST /api/v1/dtr/forms/{formId}/answers. During testing the answers can be sent from Swagger or Postman.",
+        "description": "Call when order-sign returned callDtr = true. The gateway calls the payer's Questionnaire/$questionnaire-package\nwith the orders and coverage, and returns one form per questionnaire.\n            \nNext: show each question (text, type, options, required, showWhen) on the EHR screen and send the answers to\nPOST /dtr/forms/{formId}/answers. During testing the answers can be sent from Swagger or Postman.",
         "requestBody": {
           "description": "Required. Payer, patient, orders and the questionnaire URLs from the order-sign decision.",
           "content": {
@@ -391,7 +392,7 @@
             }
           },
           "400": {
-            "description": "Invalid body, missing field, unknown payerName, or an order of another patient.",
+            "description": "Invalid body, missing field, unknown piInsurancePlanId, or an order of another patient.",
             "content": {
               "application/json": {
                 "schema": {
@@ -443,7 +444,7 @@
         }
       }
     },
-    "/api/v1/dtr/forms/{formId}": {
+    "/dtr/forms/{formId}": {
       "get": {
         "tags": [
           "DTR 1 - Forms (our questionnaire app or EHR screen)"
@@ -453,7 +454,7 @@
           {
             "name": "formId",
             "in": "path",
-            "description": "Form id from POST /api/v1/dtr/forms, e.g. frm-6f1c2a9e.",
+            "description": "Form id from POST /dtr/forms, e.g. frm-6f1c2a9e.",
             "required": true,
             "schema": {
               "type": "string"
@@ -484,18 +485,18 @@
         }
       }
     },
-    "/api/v1/dtr/forms/{formId}/answers": {
+    "/dtr/forms/{formId}/answers": {
       "post": {
         "tags": [
           "DTR 1 - Forms (our questionnaire app or EHR screen)"
         ],
         "summary": "Saves the answers of a form (builds and stores the FHIR QuestionnaireResponse).",
-        "description": "Send one entry per question: { \"linkId\": \"...\", \"values\": [\"...\"] }. Values are text in the format of the question type\n(boolean \"true\", integer \"12\", date \"2026-08-10\", choice = the option code, quantity \"12 mL/min\").\n            \n- Answers are merged with earlier ones; an entry with an empty values list removes that answer.\n- complete = true: all required (shown) questions must be answered, otherwise 422 lists them.\n- complete = false: saved as in-progress; missingRequired lists what is still open.\n            \nThe QuestionnaireResponse is saved at the FHIR API. POST /api/v1/pas/requests attaches completed forms\nof the same orders automatically; for CDex send questionnaireResponseId in the attachments call.",
+        "description": "Send one entry per question: { \"linkId\": \"...\", \"values\": [\"...\"] }. Values are text in the format of the question type\n(boolean \"true\", integer \"12\", date \"2026-08-10\", choice = the option code, quantity \"12 mL/min\").\n            \n- Answers are merged with earlier ones; an entry with an empty values list removes that answer.\n- complete = true: all required (shown) questions must be answered, otherwise 422 lists them.\n- complete = false: saved as in-progress; missingRequired lists what is still open.\n            \nThe QuestionnaireResponse is saved at the FHIR API. POST /pas/requests attaches completed forms\nof the same orders automatically; for CDex send questionnaireResponseId in the attachments call.",
         "parameters": [
           {
             "name": "formId",
             "in": "path",
-            "description": "Form id from POST /api/v1/dtr/forms.",
+            "description": "Form id from POST /dtr/forms.",
             "required": true,
             "schema": {
               "type": "string"
@@ -567,13 +568,13 @@
         }
       }
     },
-    "/api/v1/dtr/saved-forms": {
+    "/dtr/saved-forms": {
       "get": {
         "tags": [
           "DTR 1 - Forms (our questionnaire app or EHR screen)"
         ],
         "summary": "Lists the DTR forms saved for a patient (by the gateway forms or by a payer's SMART DTR app).",
-        "description": "After the payer's own DTR app was used (it saves its QuestionnaireResponse at the FHIR API), call this to see\nwhether the form is completed. POST /api/v1/pas/requests attaches completed forms of the same orders automatically.",
+        "description": "After the payer's own DTR app was used (it saves its QuestionnaireResponse at the FHIR API), call this to see\nwhether the form is completed. POST /pas/requests attaches completed forms of the same orders automatically.",
         "parameters": [
           {
             "name": "patientId",
@@ -629,7 +630,7 @@
         }
       }
     },
-    "/api/v1/dtr/launch/{linkId}": {
+    "/dtr/launch/{linkId}": {
       "get": {
         "tags": [
           "DTR 2 - Payer SMART app"
@@ -674,7 +675,7 @@
         }
       }
     },
-    "/api/v1/dtr/{payerName}/Questionnaire/$questionnaire-package": {
+    "/dtr/{piInsurancePlanId}/Questionnaire/$questionnaire-package": {
       "post": {
         "tags": [
           "DTR 2 - Payer SMART app"
@@ -683,12 +684,13 @@
         "description": "Only needed when a DTR app calls the payer through the gateway (most payer apps call their own payer directly).",
         "parameters": [
           {
-            "name": "payerName",
+            "name": "piInsurancePlanId",
             "in": "path",
-            "description": "Payer name.",
+            "description": "The EHR's insurance plan id of the payer.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer",
+              "format": "int32"
             }
           }
         ],
@@ -724,7 +726,7 @@
             }
           },
           "404": {
-            "description": "The payer is not configured.",
+            "description": "No payer is configured or enabled for this insurance plan id.",
             "content": {
               "application/fhir+json": {
                 "schema": {
@@ -756,7 +758,7 @@
         }
       }
     },
-    "/api/v1/dtr/{payerName}/Questionnaire/$next-question": {
+    "/dtr/{piInsurancePlanId}/Questionnaire/$next-question": {
       "post": {
         "tags": [
           "DTR 2 - Payer SMART app"
@@ -764,12 +766,13 @@
         "summary": "For payer SMART DTR apps: adaptive forms, $next-question passed to the payer unchanged.",
         "parameters": [
           {
-            "name": "payerName",
+            "name": "piInsurancePlanId",
             "in": "path",
-            "description": "Payer name.",
+            "description": "The EHR's insurance plan id of the payer.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer",
+              "format": "int32"
             }
           }
         ],
@@ -805,7 +808,7 @@
             }
           },
           "404": {
-            "description": "The payer is not configured.",
+            "description": "No payer is configured or enabled for this insurance plan id.",
             "content": {
               "application/fhir+json": {
                 "schema": {
@@ -837,7 +840,7 @@
         }
       }
     },
-    "/api/v1/pas/requests": {
+    "/pas/requests": {
       "post": {
         "tags": [
           "Pas"
@@ -845,7 +848,7 @@
         "summary": "Submits a new prior authorization request (Claim/$submit).",
         "description": "Call when order-sign returned callPas = true (after DTR when callDtr was also true).\nThe gateway builds the PAS Bundle with the Claim, patient, coverage, organization, practitioner and orders,\nattaches **completed DTR forms of these orders automatically**, plus the documents in documentIds (file embedded).\n            \noverallStatus in the answer: approved | partially-approved | denied | pended | not-required | contact-payer.\nWhen pended, the payer may ask for more (informationRequests) → CDex attachments.\nNothing is saved when the payer rejects the request (422 / 502 with the payer's errors); correct the data and\nsend the same requestId again. The payer can reject with an HTTP error or with an answer that only carries errors\n(for example \"member not found\") - both give 422.",
         "requestBody": {
-          "description": "Required. The prior authorization request: requestId, payerName, patientId and orderIds must be filled. orderLocationCode and requestingPractitionerId are required too.",
+          "description": "Required. The prior authorization request: requestId, piInsurancePlanId, patientId and orderIds must be filled. orderLocationCode and requestingPractitionerId are required too.",
           "content": {
             "application/json": {
               "schema": {
@@ -867,7 +870,7 @@
             }
           },
           "400": {
-            "description": "Invalid body, missing field, unknown payerName, an order of another patient, or orderLocationCode / requestingPractitionerId missing.",
+            "description": "Invalid body, missing field, unknown piInsurancePlanId, an order of another patient, or orderLocationCode / requestingPractitionerId missing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -929,7 +932,7 @@
         }
       }
     },
-    "/api/v1/pas/requests/{requestId}": {
+    "/pas/requests/{requestId}": {
       "put": {
         "tags": [
           "Pas"
@@ -1071,7 +1074,7 @@
         }
       }
     },
-    "/api/v1/pas/requests/{requestId}/cancel": {
+    "/pas/requests/{requestId}/cancel": {
       "post": {
         "tags": [
           "Pas"
@@ -1167,13 +1170,13 @@
         }
       }
     },
-    "/api/v1/pas/requests/{requestId}/inquire": {
+    "/pas/requests/{requestId}/inquire": {
       "post": {
         "tags": [
           "Pas"
         ],
         "summary": "Asks the payer for the latest decision now (Claim/$inquire).",
-        "description": "The gateway has no background job: the client EHR decides when to check pended requests. For each request that is still pended in PA_PRIOR_AUTH, call this endpoint and\nGET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true (payer requests for documents).",
+        "description": "The gateway has no background job: the client EHR decides when to check pended requests. For each request that is still pended in PA_PRIOR_AUTH, call this endpoint and\nGET /cdex/requests/{requestId}/information-requests?refresh=true (payer requests for documents).",
         "parameters": [
           {
             "name": "requestId",
@@ -1229,7 +1232,7 @@
         }
       }
     },
-    "/api/v1/pas/notifications/{payerName}": {
+    "/pas/notifications/{piInsurancePlanId}": {
       "post": {
         "tags": [
           "Pas"
@@ -1238,12 +1241,13 @@
         "description": "The gateway then inquires every open request of that payer and saves the new decisions.",
         "parameters": [
           {
-            "name": "payerName",
+            "name": "piInsurancePlanId",
             "in": "path",
-            "description": "Payer name (part of the Subscription endpoint the gateway registered).",
+            "description": "The EHR's insurance plan id of the payer.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer",
+              "format": "int32"
             }
           }
         ],
@@ -1290,7 +1294,7 @@
             }
           },
           "404": {
-            "description": "The payer is not configured.",
+            "description": "No payer is configured or enabled for this insurance plan id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1302,23 +1306,42 @@
         }
       }
     },
-    "/api/v1/payers": {
+    "/payers/{piInsurancePlanId}": {
       "get": {
         "tags": [
           "Payers"
         ],
-        "summary": "Lists the configured payers (table PA_PAYER in the EHR database; appsettings \"Payers\" in memory mode).",
-        "description": "Use a payerName from this list in every other request.",
+        "summary": "Shows the payer configuration of one insurance plan id.",
+        "description": "Read from the EHR data API (GET payers/{piInsurancePlanId}, table PA_PAYER). A switched-off payer is shown too (enabled = false); the other requests refuse it.",
+        "parameters": [
+          {
+            "name": "piInsurancePlanId",
+            "in": "path",
+            "description": "The EHR's insurance plan id, e.g. 1001.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "The configured payers.",
+            "description": "The payer configuration.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PayerSummary"
-                  }
+                  "$ref": "#/components/schemas/PayerSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No usable payer configuration for this insurance plan id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -1336,7 +1359,7 @@
         }
       }
     },
-    "/api/v1/payers/{payerName}/discover": {
+    "/payers/{piInsurancePlanId}/discover": {
       "post": {
         "tags": [
           "Payers"
@@ -1345,12 +1368,13 @@
         "description": "Shows which hooks the payer supports (look for \"order-sign\") and its prefetch templates,\nand refreshes the gateway's 12-hour cache. Use it when a new payer is onboarded.",
         "parameters": [
           {
-            "name": "payerName",
+            "name": "piInsurancePlanId",
             "in": "path",
-            "description": "Payer name from GET /api/v1/payers, e.g. MockPayer.",
+            "description": "The EHR's insurance plan id of the payer.",
             "required": true,
             "schema": {
-              "type": "string"
+              "type": "integer",
+              "format": "int32"
             }
           }
         ],
@@ -1366,7 +1390,7 @@
             }
           },
           "404": {
-            "description": "The payer is not configured.",
+            "description": "No payer is configured or enabled for this insurance plan id.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1481,7 +1505,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Response of POST /api/v1/cdex/requests/{requestId}/attachments."
+        "description": "Response of POST /cdex/requests/{requestId}/attachments."
       },
       "AttachmentSubmitRequest": {
         "type": "object",
@@ -1507,7 +1531,7 @@
             "items": {
               "type": "string"
             },
-            "description": "QuestionnaireResponse ids (from POST /api/v1/dtr/forms/{formId}/answers).",
+            "description": "QuestionnaireResponse ids (from POST /dtr/forms/{formId}/answers).",
             "example": []
           },
           "lineNumbers": {
@@ -1529,7 +1553,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Body of POST /api/v1/cdex/requests/{requestId}/attachments: additional documents and DTR forms for a pended\nprior auth (CDex $submit-attachment), usually to answer a payer information request."
+        "description": "Body of POST /cdex/requests/{requestId}/attachments: additional documents and DTR forms for a pended\nprior auth (CDex $submit-attachment), usually to answer a payer information request."
       },
       "CancelPriorAuthRequest": {
         "type": "object",
@@ -1542,7 +1566,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Body of POST /api/v1/pas/requests/{requestId}/cancel (optional)."
+        "description": "Body of POST /pas/requests/{requestId}/cancel (optional)."
       },
       "CdsDiscoveryResponse": {
         "type": "object",
@@ -1593,10 +1617,12 @@
             "type": "string",
             "example": "ord-1-hd"
           },
-          "payerName": {
-            "type": "string",
+          "piInsurancePlanId": {
+            "type": "integer",
+            "format": "int32",
             "nullable": true,
-            "example": "MockPayer"
+            "description": "The EHR's insurance plan id of the payer.",
+            "example": 1001
           },
           "coverageId": {
             "type": "string",
@@ -1653,7 +1679,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Payer questionnaires to fill in (pass them to POST /api/v1/dtr/forms).",
+            "description": "Payer questionnaires to fill in (pass them to POST /dtr/forms).",
             "example": [
               "http://example.org/fhir/Questionnaire/dialysis-incenter-hd"
             ]
@@ -1683,7 +1709,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "CRD answer for one order. Also saved in table PA_COVERAGE_DECISION of the EHR database (column DECISION_JSON),\nwhere the EHR reads it.\nWhat to do next:\n  callDtr = true  -> DTR: POST /api/v1/dtr/forms with questionnaireUrls, then POST .../answers\n  callPas = true  -> PAS: POST /api/v1/pas/requests (after DTR when both are true)\n  both false      -> nothing more for this order (see covered / priorAuthNeeded)"
+        "description": "CRD answer for one order. Also saved in table PA_COVERAGE_DECISION of the EHR database (column DECISION_JSON),\nwhere the EHR reads it.\nWhat to do next:\n  callDtr = true  -> DTR: POST /dtr/forms with questionnaireUrls, then POST .../answers\n  callPas = true  -> PAS: POST /pas/requests (after DTR when both are true)\n  both false      -> nothing more for this order (see covered / priorAuthNeeded)"
       },
       "DocumentNeeded": {
         "type": "object",
@@ -1733,7 +1759,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "The answer to one question, as text. Write values like this (the question \"type\" in GET /api/v1/dtr/forms/{formId}):\n  boolean: \"true\" / \"false\"          integer: \"12\"            decimal: \"12.5\"\n  date: \"2026-08-10\"                 dateTime: \"2026-08-10T09:30:00Z\"   time: \"09:30:00\"\n  string / text / url: any text      choice / open-choice: the option code (open-choice also free text)\n  quantity: \"12 mL/min\" (number, space, unit)"
+        "description": "The answer to one question, as text. Write values like this (the question \"type\" in GET /dtr/forms/{formId}):\n  boolean: \"true\" / \"false\"          integer: \"12\"            decimal: \"12.5\"\n  date: \"2026-08-10\"                 dateTime: \"2026-08-10T09:30:00Z\"   time: \"09:30:00\"\n  string / text / url: any text      choice / open-choice: the option code (open-choice also free text)\n  quantity: \"12 mL/min\" (number, space, unit)"
       },
       "DtrAnswersRequest": {
         "required": [
@@ -1762,7 +1788,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Body of POST /api/v1/dtr/forms/{formId}/answers: the provider's answers in plain JSON.\nThe gateway builds the FHIR QuestionnaireResponse (same tree as the payer's Questionnaire) and saves it at the\nFHIR API, where PAS picks it up. Can be sent several times; the latest answers replace the earlier ones."
+        "description": "Body of POST /dtr/forms/{formId}/answers: the provider's answers in plain JSON.\nThe gateway builds the FHIR QuestionnaireResponse (same tree as the payer's Questionnaire) and saves it at the\nFHIR API, where PAS picks it up. Can be sent several times; the latest answers replace the earlier ones."
       },
       "DtrAnswersResult": {
         "type": "object",
@@ -1820,7 +1846,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Response of POST /api/v1/dtr/forms/{formId}/answers."
+        "description": "Response of POST /dtr/forms/{formId}/answers."
       },
       "DtrCondition": {
         "type": "object",
@@ -1852,9 +1878,11 @@
             "description": "Gateway id of this form. Use it to read the form and to send the answers.",
             "example": "frm-6f1c2a9e"
           },
-          "payerName": {
-            "type": "string",
-            "example": "MockPayer"
+          "piInsurancePlanId": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The EHR's insurance plan id of the payer.",
+            "example": 1001
           },
           "patientId": {
             "type": "string",
@@ -1914,22 +1942,23 @@
           }
         },
         "additionalProperties": false,
-        "description": "One payer questionnaire as simple questions (no FHIR needed to show it).\nShow the questions, then send the answers to POST /api/v1/dtr/forms/{formId}/answers."
+        "description": "One payer questionnaire as simple questions (no FHIR needed to show it).\nShow the questions, then send the answers to POST /dtr/forms/{formId}/answers."
       },
       "DtrFormRequest": {
         "required": [
           "coverageId",
           "orderIds",
           "patientId",
-          "payerName"
+          "piInsurancePlanId"
         ],
         "type": "object",
         "properties": {
-          "payerName": {
-            "minLength": 1,
-            "type": "string",
-            "description": "Payer to ask, as configured in table PA_PAYER (PAYER_NAME).",
-            "example": "MockPayer"
+          "piInsurancePlanId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "description": "Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.",
+            "example": 1001
           },
           "patientId": {
             "minLength": 1,
@@ -1972,7 +2001,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Body of POST /api/v1/dtr/forms: get the payer's questionnaire(s) for these orders as simple questions.\nUse it when the order-sign decision has callDtr = true (or a CDex information request lists questionnaires)."
+        "description": "Body of POST /dtr/forms: get the payer's questionnaire(s) for these orders as simple questions.\nUse it when the order-sign decision has callDtr = true (or a CDex information request lists questionnaires)."
       },
       "DtrOption": {
         "type": "object",
@@ -2122,7 +2151,7 @@
           },
           "url": {
             "type": "string",
-            "description": "Where the link goes. For a DTR launch this is a gateway URL: /api/v1/dtr/launch/{linkId}."
+            "description": "Where the link goes. For a DTR launch this is a gateway URL: /dtr/launch/{linkId}."
           },
           "type": {
             "type": "string",
@@ -2130,12 +2159,12 @@
           },
           "opensPayerApp": {
             "type": "boolean",
-            "description": "type \"smart\" only. true = the payer works with its own SMART DTR app (PA_PAYER.DTR_MODE = SmartApp): open Url in\na browser window and the payer's app starts. false = the payer's questionnaire is filled in through the gateway\nforms (POST /api/v1/dtr/forms); Url still opens the app when the payer's card names one.",
+            "description": "type \"smart\" only. true = the payer works with its own SMART DTR app (PA_PAYER.DTR_MODE = SmartApp): open Url in\na browser window and the payer's app starts. false = the payer's questionnaire is filled in through the gateway\nforms (POST /dtr/forms); Url still opens the app when the payer's card names one.",
             "example": false
           }
         },
         "additionalProperties": false,
-        "description": "A link on a message. type \"smart\" = a payer DTR app: a plain gateway URL (/api/v1/dtr/launch/{linkId}) the EHR\nopens in a browser; the gateway then starts the SMART app. type \"absolute\" = a normal web page."
+        "description": "A link on a message. type \"smart\" = a payer DTR app: a plain gateway URL (/dtr/launch/{linkId}) the EHR\nopens in a browser; the gateway then starts the SMART app. type \"absolute\" = a normal web page."
       },
       "HealthStatus": {
         "type": "object",
@@ -2187,7 +2216,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Payer questionnaires to complete: POST /api/v1/dtr/forms with these URLs, answer, then send the form here.",
+            "description": "Payer questionnaires to complete: POST /dtr/forms with these URLs, answer, then send the form here.",
             "example": []
           }
         },
@@ -2240,7 +2269,7 @@
           "eventId",
           "orderIds",
           "patientId",
-          "payerName",
+          "piInsurancePlanId",
           "userPractitionerId"
         ],
         "type": "object",
@@ -2251,11 +2280,12 @@
             "description": "Unique id of this signing event in the EHR. Sending the same id again returns the stored answer (no second payer call).",
             "example": "evt-20260929-0001"
           },
-          "payerName": {
-            "minLength": 1,
-            "type": "string",
-            "description": "Payer to ask, exactly as configured in table PA_PAYER (PAYER_NAME, case does not matter).",
-            "example": "MockPayer"
+          "piInsurancePlanId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "description": "Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.",
+            "example": 1001
           },
           "patientId": {
             "minLength": 1,
@@ -2294,7 +2324,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Body of POST /api/v1/crd/order-sign. Sent by the EHR when the clinician signs one or more orders.\nThe gateway sends the CDS Hooks \"order-sign\" call to the payer named in payerName."
+        "description": "Body of POST /crd/order-sign. Sent by the EHR when the clinician signs one or more orders.\nThe gateway sends the CDS Hooks \"order-sign\" call to the payer of piInsurancePlanId."
       },
       "OrderSignResponse": {
         "type": "object",
@@ -2303,9 +2333,11 @@
             "type": "string",
             "example": "evt-20260929-0001"
           },
-          "payerName": {
-            "type": "string",
-            "example": "MockPayer"
+          "piInsurancePlanId": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The EHR's insurance plan id of the payer.",
+            "example": 1001
           },
           "decisions": {
             "type": "array",
@@ -2326,14 +2358,21 @@
           }
         },
         "additionalProperties": false,
-        "description": "Response of POST /api/v1/crd/order-sign: one coverage decision per signed order."
+        "description": "Response of POST /crd/order-sign: one coverage decision per signed order."
       },
       "PayerCallSummary": {
         "type": "object",
         "properties": {
+          "piInsurancePlanId": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The EHR's insurance plan id of the payer.",
+            "example": 1001
+          },
           "payerName": {
             "type": "string",
-            "example": "MockPayer"
+            "example": "MockPayer",
+            "description": "Name of the payer that was asked (from its configuration)."
           },
           "serviceId": {
             "type": "string",
@@ -2363,14 +2402,16 @@
       "PayerSummary": {
         "type": "object",
         "properties": {
+          "piInsurancePlanId": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The EHR's insurance plan id of this payer (PA_PAYER.PI_INSURANCE_PLAN_ID); the value the EHR sends as piInsurancePlanId.",
+            "example": 1001
+          },
           "payerName": {
             "type": "string",
-            "description": "The value the EHR sends as payerName.",
+            "description": "Name of the payer (shown in messages).",
             "example": "MockPayer"
-          },
-          "displayName": {
-            "type": "string",
-            "example": "Mock Da Vinci Payer"
           },
           "enabled": {
             "type": "boolean",
@@ -2382,12 +2423,12 @@
           },
           "dtrMode": {
             "type": "string",
-            "description": "Forms = the EHR shows the questionnaire (POST /api/v1/dtr/forms); SmartApp = open the link of the CRD message,\nwhich starts the payer's own SMART DTR app.",
+            "description": "Forms = the EHR shows the questionnaire (POST /dtr/forms); SmartApp = open the link of the CRD message,\nwhich starts the payer's own SMART DTR app.",
             "example": "Forms"
           }
         },
         "additionalProperties": false,
-        "description": "A configured payer, as shown by GET /api/v1/payers."
+        "description": "The configuration of one payer, as shown by GET /payers/{piInsurancePlanId}."
       },
       "PriorAuthDecision": {
         "type": "object",
@@ -2396,10 +2437,12 @@
             "type": "string",
             "example": "PA-2026-0001"
           },
-          "payerName": {
-            "type": "string",
+          "piInsurancePlanId": {
+            "type": "integer",
+            "format": "int32",
             "nullable": true,
-            "example": "MockPayer"
+            "description": "The EHR's insurance plan id of the payer.",
+            "example": 1001
           },
           "patientId": {
             "type": "string",
@@ -2458,7 +2501,7 @@
             "items": {
               "$ref": "#/components/schemas/InformationRequest"
             },
-            "description": "Documents / forms the payer asked for (CDex). Answer with POST /api/v1/cdex/requests/{id}/attachments."
+            "description": "Documents / forms the payer asked for (CDex). Answer with POST /cdex/requests/{id}/attachments."
           },
           "errors": {
             "type": "array",
@@ -2543,7 +2586,7 @@
           "orderIds",
           "orderLocationCode",
           "patientId",
-          "payerName",
+          "piInsurancePlanId",
           "requestingPractitionerId"
         ],
         "type": "object",
@@ -2553,11 +2596,12 @@
             "description": "Required for POST. EHR id of the request; becomes Claim.identifier and is used for update, cancel, inquire and CDex. May be empty on PUT (taken from the URL).",
             "example": "PA-2026-0001"
           },
-          "payerName": {
-            "minLength": 1,
-            "type": "string",
-            "description": "Payer to send the request to, as configured in table PA_PAYER (PAYER_NAME).",
-            "example": "MockPayer"
+          "piInsurancePlanId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "description": "Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.",
+            "example": 1001
           },
           "patientId": {
             "minLength": 1,
@@ -2675,7 +2719,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Body of POST /api/v1/pas/requests (submit) and PUT /api/v1/pas/requests/{requestId} (update).\nThe gateway turns it into a PAS request Bundle and calls the payer's Claim/$submit.\nCompleted DTR forms for these orders are attached automatically."
+        "description": "Body of POST /pas/requests (submit) and PUT /pas/requests/{requestId} (update).\nThe gateway turns it into a PAS request Bundle and calls the payer's Claim/$submit.\nCompleted DTR forms for these orders are attached automatically."
       },
       "ProblemDetails": {
         "type": "object",
@@ -2737,7 +2781,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "A DTR form (QuestionnaireResponse) saved at the FHIR API - by the gateway forms (our questionnaire app) or by a\npayer's SMART DTR app. Returned by GET /api/v1/dtr/saved-forms."
+        "description": "A DTR form (QuestionnaireResponse) saved at the FHIR API - by the gateway forms (our questionnaire app) or by a\npayer's SMART DTR app. Returned by GET /dtr/saved-forms."
       }
     }
   },
@@ -2764,7 +2808,7 @@
     },
     {
       "name": "Payers",
-      "description": "STEP 0 - Connected payers: which payerName values the EHR can send, and a connection test (CDS Hooks discovery)."
+      "description": "STEP 0 - Payer configuration: the payer of an insurance plan id, and a connection test (CDS Hooks discovery)."
     },
     {
       "name": "WellKnown",

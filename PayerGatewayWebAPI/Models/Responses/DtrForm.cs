@@ -2,7 +2,7 @@ namespace PayerGatewayWebAPI.Models.Responses;
 
 /// <summary>
 /// One payer questionnaire as simple questions (no FHIR needed to show it).
-/// Show the questions, then send the answers to POST /api/v1/dtr/forms/{formId}/answers.
+/// Show the questions, then send the answers to POST /dtr/forms/{formId}/answers.
 /// </summary>
 public class DtrForm
 {
@@ -10,8 +10,9 @@ public class DtrForm
     /// <example>frm-6f1c2a9e</example>
     public string FormId { get; set; } = string.Empty;
 
-    /// <example>MockPayer</example>
-    public string PayerName { get; set; } = string.Empty;
+    /// <summary>The EHR's insurance plan id of the payer.</summary>
+    /// <example>1001</example>
+    public int PiInsurancePlanId { get; set; }
 
     /// <example>pat-1</example>
     public string PatientId { get; set; } = string.Empty;

@@ -1,6 +1,6 @@
 namespace PayerGatewayWebAPI.Models.Responses;
 
-/// <summary>Response of POST /api/v1/dtr/forms/{formId}/answers.</summary>
+/// <summary>Response of POST /dtr/forms/{formId}/answers.</summary>
 public class DtrAnswersResult
 {
     /// <example>frm-6f1c2a9e</example>

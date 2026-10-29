@@ -2,7 +2,7 @@ namespace PayerGatewayWebAPI.Models.Responses;
 
 /// <summary>
 /// A DTR form (QuestionnaireResponse) saved at the FHIR API - by the gateway forms (our questionnaire app) or by a
-/// payer's SMART DTR app. Returned by GET /api/v1/dtr/saved-forms.
+/// payer's SMART DTR app. Returned by GET /dtr/saved-forms.
 /// </summary>
 public class SavedForm
 {

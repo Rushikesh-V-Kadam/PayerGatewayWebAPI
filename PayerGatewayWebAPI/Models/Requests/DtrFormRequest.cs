@@ -3,15 +3,15 @@ using System.ComponentModel.DataAnnotations;
 namespace PayerGatewayWebAPI.Models.Requests;
 
 /// <summary>
-/// Body of POST /api/v1/dtr/forms: get the payer's questionnaire(s) for these orders as simple questions.
+/// Body of POST /dtr/forms: get the payer's questionnaire(s) for these orders as simple questions.
 /// Use it when the order-sign decision has callDtr = true (or a CDex information request lists questionnaires).
 /// </summary>
 public class DtrFormRequest
 {
-    /// <summary>Payer to ask, as configured in table PA_PAYER (PAYER_NAME).</summary>
-    /// <example>MockPayer</example>
+    /// <summary>Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.</summary>
+    /// <example>1001</example>
     [Required]
-    public string PayerName { get; set; } = string.Empty;
+    public int? PiInsurancePlanId { get; set; }
 
     /// <summary>EHR patient id.</summary>
     /// <example>pat-1</example>

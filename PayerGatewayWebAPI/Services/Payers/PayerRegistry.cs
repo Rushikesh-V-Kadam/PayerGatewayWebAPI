@@ -8,18 +8,16 @@ using PayerGatewayWebAPI.Repositories.Interfaces;
 namespace PayerGatewayWebAPI.Services.Payers;
 
 /// <summary>
-/// The list of connected payers. The EHR sends payerName in each request and the gateway looks the payer up here
-/// by that name (upper / lower case does not matter).
+/// Finds the payer of a request. The EHR sends piInsurancePlanId in each request and the gateway reads that one
+/// payer's configuration (IPayerRepository: GET payers/{piInsurancePlanId} on the EHR data API). There is no payer list.
 ///
-/// Where the list comes from (IPayerRepository, chosen by Storage:Provider):
-///   EhrApi    table PA_PAYER in the EHR database (GET payers on the EHR data API)
-///   InMemory  appsettings "Payers" (local testing)
-/// The list is kept for Storage:PayerCacheMinutes and then read again. A name that is not in the kept list is
-/// looked up once more right away, so a payer added by the EHR team works without waiting or restarting.
+/// A payer that was read is kept for Storage:PayerCacheMinutes and then read again, so a change by the EHR team is
+/// used after a few minutes without a restart. An insurance plan id without a payer is not kept: it is asked again
+/// at the next request, so a payer added by the EHR team works right away.
 ///
-/// When the list is loaded, every payer gets the defaults of its empty optional values (PayerSettings.ApplyDefaults),
-/// and a payer that cannot be used (no name, or no valid base URL) is left out with a warning in the log. So the rest
-/// of the gateway always works with complete payers, whatever optional columns a row has.
+/// When a payer is read, its empty optional values get their defaults (PayerSettings.ApplyDefaults), and a payer that
+/// cannot be used (no name, or no valid base URL) is refused with a warning in the log. So the rest of the gateway
+/// always works with complete payers, whatever optional columns a row has.
 ///
 /// Also caches each payer's CDS Hooks discovery (services + prefetch templates) for 12 hours.
 /// Registered as a singleton.
@@ -30,10 +28,7 @@ public class PayerRegistry
     private readonly ILogger<PayerRegistry> _logger;
     private readonly int _cacheMinutes;
     private readonly ConcurrentDictionary<string, CachedDiscovery> _discovery = new ConcurrentDictionary<string, CachedDiscovery>();
-
-    /// <summary>The payer list read last, and when it must be read again.</summary>
-    private List<PayerSettings> _payers = new List<PayerSettings>();
-    private DateTime _payersExpire = DateTime.MinValue;
+    private readonly ConcurrentDictionary<int, CachedPayer> _payers = new ConcurrentDictionary<int, CachedPayer>();
 
     /// <summary>Created by dependency injection.</summary>
     public PayerRegistry(IPayerRepository repository, IOptions<StorageSettings> storage, ILogger<PayerRegistry> logger)
@@ -43,43 +38,77 @@ public class PayerRegistry
         _cacheMinutes = Math.Max(0, storage.Value.PayerCacheMinutes);
     }
 
-    /// <summary>All configured payers (enabled or not).</summary>
-    public async Task<List<PayerSettings>> GetAllAsync(CancellationToken ct)
+    /// <summary>
+    /// The payer of this insurance plan id, enabled or not, with its defaults filled in. Null when there is no such
+    /// payer, or when its configuration cannot be used (the reason is written to the log).
+    /// </summary>
+    public async Task<PayerSettings?> GetAsync(int piInsurancePlanId, CancellationToken ct)
     {
-        return await LoadAsync(false, ct);
-    }
-
-    /// <summary>The enabled payer with this name, or null.</summary>
-    public async Task<PayerSettings?> FindAsync(string? payerName, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(payerName))
+        CachedPayer? cached;
+        if (_payers.TryGetValue(piInsurancePlanId, out cached) && cached.Expires > DateTime.UtcNow)
         {
+            return cached.Payer;
+        }
+
+        PayerSettings? payer = await _repository.GetByPiInsurancePlanIdAsync(piInsurancePlanId, ct);
+        if (payer == null)
+        {
+            CachedPayer? removed;
+            _payers.TryRemove(piInsurancePlanId, out removed);
             return null;
         }
 
-        PayerSettings? payer = FindIn(await LoadAsync(false, ct), payerName);
-        if (payer == null)
+        payer.ApplyDefaults();
+        string? problem = payer.GetProblem();
+        if (problem != null)
         {
-            // Not in the kept list: maybe the payer was added a moment ago. Read the list again once.
-            payer = FindIn(await LoadAsync(true, ct), payerName);
+            _logger.LogWarning("Payer of piInsurancePlanId {PiInsurancePlanId} ('{Payer}') is not used: {Problem}. Correct the row in table PA_PAYER.",
+                piInsurancePlanId, payer.PayerName, problem);
+            CachedPayer? removed;
+            _payers.TryRemove(piInsurancePlanId, out removed);
+            return null;
+        }
+
+        if (_cacheMinutes > 0)
+        {
+            CachedPayer entry = new CachedPayer();
+            entry.Payer = payer;
+            entry.Expires = DateTime.UtcNow.AddMinutes(_cacheMinutes);
+            _payers[piInsurancePlanId] = entry;
+        }
+        return payer;
+    }
+
+    /// <summary>The enabled payer of this insurance plan id, or null (no id, no such payer, or switched off).</summary>
+    public async Task<PayerSettings?> FindAsync(int? piInsurancePlanId, CancellationToken ct)
+    {
+        if (piInsurancePlanId == null || piInsurancePlanId.Value <= 0)
+        {
+            return null;
+        }
+        PayerSettings? payer = await GetAsync(piInsurancePlanId.Value, ct);
+        if (payer == null || !payer.Enabled)
+        {
+            return null;
         }
         return payer;
     }
 
     /// <summary>
-    /// The enabled payer with this name. Throws ApiException with <paramref name="statusCode"/> when it is not
-    /// configured (400 when the name came in a request body, 404 when it came in the URL).
+    /// The enabled payer of this insurance plan id. Throws ApiException with <paramref name="statusCode"/> when it is
+    /// not configured or switched off (400 when the id came in a request body, 404 when it came in the URL,
+    /// 422 when it came from a saved row).
     /// </summary>
-    public async Task<PayerSettings> GetRequiredAsync(string? payerName, int statusCode, CancellationToken ct)
+    public async Task<PayerSettings> GetRequiredAsync(int? piInsurancePlanId, int statusCode, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(payerName))
+        if (piInsurancePlanId == null || piInsurancePlanId.Value <= 0)
         {
-            throw new ApiException(400, "payerName is required.");
+            throw new ApiException(400, "piInsurancePlanId is required (a whole number above 0).");
         }
-        PayerSettings? payer = await FindAsync(payerName, ct);
+        PayerSettings? payer = await FindAsync(piInsurancePlanId, ct);
         if (payer == null)
         {
-            throw new ApiException(statusCode, "Payer '" + payerName + "' is not configured or not enabled. Configured payers: " + ConfiguredNames() + ".");
+            throw new ApiException(statusCode, "No payer is configured or enabled for piInsurancePlanId " + piInsurancePlanId.Value + ".");
         }
         return payer;
     }
@@ -116,69 +145,12 @@ public class PayerRegistry
 
     // ================================================================== helpers
 
-    /// <summary>The kept payer list; reads it again when it is too old or <paramref name="force"/> is true.</summary>
-    private async Task<List<PayerSettings>> LoadAsync(bool force, CancellationToken ct)
-    {
-        if (!force && DateTime.UtcNow < _payersExpire)
-        {
-            return _payers;
-        }
-        List<PayerSettings> loaded = await _repository.GetAllAsync(ct);
-        List<PayerSettings> usable = new List<PayerSettings>();
-        foreach (PayerSettings payer in loaded)
-        {
-            payer.ApplyDefaults();
-            string? problem = payer.GetProblem();
-            if (problem != null)
-            {
-                _logger.LogWarning("Payer '{Payer}' is ignored: {Problem}. Correct the row in table PA_PAYER (or the appsettings \"Payers\" entry).",
-                    payer.PayerName, problem);
-                continue;
-            }
-            usable.Add(payer);
-        }
-        _payers = usable;
-        _payersExpire = DateTime.UtcNow.AddMinutes(_cacheMinutes);
-        return usable;
-    }
-
     /// <summary>
-    /// Key of a payer in the discovery cache: its name and its CDS Hooks URL. The URL is part of the key so a payer
-    /// whose address was changed in PA_PAYER is asked again right away and does not use the old address's answer.
+    /// Key of a payer in the discovery cache: its insurance plan id and its CDS Hooks URL. The URL is part of the key
+    /// so a payer whose address was changed in PA_PAYER is asked again right away and does not use the old address's answer.
     /// </summary>
     private static string DiscoveryKey(PayerSettings payer)
     {
-        return payer.PayerName.ToLowerInvariant() + "|" + payer.GetCdsServicesUrl();
-    }
-
-    /// <summary>The enabled payer with this name in a list, or null.</summary>
-    private static PayerSettings? FindIn(List<PayerSettings> payers, string payerName)
-    {
-        foreach (PayerSettings payer in payers)
-        {
-            if (payer.Enabled && string.Equals(payer.PayerName, payerName.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
-                return payer;
-            }
-        }
-        return null;
-    }
-
-    /// <summary>"A, B, C" list of enabled payer names, for error messages.</summary>
-    private string ConfiguredNames()
-    {
-        List<string> names = new List<string>();
-        foreach (PayerSettings payer in _payers)
-        {
-            if (payer.Enabled)
-            {
-                names.Add(payer.PayerName);
-            }
-        }
-        if (names.Count == 0)
-        {
-            return "(none)";
-        }
-        return string.Join(", ", names);
+        return payer.PiInsurancePlanId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + payer.GetCdsServicesUrl();
     }
 }

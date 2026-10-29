@@ -5,19 +5,19 @@
 ### =====================================================================================
 @gateway = http://localhost:5200
 
-### 0. Which payers can the EHR name?
-GET {{gateway}}/api/v1/payers
+### 0. The payer configuration of an insurance plan id (1001 = the mock payer row in the mock EHR)
+GET {{gateway}}/payers/1001
 
 ### 0b. Test the payer connection (CDS Hooks discovery)
-POST {{gateway}}/api/v1/payers/MockPayer/discover
+POST {{gateway}}/payers/1001/discover
 
 ### 1. CRD: the order is signed -> read callDtr / callPas / questionnaireUrls / coverageAssertionId
-POST {{gateway}}/api/v1/crd/order-sign
+POST {{gateway}}/crd/order-sign
 Content-Type: application/json
 
 {
   "eventId": "evt-20260929-0001",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "orderLocationCode": "loc-main",
@@ -25,11 +25,11 @@ Content-Type: application/json
 }
 
 ### 2a. DTR: get the payer's questionnaire as simple questions (callDtr = true)
-POST {{gateway}}/api/v1/dtr/forms
+POST {{gateway}}/dtr/forms
 Content-Type: application/json
 
 {
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "orderIds": ["ord-1-hd"],
   "questionnaireUrls": ["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"],
@@ -37,7 +37,7 @@ Content-Type: application/json
 }
 
 ### 2b. DTR: answer it (use the formId and linkIds from 2a)
-POST {{gateway}}/api/v1/dtr/forms/frm-000000000000/answers
+POST {{gateway}}/dtr/forms/frm-000000000000/answers
 Content-Type: application/json
 
 {
@@ -51,15 +51,15 @@ Content-Type: application/json
 }
 
 ### 2c. DTR: read the form back
-GET {{gateway}}/api/v1/dtr/forms/frm-000000000000
+GET {{gateway}}/dtr/forms/frm-000000000000
 
 ### 3. PAS: submit (completed DTR forms of ord-1-hd are attached automatically)
-POST {{gateway}}/api/v1/pas/requests
+POST {{gateway}}/pas/requests
 Content-Type: application/json
 
 {
   "requestId": "PA-2026-0001",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-1",
   "requestingPractitionerId": "prac-1",
   "orderLocationCode": "loc-main",
@@ -70,16 +70,16 @@ Content-Type: application/json
 }
 
 ### 3b. PAS: latest stored decision
-GET {{gateway}}/api/v1/pas/requests/PA-2026-0001
+GET {{gateway}}/pas/requests/PA-2026-0001
 
 ### 3c. PAS: ask the payer now ($inquire)
-POST {{gateway}}/api/v1/pas/requests/PA-2026-0001/inquire
+POST {{gateway}}/pas/requests/PA-2026-0001/inquire
 
 ### 4a. CDex: what does the payer need? (pended requests)
-GET {{gateway}}/api/v1/cdex/requests/PA-2026-0001/information-requests?refresh=true
+GET {{gateway}}/cdex/requests/PA-2026-0001/information-requests?refresh=true
 
 ### 4b. CDex: send the additional documents
-POST {{gateway}}/api/v1/cdex/requests/PA-2026-0001/attachments
+POST {{gateway}}/cdex/requests/PA-2026-0001/attachments
 Content-Type: application/json
 
 {
@@ -88,13 +88,13 @@ Content-Type: application/json
 }
 
 ### 5. Cancel (optional)
-POST {{gateway}}/api/v1/pas/requests/PA-2026-0001/cancel
+POST {{gateway}}/pas/requests/PA-2026-0001/cancel
 Content-Type: application/json
 
 { "reason": "Order cancelled by the physician." }
 
 ### 6. Payer SMART DTR app: forms the app saved for an order (DTR_MODE = SmartApp)
-GET {{gateway}}/api/v1/dtr/saved-forms?patientId=pat-1&orderId=ord-1-hd
+GET {{gateway}}/dtr/saved-forms?patientId=pat-1&orderId=ord-1-hd
 
-### 7. Payers with their FHIR release and DTR mode
-GET {{gateway}}/api/v1/payers
+### 7. The payer configuration with its DTR mode
+GET {{gateway}}/payers/1001

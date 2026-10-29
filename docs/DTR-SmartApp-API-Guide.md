@@ -21,9 +21,9 @@ A SMART app is started by an EHR with two URL parameters: `iss` (the FHIR server
   |                     |                        |                          |                        |
   | order-sign answer has a message link:        |                          |                        |
   |   type "smart", opensPayerApp = true         |                          |                        |
-  |   url = /api/v1/dtr/launch/{linkId}          |                          |                        |
+  |   url = /dtr/launch/{linkId}          |                          |                        |
   | open the link       |                        |                          |                        |
-  |-------------------->| GET /api/v1/dtr/launch/{linkId}                   |                        |
+  |-------------------->| GET /dtr/launch/{linkId}                   |                        |
   |                     |----------------------->|  read PA_DTR_LINK        |                        |
   |                     |                        |  POST /internal/smart-launches                    |
   |                     |                        |------------------------->|                        |
@@ -40,19 +40,19 @@ A SMART app is started by an EHR with two URL parameters: `iss` (the FHIR server
   |                     |                        |   (directly, or through the gateway relay)        |
   |                     |                        |   save QuestionnaireResponse                      |
   |                     |                        |                          |<-----------------------|
-  | GET /api/v1/dtr/saved-forms?patientId=...&orderId=...                   |                        |
+  | GET /dtr/saved-forms?patientId=...&orderId=...                   |                        |
   |--------------------------------------------->|  search QuestionnaireResponse                     |
   |                     |                        |------------------------->|                        |
   | 200: the form is "completed"                 |                          |                        |
   |<---------------------------------------------|                          |                        |
-  | POST /api/v1/pas/requests (the form is attached automatically)          |                        |
+  | POST /pas/requests (the form is attached automatically)          |                        |
 ```
 
 **What the EHR team builds for this flow**
 
 1. Read `link` on the order-sign messages. When `type = "smart"` and `opensPayerApp = true`, show a button.
 2. The button opens `link.url` in a browser window. Nothing else is sent.
-3. Check `GET /api/v1/dtr/saved-forms` until the form is `completed` (or let the user continue).
+3. Check `GET /dtr/saved-forms` until the form is `completed` (or let the user continue).
 4. Call PAS.
 
 ---
@@ -61,10 +61,10 @@ A SMART app is started by an EHR with two URL parameters: `iss` (the FHIR server
 
 | # | Endpoint | In one sentence | Called by |
 |---|---|---|---|
-| 1 | `GET /api/v1/dtr/launch/{linkId}` | Starts the SMART launch and redirects the browser to the payer's DTR app | The clinician's browser |
-| 2 | `GET /api/v1/dtr/saved-forms?patientId=...&orderId=...` | Lists the forms saved for a patient, so the EHR sees that the app finished | EHR |
-| 3 | `POST /api/v1/dtr/{payerName}/Questionnaire/$questionnaire-package` | Passes the app's questionnaire request to the payer unchanged | Payer DTR app (optional) |
-| 4 | `POST /api/v1/dtr/{payerName}/Questionnaire/$next-question` | Passes the app's adaptive-form request to the payer unchanged | Payer DTR app (optional) |
+| 1 | `GET /dtr/launch/{linkId}` | Starts the SMART launch and redirects the browser to the payer's DTR app | The clinician's browser |
+| 2 | `GET /dtr/saved-forms?patientId=...&orderId=...` | Lists the forms saved for a patient, so the EHR sees that the app finished | EHR |
+| 3 | `POST /dtr/{piInsurancePlanId}/Questionnaire/$questionnaire-package` | Passes the app's questionnaire request to the payer unchanged | Payer DTR app (optional) |
+| 4 | `POST /dtr/{piInsurancePlanId}/Questionnaire/$next-question` | Passes the app's adaptive-form request to the payer unchanged | Payer DTR app (optional) |
 
 Endpoints 3 and 4 are needed only when a DTR app reaches its payer through the gateway. Most payer apps call their own payer directly.
 
@@ -84,7 +84,7 @@ The link is created during order-sign. When the payer's CRD card has a link of t
   "detail": "Complete the payer documentation for Home peritoneal dialysis (APD cycler). Purpose: withpa.",
   "link": {
     "label": "Launch documentation (DTR)",
-    "url": "http://localhost:5200/api/v1/dtr/launch/3a3df604a18c4d479f4ed4f05b9a1896",
+    "url": "http://localhost:5200/dtr/launch/3a3df604a18c4d479f4ed4f05b9a1896",
     "type": "smart",
     "opensPayerApp": true
   }
@@ -110,7 +110,7 @@ One row of `PA_DTR_LINK` (real data from the mock payer):
 | Column | Value |
 |---|---|
 | `LINK_ID` | `3a3df604a18c4d479f4ed4f05b9a1896` |
-| `PAYER_NAME` | `MockPayer` |
+| `PI_INSURANCE_PLAN_ID` | `1001` |
 | `PATIENT_ID` | `pat-2` |
 | `ENCOUNTER_ID` | `enc-2` |
 | `USER_PRACTITIONER_ID` | `prac-3` |
@@ -123,14 +123,14 @@ One row of `PA_DTR_LINK` (real data from the mock payer):
 
 ## 4. Endpoints
 
-### 4.1 `GET /api/v1/dtr/launch/{linkId}`: open the payer's DTR app
+### 4.1 `GET /dtr/launch/{linkId}`: open the payer's DTR app
 
 **Why we use it.** It turns the stored link into a real SMART EHR launch. The EHR does not need to know SMART: it opens a URL.
 
 **Request** (opened in the clinician's browser)
 
 ```http
-GET /api/v1/dtr/launch/3a3df604a18c4d479f4ed4f05b9a1896
+GET /dtr/launch/3a3df604a18c4d479f4ed4f05b9a1896
 ```
 
 #### What the gateway does
@@ -198,14 +198,14 @@ These return the normal JSON error body:
 
 ---
 
-### 4.2 `GET /api/v1/dtr/saved-forms`: did the app finish?
+### 4.2 `GET /dtr/saved-forms`: did the app finish?
 
 **Why we use it.** The payer's app saves its `QuestionnaireResponse` at the FHIR API, not at the gateway. This call lets the EHR see the form and its status without FHIR.
 
 **Request**
 
 ```http
-GET /api/v1/dtr/saved-forms?patientId=pat-2&orderId=ord-2-home-pd
+GET /dtr/saved-forms?patientId=pat-2&orderId=ord-2-home-pd
 ```
 
 | Parameter | Required | Meaning |
@@ -251,14 +251,14 @@ GET /api/v1/dtr/saved-forms?patientId=pat-2&orderId=ord-2-home-pd
 
 ---
 
-### 4.3 `POST /api/v1/dtr/{payerName}/Questionnaire/$questionnaire-package`: relay to the payer
+### 4.3 `POST /dtr/{piInsurancePlanId}/Questionnaire/$questionnaire-package`: relay to the payer
 
 **Why it exists.** A DTR app normally calls its own payer for the questionnaire. An app that knows only the gateway can send the same request here; the gateway adds the payer's URL and passes the body on **unchanged**.
 
 **Request** (from the DTR app)
 
 ```http
-POST /api/v1/dtr/MockPayer/Questionnaire/$questionnaire-package
+POST /dtr/1001/Questionnaire/$questionnaire-package
 Content-Type: application/fhir+json
 
 {
@@ -280,18 +280,18 @@ Content-Type: application/fhir+json
 | HTTP | When |
 |---|---|
 | The payer's status | The payer answered (2xx, 4xx or 5xx) |
-| 404 | `payerName` is not configured or not enabled (JSON error body) |
+| 404 | No payer is configured or enabled for this `piInsurancePlanId` (JSON error body) |
 | 502 | The payer could not be reached |
 | 504 | The payer did not answer within `TIMEOUT_SECONDS` |
 
 ---
 
-### 4.4 `POST /api/v1/dtr/{payerName}/Questionnaire/$next-question`: relay for adaptive forms
+### 4.4 `POST /dtr/{piInsurancePlanId}/Questionnaire/$next-question`: relay for adaptive forms
 
 The same as 4.3, for adaptive questionnaires. The app sends its `QuestionnaireResponse` (or a `Parameters` holding it) and gets the payer's answer with the next questions.
 
 ```http
-POST /api/v1/dtr/MockPayer/Questionnaire/$next-question
+POST /dtr/1001/Questionnaire/$next-question
 Content-Type: application/fhir+json
 
 { "resourceType": "QuestionnaireResponse", "status": "in-progress", "contained": [ { "resourceType": "Questionnaire", "...": "..." } ], "...": "..." }
@@ -303,7 +303,7 @@ Content-Type: application/fhir+json
 
 ## 5. How the form reaches PAS
 
-`POST /api/v1/pas/requests` searches the patient's forms at the FHIR API and attaches a form **automatically** when all of these are true:
+`POST /pas/requests` searches the patient's forms at the FHIR API and attaches a form **automatically** when all of these are true:
 
 - its status is `completed` or `amended`
 - its `qr-context` extension names an order
@@ -340,7 +340,7 @@ support.
 | `Workflow:DtrLinkHours` | 72 |
 | `FhirServer:PublicBaseUrl` (FHIR API) | The FHIR API URL the payer's app can reach. It becomes `iss` |
 
-Check with `GET /api/v1/payers`: the payer must show `"dtrMode": "SmartApp"`.
+Check with `GET /payers/1001`: the payer must show `"dtrMode": "SmartApp"`.
 
 Things to know:
 
@@ -367,12 +367,12 @@ There is no payer SMART app in the demo set, so the whole flow cannot be shown e
 
 ```http
 ### 1. set the mock payer to SmartApp (mock EHR only: PUT replaces the whole PA_PAYER row)
-PUT http://localhost:5090/api/prior-auth-data/payers/MockPayer
+PUT http://localhost:5090/api/prior-auth-data/payers/1001
 Content-Type: application/json
 
 {
+  "piInsurancePlanId": 1001,
   "payerName": "MockPayer",
-  "displayName": "Mock Da Vinci Payer",
   "enabled": true,
   "baseUrl": "http://localhost:5080",
   "cdsServicesPath": "cds-services",
@@ -387,15 +387,15 @@ Content-Type: application/json
 }
 
 ### 1b. check: "dtrMode": "SmartApp" (the gateway keeps the payer list for Storage:PayerCacheMinutes, so wait 5 minutes or restart the gateway)
-GET http://localhost:5200/api/v1/payers
+GET http://localhost:5200/payers
 
 ### 2. sign an order: the DTR message link now has "opensPayerApp": true
-POST http://localhost:5200/api/v1/crd/order-sign
+POST http://localhost:5200/crd/order-sign
 Content-Type: application/json
 
 {
   "eventId": "evt-smart-0001",
-  "payerName": "MockPayer",
+  "piInsurancePlanId": 1001,
   "patientId": "pat-2",
   "orderIds": ["ord-2-home-pd"],
   "encounterId": "enc-2",
@@ -403,13 +403,13 @@ Content-Type: application/json
 }
 
 ### 3. open the link from step 2 in a browser: it redirects to the app URL with iss and launch
-GET http://localhost:5200/api/v1/dtr/launch/{linkId}
+GET http://localhost:5200/dtr/launch/{linkId}
 
 ### 4. forms saved for the order
-GET http://localhost:5200/api/v1/dtr/saved-forms?patientId=pat-2&orderId=ord-2-home-pd
+GET http://localhost:5200/dtr/saved-forms?patientId=pat-2&orderId=ord-2-home-pd
 
 ### 5. relay to the payer
-POST http://localhost:5200/api/v1/dtr/MockPayer/Questionnaire/$questionnaire-package
+POST http://localhost:5200/dtr/1001/Questionnaire/$questionnaire-package
 Content-Type: application/fhir+json
 
 { "resourceType": "Parameters", "parameter": [ { "name": "questionnaire", "valueCanonical": "http://example.org/fhir/Questionnaire/home-dialysis-adaptive" } ] }

@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations;
 namespace PayerGatewayWebAPI.Models.Requests;
 
 /// <summary>
-/// Body of POST /api/v1/pas/requests (submit) and PUT /api/v1/pas/requests/{requestId} (update).
+/// Body of POST /pas/requests (submit) and PUT /pas/requests/{requestId} (update).
 /// The gateway turns it into a PAS request Bundle and calls the payer's Claim/$submit.
 /// Completed DTR forms for these orders are attached automatically.
 /// </summary>
@@ -14,10 +14,10 @@ public class PriorAuthRequest
     /// <example>PA-2026-0001</example>
     public string RequestId { get; set; } = string.Empty;
 
-    /// <summary>Payer to send the request to, as configured in table PA_PAYER (PAYER_NAME).</summary>
-    /// <example>MockPayer</example>
+    /// <summary>Required. The EHR's insurance plan id of the patient's insurance (PA_PAYER.PI_INSURANCE_PLAN_ID). The gateway reads that payer's configuration and sends the request to it.</summary>
+    /// <example>1001</example>
     [Required]
-    public string PayerName { get; set; } = string.Empty;
+    public int? PiInsurancePlanId { get; set; }
 
     /// <summary>EHR patient id.</summary>
     /// <example>pat-1</example>

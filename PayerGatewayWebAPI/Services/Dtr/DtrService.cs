@@ -56,9 +56,9 @@ public class DtrService
     public async Task<List<DtrForm>> CreateFormsAsync(DtrFormRequest request, CancellationToken ct)
     {
         List<string> problems = new List<string>();
-        if (string.IsNullOrWhiteSpace(request.PayerName))
+        if (request.PiInsurancePlanId == null || request.PiInsurancePlanId.Value <= 0)
         {
-            problems.Add("payerName is required.");
+            problems.Add("piInsurancePlanId is required (a whole number above 0).");
         }
 
         if (string.IsNullOrWhiteSpace(request.PatientId))
@@ -82,7 +82,7 @@ public class DtrService
             throw new ApiException(400, "The request is not valid.", problems);
         }
 
-        PayerSettings payer = await _payers.GetRequiredAsync(request.PayerName, 400, ct);
+        PayerSettings payer = await _payers.GetRequiredAsync(request.PiInsurancePlanId, 400, ct);
 
         // ---- orders and coverage from the FHIR API
         List<string> orderIds = TextHelper.Distinct(request.OrderIds);
@@ -138,12 +138,12 @@ public class DtrService
         if (!result.IsSuccess())
         {
             int status = result.StatusCode >= 400 && result.StatusCode < 500 ? 422 : 502;
-            throw new ApiException(status, payer.GetDisplayName() + " did not return the questionnaire package.", result.Messages());
+            throw new ApiException(status, payer.PayerName + " did not return the questionnaire package.", result.Messages());
         }
         List<Questionnaire> questionnaires = ReadQuestionnaires(result.Body);
         if (questionnaires.Count == 0)
         {
-            throw new ApiException(422, payer.GetDisplayName() + " returned no questionnaire for these orders.");
+            throw new ApiException(422, payer.PayerName + " returned no questionnaire for these orders.");
         }
 
         // ---- one form per questionnaire
@@ -152,7 +152,7 @@ public class DtrService
         {
             DtrFormRecord record = new DtrFormRecord();
             record.FormId = "frm-" + Guid.NewGuid().ToString("N").Substring(0, 12);
-            record.PayerName = payer.PayerName;
+            record.PiInsurancePlanId = payer.PiInsurancePlanId;
             record.PatientId = request.PatientId;
             record.CoverageId = coverage.Id;
             record.OrderIds = orderIds;
@@ -216,7 +216,7 @@ public class DtrService
         int newQuestions = 0;
         if (record.Adaptive && !record.PayerFinished)
         {
-            PayerSettings payer = await _payers.GetRequiredAsync(record.PayerName, 422, ct);
+            PayerSettings payer = await _payers.GetRequiredAsync(record.PiInsurancePlanId, 422, ct);
             newQuestions = await AskPayerForQuestionsAsync(payer, record, questionnaire, items, ct);
             if (newQuestions > 0)
             {
@@ -291,13 +291,13 @@ public class DtrService
             if (!result.IsSuccess())
             {
                 int status = result.StatusCode >= 400 && result.StatusCode < 500 ? 422 : 502;
-                throw new ApiException(status, payer.GetDisplayName() + " did not return the next question.", result.Messages());
+                throw new ApiException(status, payer.PayerName + " did not return the next question.", result.Messages());
             }
             JsonObject? returned = ReturnedResponse(result.Body);
             Questionnaire? next = ContainedQuestionnaire(returned);
             if (returned == null || next == null)
             {
-                throw new ApiException(502, payer.GetDisplayName() + " returned no QuestionnaireResponse with a contained Questionnaire from $next-question.");
+                throw new ApiException(502, payer.PayerName + " returned no QuestionnaireResponse with a contained Questionnaire from $next-question.");
             }
 
             int newCount = next.Item.Count - current.Item.Count;
@@ -469,10 +469,10 @@ public class DtrService
         }
 
         // the payer must still be configured and enabled
-        PayerSettings? payer = await _payers.FindAsync(link.PayerName, ct);
+        PayerSettings? payer = await _payers.FindAsync(link.PiInsurancePlanId, ct);
         if (payer == null)
         {
-            throw new ApiException(404, "Payer '" + link.PayerName + "' is no longer configured or enabled.");
+            throw new ApiException(404, "No payer is configured or enabled any more for piInsurancePlanId " + link.PiInsurancePlanId + ".");
         }
 
         SmartLaunchResult launch = await _fhir.CreateSmartLaunchAsync(link.PatientId, link.UserPractitionerId, link.EncounterId,
@@ -527,9 +527,9 @@ public class DtrService
     /// Passes a payer DTR app request ($questionnaire-package or $next-question) to the payer unchanged.
     /// The app only knows the gateway, so the gateway adds the payer's URL.
     /// </summary>
-    public async Task<PayerCallResult> RelayToPayerAsync(string payerName, string operationPath, JsonObject body, CancellationToken ct)
+    public async Task<PayerCallResult> RelayToPayerAsync(int piInsurancePlanId, string operationPath, JsonObject body, CancellationToken ct)
     {
-        PayerSettings payer = await _payers.GetRequiredAsync(payerName, 404, ct);
+        PayerSettings payer = await _payers.GetRequiredAsync(piInsurancePlanId, 404, ct);
         return await _payerClient.PostFhirAsync(payer, operationPath, body, ct);
     }
 
@@ -541,7 +541,7 @@ public class DtrService
         DtrFormRecord? record = await _forms.GetAsync(formId, ct);
         if (record == null)
         {
-            throw new ApiException(404, "Form " + formId + " was not found. Create it with POST /api/v1/dtr/forms.");
+            throw new ApiException(404, "Form " + formId + " was not found. Create it with POST /dtr/forms.");
         }
         return record;
     }

@@ -9,8 +9,9 @@ public class PriorAuthDecision
     /// <example>PA-2026-0001</example>
     public string RequestId { get; set; } = string.Empty;
 
-    /// <example>MockPayer</example>
-    public string? PayerName { get; set; }
+    /// <summary>The EHR's insurance plan id of the payer.</summary>
+    /// <example>1001</example>
+    public int? PiInsurancePlanId { get; set; }
 
     /// <example>pat-1</example>
     public string PatientId { get; set; } = string.Empty;
@@ -42,7 +43,7 @@ public class PriorAuthDecision
     /// <summary>One decision per order / claim line.</summary>
     public List<PriorAuthLine> Lines { get; set; } = new();
 
-    /// <summary>Documents / forms the payer asked for (CDex). Answer with POST /api/v1/cdex/requests/{id}/attachments.</summary>
+    /// <summary>Documents / forms the payer asked for (CDex). Answer with POST /cdex/requests/{id}/attachments.</summary>
     public List<InformationRequest> InformationRequests { get; set; } = new();
 
     /// <summary>Errors returned by the payer (technical rejection).</summary>

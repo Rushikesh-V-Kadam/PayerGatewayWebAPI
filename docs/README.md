@@ -4,9 +4,9 @@ Runs the Da Vinci prior authorization flow for the EHR against any connected pay
 
 | Step | EHR calls | Gateway calls the payer | When |
 | --- | --- | --- | --- |
-| 1 CRD | `POST /api/v1/crd/order-sign` | CDS Hooks `order-sign` | Every signed order |
-| 2 DTR | `POST /api/v1/dtr/forms` → `POST /api/v1/dtr/forms/{formId}/answers` | `Questionnaire/$questionnaire-package` | Decision has `callDtr = true` |
-| 3 PAS | `POST /api/v1/pas/requests` (+ PUT / cancel / GET / inquire) | `Claim/$submit`, `Claim/$inquire` | Decision has `callPas = true` |
+| 1 CRD | `POST /crd/order-sign` | CDS Hooks `order-sign` | Every signed order |
+| 2 DTR | `POST /dtr/forms` → `POST /dtr/forms/{formId}/answers` | `Questionnaire/$questionnaire-package` | Decision has `callDtr = true` |
+| 3 PAS | `POST /pas/requests` (+ PUT / cancel / GET / inquire) | `Claim/$submit`, `Claim/$inquire` | Decision has `callPas = true` |
 | 4 CDex | `GET .../information-requests`, `POST .../attachments` | `Task` search, `$submit-attachment` | PAS is `pended` and the payer asks for more |
 
 Full request / response specs with examples: run the API and open **http://localhost:5200/swagger**.
@@ -31,8 +31,8 @@ longer exist.
 
 **No background job.** The gateway does not check pended requests by itself (`PendingRequestPoller` and
 `Workflow:PollMinutes` are removed). The client EHR decides when to check: for each row with `STATUS = 'pended'` in
-`PA_PRIOR_AUTH` it calls `POST /api/v1/pas/requests/{requestId}/inquire` (latest decision) and
-`GET /api/v1/cdex/requests/{requestId}/information-requests?refresh=true` (payer requests for documents). The gateway
+`PA_PRIOR_AUTH` it calls `POST /pas/requests/{requestId}/inquire` (latest decision) and
+`GET /cdex/requests/{requestId}/information-requests?refresh=true` (payer requests for documents). The gateway
 saves the result in `PA_PRIOR_AUTH` - only when it is different from what is stored, so `UPDATED_AT` moves only when
 something changed. Payer notifications (PAS Subscription) and pushed Tasks still update the rows on their own.
 
@@ -49,13 +49,14 @@ something changed. Payer notifications (PAS Subscription) and pushed Tasks still
 
 ## How the payer is chosen
 
-Every EHR request carries `payerName`. The gateway looks it up in table `PA_PAYER` (`PAYER_NAME`, not case-sensitive),
-read through the EHR data API, and uses that row's base URL, paths and timeouts. The list is kept for
-`Storage:PayerCacheMinutes` (default 5); a name that is not in the kept list is looked up again right away.
+Every EHR request carries `piInsurancePlanId` (a whole number, the EHR's insurance plan id). The gateway reads that one
+payer's configuration (table `PA_PAYER`, key `PI_INSURANCE_PLAN_ID`) and uses its base URL, paths and timeouts. There is no payer list.
+It is read with `GET payers/{piInsurancePlanId}` on the EHR data API (the mock EHR has the mock payer as plan id `1001`).
+A payer is kept for `Storage:PayerCacheMinutes` (default 5); an id without a payer is asked again at the next request.
 To onboard a payer, the EHR team inserts a row; nothing changes in the gateway and no restart is needed.
-An unknown or disabled name returns 400 with the list of configured payers.
+An unknown or disabled id returns 400 (404 when the id is in the URL).
 
-**Only `PAYER_NAME` and `BASE_URL` must be filled in a payer row.** Every other column is optional and has a default
+**Only `PI_INSURANCE_PLAN_ID`, `PAYER_NAME` and `BASE_URL` must be filled in a payer row.** Every other column is optional and has a default
 (`PayerSettings.ApplyDefaults`); a row without a name or without a complete http / https address is left out with a
 warning in the log. The payer row has no payer id and no identifier systems: the payer id and the member id come from
 the patient's insurance in the EHR (FHIR `Coverage.payor.identifier` and `Coverage.subscriberId`) and are sent to the
@@ -75,27 +76,27 @@ called), in DTR and PAS it gives 422.
 **Payers without their own app (`PA_PAYER.DTR_MODE = Forms`, the default):** the gateway does the DTR work itself and
 exposes it as plain JSON:
 
-1. **Get the form.** `POST /api/v1/dtr/forms` with `payerName`, `patientId`, `orderIds` and the `questionnaireUrls` /
+1. **Get the form.** `POST /dtr/forms` with `piInsurancePlanId`, `patientId`, `orderIds` and the `questionnaireUrls` /
    `coverageAssertionId` from the order-sign decision. The gateway calls the payer's `$questionnaire-package` and returns each
    Questionnaire as a list of questions: `linkId`, `text`, `type`, `required`, `options`, `defaultValues`, `showWhen`.
 2. **Answer it.** The EHR team shows those questions on an existing EHR screen (a simple form: one field per question).
    During testing the answers can be typed into Swagger or Postman.
-3. **Save the answers.** `POST /api/v1/dtr/forms/{formId}/answers` with `{ "linkId": "...", "values": ["..."] }` per question.
+3. **Save the answers.** `POST /dtr/forms/{formId}/answers` with `{ "linkId": "...", "values": ["..."] }` per question.
    The gateway checks each value against the question type, skips questions hidden by `showWhen`, uses payer defaults
    for questions left empty, and (with `complete = true`) rejects the save with 422 when a required question is missing.
    It then builds the FHIR QuestionnaireResponse (same tree as the payer's Questionnaire, with `qr-context` for the orders
    and coverage) and saves it at the FHIR API (table `PA_QUESTIONNAIRE_RESPONSE`).
-4. **Submit.** `POST /api/v1/pas/requests` attaches every completed form of the same orders automatically.
+4. **Submit.** `POST /pas/requests` attaches every completed form of the same orders automatically.
 
 **Payers with their own SMART DTR app (`PA_PAYER.DTR_MODE = SmartApp`):** order-sign returns a message link of type `smart`
-with `opensPayerApp = true` (`/api/v1/dtr/launch/{linkId}`). The EHR opens it in a browser window; nothing else changes for the EHR.
+with `opensPayerApp = true` (`/dtr/launch/{linkId}`). The EHR opens it in a browser window; nothing else changes for the EHR.
 
 1. The gateway creates the SMART launch at the FHIR API (`iss` = `/fhir/r4`), and redirects to the app
    (`DTR_APP_LAUNCH_URL`, or the URL on the payer's card).
 2. The app gets its launch context from the FHIR API (SMART App Launch), reads the patient data, gets the questionnaire from its payer (directly, or through
-   `/api/v1/dtr/{payerName}/Questionnaire/$questionnaire-package`), and saves the QuestionnaireResponse
+   `/dtr/{piInsurancePlanId}/Questionnaire/$questionnaire-package`), and saves the QuestionnaireResponse
    at the FHIR API.
-3. `GET /api/v1/dtr/saved-forms?patientId=...&orderId=...` shows the EHR that the form is completed.
+3. `GET /dtr/saved-forms?patientId=...&orderId=...` shows the EHR that the form is completed.
 4. PAS attaches it automatically, as for step 4 above.
 
 With `DTR_MODE = Forms` (default) the link has `opensPayerApp = false` and the EHR keeps using steps 1 to 4 above.
@@ -117,7 +118,7 @@ Every error has the same body: `{ "error": "...", "details": ["..."], "traceId":
 
 | Status | Meaning |
 | --- | --- |
-| 400 | Invalid body / missing field / unknown payerName / wrong answer format / order-sign without a signing clinician |
+| 400 | Invalid body / missing field / unknown piInsurancePlanId / wrong answer format / order-sign without a signing clinician |
 | 404 | Patient, order, form, document or request not found |
 | 409 | Request already submitted (use PUT), or it is cancelled |
 | 422 | Cannot be processed: the insurance (`coverageId`) is not found, belongs to another patient or is not active, insurance without member id, order without code, no NPI, required questions missing, payer rejected (PAS returns the decision with errors) |

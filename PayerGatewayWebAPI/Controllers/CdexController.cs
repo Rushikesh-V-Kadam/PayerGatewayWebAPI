@@ -13,7 +13,7 @@ namespace PayerGatewayWebAPI.Controllers;
 /// and the endpoint a payer uses to push its information requests (Tasks).
 /// </summary>
 [ApiController]
-[Route("api/v1/cdex")]
+[Route("cdex")]
 [Produces("application/json")]
 public class CdexController : ControllerBase
 {
@@ -28,7 +28,7 @@ public class CdexController : ControllerBase
     /// <summary>Documents / forms the payer asked for on a pended request.</summary>
     /// <remarks>
     /// Each information request lists LOINC document types (documentsNeeded) and / or questionnaires (questionnairesNeeded).
-    /// For questionnaires: POST /api/v1/dtr/forms with those URLs, answer them, then send the questionnaireResponseId.
+    /// For questionnaires: POST /dtr/forms with those URLs, answer them, then send the questionnaireResponseId.
     /// </remarks>
     /// <param name="requestId">EHR prior auth request id.</param>
     /// <param name="refresh">true = search the payer's Tasks now (the gateway has no background job; the client EHR calls this with refresh=true for each pended request). false = return what is stored.</param>
@@ -75,22 +75,22 @@ public class CdexController : ControllerBase
     }
 
     /// <summary>Called BY THE PAYER to push a Task (or a Bundle of Tasks) asking for more information.</summary>
-    /// <param name="payerName">Payer name.</param>
+    /// <param name="piInsurancePlanId">The EHR's insurance plan id of the payer (the one the gateway put in this address).</param>
     /// <param name="body">A FHIR Task or a Bundle of Tasks.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>
     /// <response code="202">Accepted.</response>
     /// <response code="400">Not a Task or a Bundle of Tasks, or the Task is not valid FHIR.</response>
-    /// <response code="404">The payer is not configured.</response>
+    /// <response code="404">No payer is configured or enabled for this insurance plan id.</response>
     /// <response code="422">The Task is not about a request sent by this gateway.</response>
-    [HttpPost("tasks/{payerName}")]
+    [HttpPost("tasks/{piInsurancePlanId:int}")]
     [Consumes(ApiHeaders.FhirJson, ApiHeaders.Json)]
     [ProducesResponseType(typeof(NotificationResult), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiError), StatusCodes.Status422UnprocessableEntity)]
-    public async Task<ActionResult<NotificationResult>> ReceiveTasks(string payerName, [FromBody] JsonObject? body, CancellationToken ct)
+    public async Task<ActionResult<NotificationResult>> ReceiveTasks(int piInsurancePlanId, [FromBody] JsonObject? body, CancellationToken ct)
     {
-        NotificationResult result = await _cdex.ReceivePushedTasksAsync(payerName, body, ct);
+        NotificationResult result = await _cdex.ReceivePushedTasksAsync(piInsurancePlanId, body, ct);
         return Accepted(result);
     }
 }

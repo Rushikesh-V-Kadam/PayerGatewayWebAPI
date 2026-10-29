@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations;
 namespace PayerGatewayWebAPI.Models.Requests;
 
 /// <summary>
-/// Body of POST /api/v1/dtr/forms/{formId}/answers: the provider's answers in plain JSON.
+/// Body of POST /dtr/forms/{formId}/answers: the provider's answers in plain JSON.
 /// The gateway builds the FHIR QuestionnaireResponse (same tree as the payer's Questionnaire) and saves it at the
 /// FHIR API, where PAS picks it up. Can be sent several times; the latest answers replace the earlier ones.
 /// </summary>

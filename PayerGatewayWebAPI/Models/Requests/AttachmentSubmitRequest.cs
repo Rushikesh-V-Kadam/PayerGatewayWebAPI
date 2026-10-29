@@ -3,7 +3,7 @@ using System.ComponentModel;
 namespace PayerGatewayWebAPI.Models.Requests;
 
 /// <summary>
-/// Body of POST /api/v1/cdex/requests/{requestId}/attachments: additional documents and DTR forms for a pended
+/// Body of POST /cdex/requests/{requestId}/attachments: additional documents and DTR forms for a pended
 /// prior auth (CDex $submit-attachment), usually to answer a payer information request.
 /// </summary>
 public class AttachmentSubmitRequest
@@ -16,7 +16,7 @@ public class AttachmentSubmitRequest
     /// <example>["doc-1-labs"]</example>
     public List<string> DocumentIds { get; set; } = new();
 
-    /// <summary>QuestionnaireResponse ids (from POST /api/v1/dtr/forms/{formId}/answers).</summary>
+    /// <summary>QuestionnaireResponse ids (from POST /dtr/forms/{formId}/answers).</summary>
     /// <example>[]</example>
     public List<string> QuestionnaireResponseIds { get; set; } = new();
 

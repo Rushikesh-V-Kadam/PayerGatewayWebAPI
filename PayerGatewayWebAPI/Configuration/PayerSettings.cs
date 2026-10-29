@@ -1,17 +1,17 @@
 namespace PayerGatewayWebAPI.Configuration;
 
 /// <summary>
-/// One connected payer. Loaded from table PA_PAYER in the EHR database (Storage:Provider = EhrApi) or from the
-/// appsettings "Payers" list (Storage:Provider = InMemory). The EHR sends <see cref="PayerName"/> in every request;
-/// the gateway finds the matching payer and uses its URLs. To add a payer, add a row / an entry.
+/// One connected payer: the configuration of one insurance plan id. The EHR sends <see cref="PiInsurancePlanId"/> in
+/// every request; the gateway reads that one payer's configuration and uses its URLs.
+/// It is read with GET payers/{piInsurancePlanId} on the EHR data API (one row of table PA_PAYER, EhrApiPayerRepository).
 /// Every payer is called the same way; only these values differ:
 ///   CRD   {BaseUrl}/{CdsServicesPath}            e.g. http://localhost:5080/cds-services
 ///   DTR   {BaseUrl}/{FhirPath}/Questionnaire/$questionnaire-package
 ///   PAS   {BaseUrl}/{FhirPath}/Claim/$submit, Claim/$inquire, Subscription
 ///   CDex  {BaseUrl}/{FhirPath}/$submit-attachment, Task
 ///
-/// Only PayerName and BaseUrl must be filled. Every other value is optional and has a default, so a payer row with
-/// only those two values works.
+/// PiInsurancePlanId, PayerName and BaseUrl must be filled for the gateway to call the payer.
+/// PayerName is only shown in log lines and messages. Every other value is optional and has a default.
 ///
 /// The two paths: empty = the usual path ("cds-services" / "fhir"); "/" = no extra path, the payer's address is
 /// BaseUrl itself (for a payer whose FHIR address is, for example, https://api.payer.com/r4 with nothing after it).
@@ -25,9 +25,6 @@ namespace PayerGatewayWebAPI.Configuration;
 /// </summary>
 public class PayerSettings
 {
-    /// <summary>Name of the appsettings section that holds the payer list (memory mode only).</summary>
-    public const string SectionName = "Payers";
-
     /// <summary>CDS Hooks path used when the payer row has none.</summary>
     public const string DefaultCdsServicesPath = "cds-services";
 
@@ -40,11 +37,11 @@ public class PayerSettings
     /// <summary>Seconds to wait for every other payer call when the payer row has no value.</summary>
     public const int DefaultTimeoutSeconds = 30;
 
-    /// <summary>Required. The name the EHR sends (payerName), e.g. "MockPayer". Matched without regard to upper / lower case.</summary>
-    public string PayerName { get; set; } = string.Empty;
+    /// <summary>Required. The EHR's insurance plan id of this payer (PA_PAYER.PI_INSURANCE_PLAN_ID), e.g. 1001. The EHR sends it as piInsurancePlanId in every request.</summary>
+    public int PiInsurancePlanId { get; set; }
 
-    /// <summary>Optional. Friendly name for messages and logs, e.g. "Mock Da Vinci Payer". Empty = PayerName is shown.</summary>
-    public string DisplayName { get; set; } = string.Empty;
+    /// <summary>Required. Name of the payer, e.g. "MockPayer". Shown in log lines and messages only.</summary>
+    public string PayerName { get; set; } = string.Empty;
 
     /// <summary>Optional (default true). false = the payer is configured but switched off.</summary>
     public bool Enabled { get; set; } = true;
@@ -69,8 +66,8 @@ public class PayerSettings
 
     /// <summary>
     /// Optional. How the clinician fills in the payer's questionnaires:
-    ///   "Forms"    the gateway gets the questionnaire and the EHR shows it (POST /api/v1/dtr/forms; our questionnaire app)
-    ///   "SmartApp" the payer's own SMART DTR app is opened from the CRD message link (/api/v1/dtr/launch/{linkId})
+    ///   "Forms"    the gateway gets the questionnaire and the EHR shows it (POST /dtr/forms; our questionnaire app)
+    ///   "SmartApp" the payer's own SMART DTR app is opened from the CRD message link (/dtr/launch/{linkId})
     /// Any other value, or an empty one, is treated as Forms.
     /// </summary>
     public string DtrMode { get; set; } = "Forms";
@@ -83,12 +80,11 @@ public class PayerSettings
 
     /// <summary>
     /// Fills in the default of every optional value that is empty and removes spaces around the texts.
-    /// Called once for each payer when the list is loaded, so the rest of the code never sees an empty optional value.
+    /// Called once each time a payer configuration is read, so the rest of the code never sees an empty optional value.
     /// </summary>
     public void ApplyDefaults()
     {
         PayerName = (PayerName ?? string.Empty).Trim();
-        DisplayName = (DisplayName ?? string.Empty).Trim();
         BaseUrl = (BaseUrl ?? string.Empty).Trim();
 
         if (string.IsNullOrWhiteSpace(CdsServicesPath))
@@ -131,11 +127,15 @@ public class PayerSettings
     }
 
     /// <summary>
-    /// Why this payer cannot be used, or null when it can. A payer needs a name and a base URL that is a complete
-    /// http / https address; without them no call to the payer is possible.
+    /// Why this payer cannot be used, or null when it can. A payer needs an insurance plan id, a name and a base URL
+    /// that is a complete http / https address; without them no call to the payer is possible.
     /// </summary>
     public string? GetProblem()
     {
+        if (PiInsurancePlanId <= 0)
+        {
+            return "piInsurancePlanId (PI_INSURANCE_PLAN_ID) is empty or not a whole number above 0";
+        }
         if (string.IsNullOrWhiteSpace(PayerName))
         {
             return "payerName (PAYER_NAME) is empty";
@@ -186,15 +186,5 @@ public class PayerSettings
             return cleanBase;
         }
         return cleanBase + "/" + cleanPath;
-    }
-
-    /// <summary>DisplayName, or PayerName when no display name is set.</summary>
-    public string GetDisplayName()
-    {
-        if (string.IsNullOrWhiteSpace(DisplayName))
-        {
-            return PayerName;
-        }
-        return DisplayName;
     }
 }

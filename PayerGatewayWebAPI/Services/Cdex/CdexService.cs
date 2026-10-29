@@ -22,7 +22,7 @@ namespace PayerGatewayWebAPI.Services.Cdex;
 ///
 ///   1. The payer creates a Task: LOINC document types and/or questionnaires needed, a tracking id and a due date.
 ///   2. The gateway gets the Task - by searching the payer (GET {fhir}/Task?owner={organization NPI}), or the payer
-///      pushes it to /api/v1/cdex/tasks/{payerName} - adds it to the decision's informationRequests and saves it
+///      pushes it to /cdex/tasks/{piInsurancePlanId} - adds it to the decision's informationRequests and saves it
 ///      (the EHR reads it from table PA_PRIOR_AUTH, column DECISION_JSON).
 ///   3. The EHR sends the documents / completed forms -> POST {fhir}/$submit-attachment with the tracking id.
 ///   4. The payer reviews again; the gateway runs $inquire and returns the new decision.
@@ -63,16 +63,16 @@ public class CdexService
         PriorAuthRecord record = await GetRecordAsync(requestId, ct);
         if (refresh && record.IsOpen() && record.OrganizationNpi != null)
         {
-            await PollTasksAsync(record.PayerName, record.OrganizationNpi, ct);
+            await PollTasksAsync(record.PiInsurancePlanId, record.OrganizationNpi, ct);
             record = await GetRecordAsync(requestId, ct);
         }
         return record.Decision.InformationRequests;
     }
 
     /// <summary>Searches the payer's Tasks for our organization and processes each one. Returns how many matched a request.</summary>
-    public async Task<int> PollTasksAsync(string payerName, string organizationNpi, CancellationToken ct)
+    public async Task<int> PollTasksAsync(int piInsurancePlanId, string organizationNpi, CancellationToken ct)
     {
-        PayerSettings? payer = await _payers.FindAsync(payerName, ct);
+        PayerSettings? payer = await _payers.FindAsync(piInsurancePlanId, ct);
         if (payer == null)
         {
             return 0;
@@ -81,7 +81,7 @@ public class CdexService
         PayerCallResult result = await _payerClient.GetFhirAsync(payer, "Task?owner=" + Uri.EscapeDataString(organizationNpi), ct);
         if (!result.IsSuccess())
         {
-            _logger.LogWarning("Task search at {Payer} failed: HTTP {Status}", payerName, result.StatusCode);
+            _logger.LogWarning("Task search at {Payer} failed: HTTP {Status}", payer.PayerName, result.StatusCode);
             return 0;
         }
 
@@ -92,7 +92,7 @@ public class CdexService
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "The Task search answer of {Payer} is not a readable FHIR Bundle", payerName);
+            _logger.LogWarning(ex, "The Task search answer of {Payer} is not a readable FHIR Bundle", payer.PayerName);
             return 0;
         }
         if (bundle == null)
@@ -106,7 +106,7 @@ public class CdexService
             FhirTask? task = ReadTask(raw);
             if (task == null)
             {
-                _logger.LogWarning("A Task of {Payer} is skipped: it is not a readable FHIR Task", payerName);
+                _logger.LogWarning("A Task of {Payer} is skipped: it is not a readable FHIR Task", payer.PayerName);
                 continue;
             }
             if (await ProcessTaskAsync(payer, task, raw, ct))
@@ -118,9 +118,9 @@ public class CdexService
     }
 
     /// <summary>A Task (or a Bundle of Tasks) pushed by the payer.</summary>
-    public async Task<NotificationResult> ReceivePushedTasksAsync(string payerName, JsonObject? body, CancellationToken ct)
+    public async Task<NotificationResult> ReceivePushedTasksAsync(int piInsurancePlanId, JsonObject? body, CancellationToken ct)
     {
-        PayerSettings payer = await _payers.GetRequiredAsync(payerName, 404, ct);
+        PayerSettings payer = await _payers.GetRequiredAsync(piInsurancePlanId, 404, ct);
 
         List<JsonObject> tasks = new List<JsonObject>();
         string? type = FhirJson.ResourceType(body);
@@ -204,7 +204,7 @@ public class CdexService
         Identifier? tracking = TaskReader.TrackingIdentifier(task);
         PriorAuthRecord? record = requestId == null ? null : await _requests.GetAsync(requestId, ct);
         if (record == null || tracking == null || tracking.Value == null
-            || !string.Equals(record.PayerName, payer.PayerName, StringComparison.OrdinalIgnoreCase))
+            || record.PiInsurancePlanId != payer.PiInsurancePlanId)
         {
             return false;   // not one of ours
         }
@@ -230,7 +230,7 @@ public class CdexService
         CdexTaskRecord? storedTask = null;
         foreach (CdexTaskRecord candidate in await _tasks.GetForRequestAsync(record.RequestId, ct))
         {
-            if (candidate.TaskId == task.Id && string.Equals(candidate.PayerName, payer.PayerName, StringComparison.OrdinalIgnoreCase))
+            if (candidate.TaskId == task.Id && candidate.PiInsurancePlanId == payer.PiInsurancePlanId)
             {
                 storedTask = candidate;
             }
@@ -238,7 +238,7 @@ public class CdexService
         if (storedTask == null || storedTask.TaskJson != taskJson)
         {
             CdexTaskRecord taskRecord = new CdexTaskRecord();
-            taskRecord.PayerName = payer.PayerName;
+            taskRecord.PiInsurancePlanId = payer.PiInsurancePlanId;
             taskRecord.TaskId = task.Id;
             taskRecord.RequestId = record.RequestId;
             taskRecord.TrackingId = tracking.Value;
@@ -294,10 +294,10 @@ public class CdexService
             throw new ApiException(422, "Request " + requestId + " has neither a facility NPI nor a practitioner NPI (PA_PRIOR_AUTH.ORGANIZATION_NPI / PRACTITIONER_NPI), "
                 + "so the attachments cannot be sent: CDex needs at least one of them. Add the NPI to the facility (location) or the practitioner in the EHR.");
         }
-        PayerSettings? payer = await _payers.FindAsync(record.PayerName, ct);
+        PayerSettings? payer = await _payers.FindAsync(record.PiInsurancePlanId, ct);
         if (payer == null)
         {
-            throw new ApiException(422, "Payer " + record.PayerName + " is no longer configured.");
+            throw new ApiException(422, "No payer is configured or enabled any more for piInsurancePlanId " + record.PiInsurancePlanId + ".");
         }
 
         Identifier trackingId = await ChooseTrackingIdAsync(record, request.TrackingId, ct);
@@ -369,7 +369,7 @@ public class CdexService
         if (request.Final)
         {
             // An extra step: when it fails, the attachments were still sent. The decision is then left empty in
-            // the answer and the client EHR gets it later with POST /api/v1/pas/requests/{requestId}/inquire.
+            // the answer and the client EHR gets it later with POST /pas/requests/{requestId}/inquire.
             summary.Decision = await _pas.TryInquireAsync(requestId, ct);
         }
         return summary;

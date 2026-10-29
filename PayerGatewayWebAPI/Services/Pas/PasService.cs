@@ -74,7 +74,7 @@ public class PasService
     {
         // ---- 1. check the input
         CheckRequest(request);
-        PayerSettings payer = await _payers.GetRequiredAsync(request.PayerName, 400, ct);
+        PayerSettings payer = await _payers.GetRequiredAsync(request.PiInsurancePlanId, 400, ct);
         List<string> orderIds = TextHelper.Distinct(request.OrderIds);
 
         // A request id can be submitted again only when the earlier request is cancelled, or has status "error"
@@ -82,7 +82,7 @@ public class PasService
         PriorAuthRecord? existing = await _repository.GetAsync(request.RequestId, ct);
         if (!isUpdate && existing != null && existing.Status != DecisionStatus.Cancelled && existing.Status != DecisionStatus.Error)
         {
-            throw new ApiException(409, "Request " + request.RequestId + " was already submitted. Use PUT /api/v1/pas/requests/" + request.RequestId + " to change it.");
+            throw new ApiException(409, "Request " + request.RequestId + " was already submitted. Use PUT /pas/requests/" + request.RequestId + " to change it.");
         }
         if (isUpdate && existing == null)
         {
@@ -94,13 +94,13 @@ public class PasService
             {
                 throw new ApiException(400, "patientId cannot change on an update.");
             }
-            if (!string.Equals(existing.PayerName, payer.PayerName, StringComparison.OrdinalIgnoreCase))
+            if (existing.PiInsurancePlanId != payer.PiInsurancePlanId)
             {
                 throw new ApiException(400, "The payer of an existing request cannot change. Cancel it and submit a new request.");
             }
             if (existing.Status == DecisionStatus.Cancelled)
             {
-                throw new ApiException(409, "Request " + request.RequestId + " is cancelled. Submit it again with POST /api/v1/pas/requests.");
+                throw new ApiException(409, "Request " + request.RequestId + " is cancelled. Submit it again with POST /pas/requests.");
             }
         }
 
@@ -245,11 +245,11 @@ public class PasService
         if (!result.IsSuccess() || claimResponse == null)
         {
             // The payer did not accept the request (e.g. validation error). Nothing is saved; the EHR can fix and retry.
-            PriorAuthDecision rejected = PasDecisionReader.Rejected(request.RequestId, payer.PayerName, request.PatientId, orderIds, result);
+            PriorAuthDecision rejected = PasDecisionReader.Rejected(request.RequestId, payer.PiInsurancePlanId, request.PatientId, orderIds, result);
             int status = result.StatusCode >= 400 && result.StatusCode < 500 ? 422 : 502;
             throw new ApiException(status, string.Join("; ", rejected.Errors), rejected);
         }
-        ThrowIfRefused(claimResponse, request.RequestId, payer.PayerName, request.PatientId, orderIds);
+        ThrowIfRefused(claimResponse, request.RequestId, payer.PiInsurancePlanId, request.PatientId, orderIds);
 
         // ---- 5. accepted: save the new state
         PriorAuthRecord record;
@@ -263,7 +263,7 @@ public class PasService
             record.RequestId = request.RequestId;
             record.SubmittedAt = DateTime.UtcNow;
         }
-        record.PayerName = payer.PayerName;
+        record.PiInsurancePlanId = payer.PiInsurancePlanId;
         record.PatientId = request.PatientId;
         record.CoverageId = coverageId;
         record.MemberId = coverage.MemberId();
@@ -332,12 +332,12 @@ public class PasService
         ClaimResponse? claimResponse = PasDecisionReader.FindClaimResponse(result);
         if (!result.IsSuccess() || claimResponse == null)
         {
-            PriorAuthDecision rejected = PasDecisionReader.Rejected(record.RequestId, payer.PayerName, record.PatientId, record.OrderIds, result);
+            PriorAuthDecision rejected = PasDecisionReader.Rejected(record.RequestId, payer.PiInsurancePlanId, record.PatientId, record.OrderIds, result);
             int status = result.StatusCode >= 400 && result.StatusCode < 500 ? 422 : 502;
             throw new ApiException(status, string.Join("; ", rejected.Errors), rejected);
         }
         // the payer refused the cancellation: the request stays as it was (nothing is saved)
-        ThrowIfRefused(claimResponse, record.RequestId, payer.PayerName, record.PatientId, record.OrderIds);
+        ThrowIfRefused(claimResponse, record.RequestId, payer.PiInsurancePlanId, record.PatientId, record.OrderIds);
 
         record.Version = record.Version + 1;
         await ApplyResponseAsync(record, bundle, result, claimResponse, true);
@@ -368,7 +368,7 @@ public class PasService
         if (record.Status == DecisionStatus.Cancelled)
         {
             // A cancelled request is finished: the payer is not asked again and nothing can reopen it.
-            // (The same request id can be submitted again with POST /api/v1/pas/requests.)
+            // (The same request id can be submitted again with POST /pas/requests.)
             return record.Decision;
         }
         PayerSettings payer = await GetPayerAsync(record, ct);
@@ -377,7 +377,7 @@ public class PasService
         PayerCallResult result = await _payerClient.PostFhirAsync(payer, PasCodes.Inquire, inquiry, ct);
         if (!result.IsSuccess())
         {
-            throw new ApiException(502, "Inquiry failed at " + payer.GetDisplayName() + " (HTTP " + result.StatusCode + ").", result.Messages());
+            throw new ApiException(502, "Inquiry failed at " + payer.PayerName + " (HTTP " + result.StatusCode + ").", result.Messages());
         }
         ClaimResponse? claimResponse = PasDecisionReader.FindClaimResponse(result);
         if (claimResponse == null)
@@ -388,7 +388,7 @@ public class PasService
         {
             // The payer could not answer the question (e.g. it does not find the request). That says nothing about
             // the request itself, so the stored decision is not replaced by "error" and the request stays open.
-            throw new ApiException(502, "Inquiry failed at " + payer.GetDisplayName() + ": the payer returned errors instead of a decision.",
+            throw new ApiException(502, "Inquiry failed at " + payer.PayerName + ": the payer returned errors instead of a decision.",
                 PasDecisionReader.ErrorMessages(claimResponse));
         }
         if (claimResponse.Item.Count == 0)
@@ -434,9 +434,9 @@ public class PasService
     /// A PAS Subscription notification from a payer. The payload is id-only (it does not say which request changed),
     /// so every open request of that payer is inquired. Handshake / heartbeat notifications need no action.
     /// </summary>
-    public async Task<NotificationResult> HandleNotificationAsync(string payerName, JsonObject? body, CancellationToken ct)
+    public async Task<NotificationResult> HandleNotificationAsync(int piInsurancePlanId, JsonObject? body, CancellationToken ct)
     {
-        PayerSettings payer = await _payers.GetRequiredAsync(payerName, 404, ct);
+        PayerSettings payer = await _payers.GetRequiredAsync(piInsurancePlanId, 404, ct);
 
         NotificationResult outcome = new NotificationResult();
         string type;
@@ -455,7 +455,7 @@ public class PasService
             return outcome;
         }
 
-        List<PriorAuthRecord> open = await _repository.GetOpenAsync(payer.PayerName, ct);
+        List<PriorAuthRecord> open = await _repository.GetOpenAsync(payer.PiInsurancePlanId, ct);
         foreach (PriorAuthRecord request in open)
         {
             await TryInquireAsync(request.RequestId, ct);
@@ -507,13 +507,13 @@ public class PasService
     /// and has no line decision. The payer's error texts are returned to the EHR and nothing is saved, exactly as for
     /// a request the payer rejected with HTTP 4xx.
     /// </summary>
-    private static void ThrowIfRefused(ClaimResponse claimResponse, string requestId, string payerName, string patientId, List<string> orderIds)
+    private static void ThrowIfRefused(ClaimResponse claimResponse, string requestId, int piInsurancePlanId, string patientId, List<string> orderIds)
     {
         if (!PasDecisionReader.IsRefusal(claimResponse))
         {
             return;
         }
-        PriorAuthDecision refused = PasDecisionReader.Refused(requestId, payerName, patientId, orderIds, PasDecisionReader.ErrorMessages(claimResponse));
+        PriorAuthDecision refused = PasDecisionReader.Refused(requestId, piInsurancePlanId, patientId, orderIds, PasDecisionReader.ErrorMessages(claimResponse));
         throw new ApiException(422, string.Join("; ", refused.Errors), refused);
     }
 
@@ -555,9 +555,9 @@ public class PasService
             problems.Add("requestId is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.PayerName))
+        if (request.PiInsurancePlanId == null || request.PiInsurancePlanId.Value <= 0)
         {
-            problems.Add("payerName is required.");
+            problems.Add("piInsurancePlanId is required (a whole number above 0).");
         }
 
         if (string.IsNullOrWhiteSpace(request.PatientId))
@@ -643,7 +643,7 @@ public class PasService
         // The payer has accepted the request. The save is not cancelled when the caller disconnects: without the
         // row the gateway would not know the request and a retry would submit it a second time.
         await _repository.SaveAsync(record, CancellationToken.None);
-        _logger.LogInformation("PAS {RequestId} v{Version} at {Payer}: {Status}", record.RequestId, record.Version, record.PayerName, record.Status);
+        _logger.LogInformation("PAS {RequestId} v{Version} at payer of piInsurancePlanId {PiInsurancePlanId}: {Status}", record.RequestId, record.Version, record.PiInsurancePlanId, record.Status);
     }
 
     /// <summary>
@@ -801,10 +801,10 @@ public class PasService
     /// <summary>The request's payer, or 422 when it was removed or switched off.</summary>
     private async Task<PayerSettings> GetPayerAsync(PriorAuthRecord record, CancellationToken ct)
     {
-        PayerSettings? payer = await _payers.FindAsync(record.PayerName, ct);
+        PayerSettings? payer = await _payers.FindAsync(record.PiInsurancePlanId, ct);
         if (payer == null)
         {
-            throw new ApiException(422, "Payer " + record.PayerName + " is no longer configured.");
+            throw new ApiException(422, "No payer is configured or enabled any more for piInsurancePlanId " + record.PiInsurancePlanId + ".");
         }
         return payer;
     }
