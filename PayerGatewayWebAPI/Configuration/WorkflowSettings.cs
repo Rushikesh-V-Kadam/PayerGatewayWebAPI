@@ -7,7 +7,7 @@ public class WorkflowSettings
     public const string SectionName = "Workflow";
 
     /// <summary>
-    /// Public URL of the gateway; used in DTR links and in the PAS Subscription endpoint the payer calls back.
+    /// Public URL of the gateway; used in the DTR links (/dtr/launch/{linkId}) the clinician opens.
     /// TODO: the default is the local test address. Set Workflow:GatewayPublicBaseUrl in appsettings.json to the
     /// address payers and the EHR can reach in each environment (test, production).
     /// </summary>

@@ -1,7 +1,7 @@
 ### =====================================================================================
 ### Payer Gateway Web API - the whole prior authorization flow, in order.
 ### Run it in Visual Studio / VS Code (REST Client). Needs: FHIR API (5100), mock EHR (5090), mock payer (5080).
-### Replace formId / questionnaire linkIds with the values returned by the calls above them.
+### Replace the ids with the values returned by the calls above them.
 ### =====================================================================================
 @gateway = http://localhost:5200
 
@@ -24,34 +24,10 @@ Content-Type: application/json
   "userPractitionerId": "prac-1"
 }
 
-### 2a. DTR: get the payer's questionnaire as simple questions (callDtr = true)
-POST {{gateway}}/dtr/forms
-Content-Type: application/json
-
-{
-  "insurancePlanId": 1001,
-  "patientId": "pat-1",
-  "orderIds": ["ord-1-hd"],
-  "questionnaireUrls": ["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"],
-  "coverageAssertionId": "CA-20260929-0001"
-}
-
-### 2b. DTR: answer it (use the formId and linkIds from 2a)
-POST {{gateway}}/dtr/forms/frm-000000000000/answers
-Content-Type: application/json
-
-{
-  "complete": true,
-  "authorPractitionerId": "prac-1",
-  "answers": [
-    { "linkId": "egfr", "values": ["12"] },
-    { "linkId": "on-dialysis", "values": ["true"] },
-    { "linkId": "esrd-date", "values": ["2026-08-10"] }
-  ]
-}
-
-### 2c. DTR: read the form back
-GET {{gateway}}/dtr/forms/frm-000000000000
+### 2. DTR (callDtr = true): open the message link of 1 (type "smart", {{gateway}}/dtr/launch/{linkId}) in a
+###    browser. The payer's SMART DTR app starts and saves its QuestionnaireResponse at the FHIR API.
+### 2b. DTR: forms the SMART app saved for the order
+GET {{gateway}}/dtr/saved-forms?patientId=pat-1&orderId=ord-1-hd
 
 ### 3. PAS: submit (completed DTR forms of ord-1-hd are attached automatically)
 POST {{gateway}}/pas/requests
@@ -92,9 +68,3 @@ POST {{gateway}}/pas/requests/PA-2026-0001/cancel
 Content-Type: application/json
 
 { "reason": "Order cancelled by the physician." }
-
-### 6. Payer SMART DTR app: forms the app saved for an order (DTR_MODE = SmartApp)
-GET {{gateway}}/dtr/saved-forms?patientId=pat-1&orderId=ord-1-hd
-
-### 7. The payer configuration with its DTR mode
-GET {{gateway}}/payers/1001

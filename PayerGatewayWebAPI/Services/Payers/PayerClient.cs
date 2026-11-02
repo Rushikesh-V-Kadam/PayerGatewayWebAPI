@@ -17,7 +17,7 @@ namespace PayerGatewayWebAPI.Services.Payers;
 /// (base URL, paths, timeouts). No authentication is added to payer calls. Endpoints called:
 ///   CRD   GET  {cds}                  discovery          POST {cds}/{serviceId}         order-sign hook call
 ///   DTR   POST {fhir}/Questionnaire/$questionnaire-package, Questionnaire/$next-question
-///   PAS   POST {fhir}/Claim/$submit, Claim/$inquire, Subscription
+///   PAS   POST {fhir}/Claim/$submit, Claim/$inquire
 ///   CDex  GET  {fhir}/Task?owner=...  POST {fhir}/$submit-attachment
 /// </summary>
 public class PayerClient

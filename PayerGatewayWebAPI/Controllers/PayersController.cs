@@ -50,7 +50,6 @@ public class PayersController : ControllerBase
         summary.PayerName = payer.PayerName;
         summary.Enabled = payer.Enabled;
         summary.BaseUrl = payer.BaseUrl;
-        summary.DtrMode = payer.UsesSmartApp() ? "SmartApp" : "Forms";
         return Ok(summary);
     }
 

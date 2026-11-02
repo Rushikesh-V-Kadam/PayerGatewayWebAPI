@@ -24,19 +24,4 @@ public class InMemoryPriorAuthRepository : IPriorAuthRepository
         _requests[record.RequestId] = record;
         return Task.CompletedTask;
     }
-
-    /// <summary>The requests still waiting for a payer decision, optionally of one payer.</summary>
-    public Task<List<PriorAuthRecord>> GetOpenAsync(int? insurancePlanId, CancellationToken ct)
-    {
-        List<PriorAuthRecord> open = new List<PriorAuthRecord>();
-        foreach (PriorAuthRecord record in _requests.Values)
-        {
-            bool payerMatches = insurancePlanId == null || record.InsurancePlanId == insurancePlanId.Value;
-            if (record.IsOpen() && payerMatches)
-            {
-                open.Add(record);
-            }
-        }
-        return Task.FromResult(open);
-    }
 }

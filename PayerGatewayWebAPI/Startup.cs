@@ -25,11 +25,9 @@ namespace PayerGatewayWebAPI;
 ///
 ///   STEP 0  Payers   GET  /payers/{insurancePlanId}, POST /payers/{insurancePlanId}/discover
 ///   STEP 1  CRD      POST /crd/order-sign
-///   STEP 2  DTR      POST /dtr/forms, GET /dtr/forms/{formId}, POST /dtr/forms/{formId}/answers
-///                    payer SMART apps: GET /dtr/launch/{linkId}, GET /dtr/saved-forms, relay endpoints
-///   STEP 3  PAS      POST /pas/requests, PUT / cancel / GET / inquire, POST /pas/notifications/{insurancePlanId}
-///   STEP 4  CDex     GET  /cdex/requests/{requestId}/information-requests, POST .../attachments,
-///                    POST /cdex/tasks/{insurancePlanId}
+///   STEP 2  DTR      SMART App Launch of the payer DTR app: GET /dtr/launch/{linkId}, GET /dtr/saved-forms
+///   STEP 3  PAS      POST /pas/requests, PUT / cancel / GET / inquire (no Subscription: the client EHR's job inquires)
+///   STEP 4  CDex     GET  /cdex/requests/{requestId}/information-requests, POST .../attachments (no payer push)
 /// </summary>
 public class Startup
 {
@@ -75,18 +73,14 @@ public class Startup
         if (storage.IsEhrApi())
         {
             services.AddSingleton<IDtrLinkRepository, EhrApiDtrLinkRepository>();
-            services.AddSingleton<IDtrFormRepository, EhrApiDtrFormRepository>();
             services.AddSingleton<IPriorAuthRepository, EhrApiPriorAuthRepository>();
             services.AddSingleton<ICdexTaskRepository, EhrApiCdexTaskRepository>();
-            services.AddSingleton<IPayerSubscriptionRepository, EhrApiPayerSubscriptionRepository>();
         }
         else
         {
             services.AddSingleton<IDtrLinkRepository, InMemoryDtrLinkRepository>();
-            services.AddSingleton<IDtrFormRepository, InMemoryDtrFormRepository>();
             services.AddSingleton<IPriorAuthRepository, InMemoryPriorAuthRepository>();
             services.AddSingleton<ICdexTaskRepository, InMemoryCdexTaskRepository>();
-            services.AddSingleton<IPayerSubscriptionRepository, InMemoryPayerSubscriptionRepository>();
         }
 
         // ------------------------------------------------------------ 5. workflow services (one instance per request)
@@ -94,7 +88,6 @@ public class Startup
         services.AddScoped<CrdService>();
         services.AddScoped<DtrService>();
         services.AddScoped<PasBundleBuilder>();
-        services.AddScoped<PasSubscriptionService>();
         services.AddScoped<FacilityResolver>();
         services.AddScoped<PasService>();
         services.AddScoped<CdexService>();
@@ -108,7 +101,7 @@ public class Startup
         services.AddExceptionHandler<ApiExceptionHandler>();
         services.AddProblemDetails();
 
-        // The SMART DTR app (future) runs in a browser and calls the relay endpoints. Restrict origins in production.
+        // No browser app calls the gateway with scripts (the DTR launch link is a normal page open). Restrict origins in production.
         services.AddCors(ConfigureCors);
 
         // ------------------------------------------------------------ 7. Swagger
@@ -137,7 +130,7 @@ public class Startup
         client.Timeout = Timeout.InfiniteTimeSpan;
     }
 
-    /// <summary>Accepts "application/fhir+json" request bodies (payer notifications, pushed Tasks, DTR app relay).</summary>
+    /// <summary>Accepts "application/fhir+json" request bodies.</summary>
     private static void ConfigureMvc(MvcOptions options)
     {
         // Only [Required] fields are required (services check the rest and return clear messages)
@@ -175,14 +168,16 @@ public class Startup
         OpenApiInfo info = new OpenApiInfo();
         info.Title = "Payer Gateway Web API";
         info.Version = "v1";
+        // Swagger shows the description as Markdown
         info.Description =
-            "Da Vinci prior authorization for the EHR. Call order: " +
-            "1) POST /crd/order-sign  2) DTR forms (when documentation is needed)  " +
-            "3) POST /pas/requests (when prior auth is needed)  4) CDex attachments (when the payer pends and asks for more). " +
-            "Every EHR request carries insurancePlanId (the insurance plan id); the gateway reads that payer's configuration (table PA_PAYER). " +
-            "All gateway data is stored in the EHR database through the EHR data API, so decisions are not written back separately. " +
-            "No authentication is built in (it is added outside this code). " +
-            "Errors always return { \"error\": \"...\", \"details\": [ ... ], \"traceId\": \"...\" }.";
+            "Prior authorization between the EHR and the payers.\n\n" +
+            "**Steps**\n" +
+            "1. **CRD** - `POST /crd/order-sign`: does the order need prior authorization or documentation?\n" +
+            "2. **DTR** - when documentation is needed, open the link from order-sign; the payer's app collects the answers.\n" +
+            "3. **PAS** - `POST /pas/requests`: send the prior authorization request. For a pended request, call `inquire` later.\n" +
+            "4. **CDex** - when the payer asks for more, send the documents with `attachments`.\n\n" +
+            "Every request names the payer with `insurancePlanId`. All data is saved in the EHR database.\n\n" +
+            "Errors always look like `{ \"error\": \"...\", \"details\": [ ... ], \"traceId\": \"...\" }`.";
         options.SwaggerDoc("v1", info);
 
         string xmlFile = Path.Combine(AppContext.BaseDirectory, "PayerGatewayWebAPI.xml");

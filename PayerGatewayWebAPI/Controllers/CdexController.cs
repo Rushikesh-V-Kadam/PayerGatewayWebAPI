@@ -1,7 +1,5 @@
 using System.ComponentModel.DataAnnotations;
-using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
-using PayerGatewayWebAPI.Constants;
 using PayerGatewayWebAPI.Models.Requests;
 using PayerGatewayWebAPI.Models.Responses;
 using PayerGatewayWebAPI.Services.Cdex;
@@ -9,8 +7,8 @@ using PayerGatewayWebAPI.Services.Cdex;
 namespace PayerGatewayWebAPI.Controllers;
 
 /// <summary>
-/// STEP 4 - CDex (additional documents for a pended prior auth). What the payer asked for, sending documents / forms,
-/// and the endpoint a payer uses to push its information requests (Tasks).
+/// STEP 4 - CDex (additional documents for a pended prior auth). What the payer asked for (searched at the payer when
+/// the client EHR's job asks with refresh=true) and sending documents / forms. Payers never call the gateway.
 /// </summary>
 [ApiController]
 [Route("cdex")]
@@ -28,7 +26,7 @@ public class CdexController : ControllerBase
     /// <summary>Documents / forms the payer asked for on a pended request.</summary>
     /// <remarks>
     /// Each information request lists LOINC document types (documentsNeeded) and / or questionnaires (questionnairesNeeded).
-    /// For questionnaires: POST /dtr/forms with those URLs, answer them, then send the questionnaireResponseId.
+    /// For questionnaires: fill them in with the payer's SMART DTR app, find the saved form with GET /dtr/saved-forms, then send its questionnaireResponseId.
     /// </remarks>
     /// <param name="requestId">EHR prior auth request id.</param>
     /// <param name="refresh">true = search the payer's Tasks now (the gateway has no background job; the client EHR calls this with refresh=true for each pended request). false = return what is stored.</param>
@@ -72,25 +70,5 @@ public class CdexController : ControllerBase
     {
         AttachmentResult result = await _cdex.SubmitAttachmentsAsync(requestId, request, ct);
         return Ok(result);
-    }
-
-    /// <summary>Called BY THE PAYER to push a Task (or a Bundle of Tasks) asking for more information.</summary>
-    /// <param name="insurancePlanId">The EHR's insurance plan id of the payer (the one the gateway put in this address).</param>
-    /// <param name="body">A FHIR Task or a Bundle of Tasks.</param>
-    /// <param name="ct">Cancelled when the caller disconnects.</param>
-    /// <response code="202">Accepted.</response>
-    /// <response code="400">Not a Task or a Bundle of Tasks, or the Task is not valid FHIR.</response>
-    /// <response code="404">No payer is configured or enabled for this insurance plan id.</response>
-    /// <response code="422">The Task is not about a request sent by this gateway.</response>
-    [HttpPost("tasks/{insurancePlanId:int}")]
-    [Consumes(ApiHeaders.FhirJson, ApiHeaders.Json)]
-    [ProducesResponseType(typeof(NotificationResult), StatusCodes.Status202Accepted)]
-    [ProducesResponseType(typeof(ApiError), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
-    [ProducesResponseType(typeof(ApiError), StatusCodes.Status422UnprocessableEntity)]
-    public async Task<ActionResult<NotificationResult>> ReceiveTasks(int insurancePlanId, [FromBody] JsonObject? body, CancellationToken ct)
-    {
-        NotificationResult result = await _cdex.ReceivePushedTasksAsync(insurancePlanId, body, ct);
-        return Accepted(result);
     }
 }

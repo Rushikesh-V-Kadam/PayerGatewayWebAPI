@@ -26,7 +26,7 @@ public class CrdController : ControllerBase
     /// insurancePlanId, and reads pa-needed / doc-needed from the payer's answer.
     ///
     /// What to do with each decision:
-    /// - **callDtr = true** → POST /dtr/forms with questionnaireUrls and coverageAssertionId, then send the answers.
+    /// - **callDtr = true** → open the message link (type "smart", /dtr/launch/{linkId}) in a browser: the payer's SMART DTR app starts and saves the form at the FHIR API. GET /dtr/saved-forms shows it.
     /// - **callPas = true** → POST /pas/requests (after DTR when both are true).
     /// - both false → nothing more is needed for that order.
     ///
@@ -34,7 +34,7 @@ public class CrdController : ControllerBase
     /// Orders are service orders and medication orders (FHIR ServiceRequest / MedicationRequest).
     /// Every call asks the payer again; sending the same eventId again (for example after a timeout) gets a fresh answer.
     /// The gateway does not save the decisions: the EHR stores this response and sends the values DTR and PAS need
-    /// (insurancePlanId, coverageId, questionnaireUrls, coverageAssertionId) in those requests.
+    /// (insurancePlanId, coverageId) in the PAS request.
     /// </remarks>
     /// <param name="request">Required. The signing event: eventId, insurancePlanId, patientId and orderIds must be filled.</param>
     /// <param name="ct">Cancelled when the caller disconnects.</param>

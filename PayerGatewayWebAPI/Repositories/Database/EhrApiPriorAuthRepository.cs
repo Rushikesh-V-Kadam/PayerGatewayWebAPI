@@ -12,7 +12,6 @@ namespace PayerGatewayWebAPI.Repositories.Database;
 /// <summary>
 /// Prior auth requests in the EHR database, through the EHR data API (table PA_PRIOR_AUTH):
 ///   prior-auths/{requestId}                      one request (GET, PUT)
-///   prior-auths?status=pended[&amp;insurancePlanId=...]    requests still waiting for the payer
 /// The EHR reads the decision from the same table, so no separate write-back is needed.
 /// </summary>
 public class EhrApiPriorAuthRepository : IPriorAuthRepository
@@ -41,24 +40,6 @@ public class EhrApiPriorAuthRepository : IPriorAuthRepository
     {
         record.UpdatedAt = DateTime.UtcNow;
         await _ehr.PutAsync("prior-auths/" + EhrDataClient.Esc(record.RequestId), ToRow(record), ct);
-    }
-
-    /// <summary>The requests still waiting for a payer decision: GET prior-auths?status=pended, optionally of one payer.</summary>
-    public async Task<List<PriorAuthRecord>> GetOpenAsync(int? insurancePlanId, CancellationToken ct)
-    {
-        string path = "prior-auths?status=" + DecisionStatus.Pended;
-        if (insurancePlanId != null)
-        {
-            path = path + "&insurancePlanId=" + insurancePlanId.Value.ToString(CultureInfo.InvariantCulture);
-        }
-
-        List<PriorAuthRow> rows = await _ehr.GetListAsync<PriorAuthRow>(path, ct);
-        List<PriorAuthRecord> records = new List<PriorAuthRecord>();
-        foreach (PriorAuthRow row in rows)
-        {
-            records.Add(ToRecord(row));
-        }
-        return records;
     }
 
     /// <summary>Record -> row: lists, the decision and the Bundles become JSON text.</summary>

@@ -14,11 +14,6 @@ public static class PasCodes
     public const string PayerUrl = "payer-url";
     public const string Added = "added";
 
-    // PAS Subscription (R5 Backport)
-    public const string SubscriptionTopic = "http://hl7.org/fhir/us/davinci-pas/SubscriptionTopic/PASSubscriptionTopic";
-    public const string BackportFilterCriteria = "http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-filter-criteria";
-    public const string BackportPayloadContent = "http://hl7.org/fhir/uv/subscriptions-backport/StructureDefinition/backport-payload-content";
-
     // priority values the EHR sends
     public const string PriorityRoutine = "routine";
     public const string PriorityUrgent = "urgent";

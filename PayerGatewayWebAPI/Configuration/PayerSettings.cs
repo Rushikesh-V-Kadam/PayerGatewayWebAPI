@@ -7,7 +7,7 @@ namespace PayerGatewayWebAPI.Configuration;
 /// Every payer is called the same way; only these values differ:
 ///   CRD   {BaseUrl}/{CdsServicesPath}            e.g. http://localhost:5080/cds-services
 ///   DTR   {BaseUrl}/{FhirPath}/Questionnaire/$questionnaire-package
-///   PAS   {BaseUrl}/{FhirPath}/Claim/$submit, Claim/$inquire, Subscription
+///   PAS   {BaseUrl}/{FhirPath}/Claim/$submit, Claim/$inquire
 ///   CDex  {BaseUrl}/{FhirPath}/$submit-attachment, Task
 ///
 /// InsurancePlanId, PayerName and BaseUrl must be filled for the gateway to call the payer.
@@ -55,22 +55,11 @@ public class PayerSettings
     /// <summary>Optional. FHIR path under BaseUrl. Empty = "fhir"; "/" = no extra path.</summary>
     public string FhirPath { get; set; } = DefaultFhirPath;
 
-    /// <summary>Optional (default true). Create a PAS Subscription so the payer notifies us when a pended request is decided.</summary>
-    public bool UseSubscriptions { get; set; } = true;
-
     /// <summary>Optional. CRD must be fast (the clinician is waiting): seconds before giving up. 0 or less = 5.</summary>
     public int CrdTimeoutSeconds { get; set; } = DefaultCrdTimeoutSeconds;
 
     /// <summary>Optional. Timeout of every other payer call, in seconds. 0 or less = 30.</summary>
     public int TimeoutSeconds { get; set; } = DefaultTimeoutSeconds;
-
-    /// <summary>
-    /// Optional. How the clinician fills in the payer's questionnaires:
-    ///   "Forms"    the gateway gets the questionnaire and the EHR shows it (POST /dtr/forms; our questionnaire app)
-    ///   "SmartApp" the payer's own SMART DTR app is opened from the CRD message link (/dtr/launch/{linkId})
-    /// Any other value, or an empty one, is treated as Forms.
-    /// </summary>
-    public string DtrMode { get; set; } = "Forms";
 
     /// <summary>
     /// Optional. Launch URL of the payer's SMART DTR app. Empty = the URL on the payer's CRD card (normal case).
@@ -105,15 +94,6 @@ public class PayerSettings
         if (TimeoutSeconds <= 0)
         {
             TimeoutSeconds = DefaultTimeoutSeconds;
-        }
-
-        if (UsesSmartApp())
-        {
-            DtrMode = "SmartApp";
-        }
-        else
-        {
-            DtrMode = "Forms";
         }
 
         if (string.IsNullOrWhiteSpace(DtrAppLaunchUrl))
@@ -152,13 +132,6 @@ public class PayerSettings
             return "baseUrl (BASE_URL) '" + BaseUrl + "' is not a complete http or https address";
         }
         return null;
-    }
-
-    /// <summary>True when the payer's own SMART DTR app is used (DtrMode = "SmartApp").</summary>
-    public bool UsesSmartApp()
-    {
-        string mode = (DtrMode ?? string.Empty).Trim();
-        return string.Equals(mode, "SmartApp", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>{BaseUrl}/{CdsServicesPath}, or BaseUrl alone when the path is "/".</summary>

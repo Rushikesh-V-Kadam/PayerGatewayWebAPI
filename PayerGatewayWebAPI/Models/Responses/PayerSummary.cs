@@ -16,11 +16,4 @@ public class PayerSummary
 
     /// <example>http://localhost:5080</example>
     public string BaseUrl { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Forms = the EHR shows the questionnaire (POST /dtr/forms); SmartApp = open the link of the CRD message,
-    /// which starts the payer's own SMART DTR app.
-    /// </summary>
-    /// <example>Forms</example>
-    public string DtrMode { get; set; } = "Forms";
 }

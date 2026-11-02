@@ -24,7 +24,8 @@ namespace PayerGatewayWebAPI.Services.Pas;
 ///   update  : same, with the Claim Update profile; removed orders are sent as cancelled lines
 ///   cancel  : every line sent as cancelled
 ///   inquire : POST {payer}/Claim/$inquire to get the latest decision of a pended request
-///   notification : the payer says something changed -> inquire the payer's open requests
+/// There is no PAS Subscription and no payer callback: for a pended request the client EHR runs its own job and calls
+/// POST /pas/requests/{requestId}/inquire from time to time until the payer has decided.
 /// A pended request can also get a payer information request (Task) -> STEP 4, CdexService.
 ///
 /// The payer can refuse a request in two ways, and both are handled the same (422, nothing saved, the EHR corrects
@@ -43,7 +44,6 @@ public class PasService
     private readonly PayerRegistry _payers;
     private readonly PayerClient _payerClient;
     private readonly PasBundleBuilder _builder;
-    private readonly PasSubscriptionService _subscriptions;
     private readonly FacilityResolver _facilities;
     private readonly IPriorAuthRepository _repository;
     private readonly WorkflowSettings _workflow;
@@ -51,13 +51,12 @@ public class PasService
 
     /// <summary>Created by dependency injection.</summary>
     public PasService(FhirApiClient fhir, PayerRegistry payers, PayerClient payerClient, PasBundleBuilder builder,
-        PasSubscriptionService subscriptions, FacilityResolver facilities, IPriorAuthRepository repository, IOptions<WorkflowSettings> workflow, ILogger<PasService> logger)
+        FacilityResolver facilities, IPriorAuthRepository repository, IOptions<WorkflowSettings> workflow, ILogger<PasService> logger)
     {
         _fhir = fhir;
         _payers = payers;
         _payerClient = payerClient;
         _builder = builder;
-        _subscriptions = subscriptions;
         _facilities = facilities;
         _repository = repository;
         _workflow = workflow.Value;
@@ -155,12 +154,12 @@ public class PasService
         }
 
         // The NPI is optional in the PAS Requestor profile (identifier:NPI 0..*, must support): it is sent when the
-        // organization has one. Without it the payer cannot be asked to notify us (PAS Subscription) and cannot be
-        // searched for information requests (CDex Task?owner=NPI); POST .../inquire (called by the client EHR) still finds the decision.
+        // organization has one. Without it the payer cannot be searched for information requests (CDex Task?owner=NPI);
+        // POST .../inquire (called by the client EHR's job) still finds the decision.
         string? organizationNpi = ReadNpi(organization);
         if (organizationNpi == null)
         {
-            _logger.LogWarning("Organization {OrganizationId} has no NPI: request {RequestId} is sent without it; PAS Subscription and CDex Task search are skipped",
+            _logger.LogWarning("Organization {OrganizationId} has no NPI: request {RequestId} is sent without it; CDex Task search is skipped",
                 organizationId, request.RequestId);
         }
 
@@ -277,12 +276,7 @@ public class PasService
         record.LineNumbers = lineNumbers;
         await ApplyResponseAsync(record, bundle, result, claimResponse, false);
 
-        // never fails the request: a subscription problem is only logged (see PasSubscriptionService).
-        // The payer filters notifications by organization NPI, so there is no subscription without one.
-        if (organizationNpi != null)
-        {
-            await _subscriptions.EnsureSubscribedAsync(payer, organizationNpi, ct);
-        }
+        // No PAS Subscription: a pended decision is found when the client EHR's job calls POST .../inquire.
         return record.Decision;
     }
 
@@ -431,45 +425,9 @@ public class PasService
     }
 
     /// <summary>
-    /// A PAS Subscription notification from a payer. The payload is id-only (it does not say which request changed),
-    /// so every open request of that payer is inquired. Handshake / heartbeat notifications need no action.
-    /// </summary>
-    public async Task<NotificationResult> HandleNotificationAsync(int insurancePlanId, JsonObject? body, CancellationToken ct)
-    {
-        PayerSettings payer = await _payers.GetRequiredAsync(insurancePlanId, 404, ct);
-
-        NotificationResult outcome = new NotificationResult();
-        string type;
-        try
-        {
-            type = NotificationType(body);
-        }
-        catch (JsonException ex)
-        {
-            // the sender's mistake, so 400 (a payer must not keep re-sending the same body)
-            throw new ApiException(400, "The notification is not a valid FHIR Bundle: " + ex.Message);
-        }
-        if (type == "handshake" || type == "heartbeat")
-        {
-            outcome.Status = type;
-            return outcome;
-        }
-
-        List<PriorAuthRecord> open = await _repository.GetOpenAsync(payer.InsurancePlanId, ct);
-        foreach (PriorAuthRecord request in open)
-        {
-            await TryInquireAsync(request.RequestId, ct);
-        }
-        outcome.Status = open.Count + " open request(s) checked";
-        outcome.Count = open.Count;
-        return outcome;
-    }
-
-    /// <summary>
     /// Runs InquireAsync and returns the decision, or null when the inquiry failed. A failure (the payer, the FHIR API
     /// or the EHR data API did not work, or stored data could not be read) is written to the log and not passed on.
-    /// Used where the inquiry is an extra step that must not fail the main work: after a payer notification (the
-    /// other open requests must still be checked) and after attachments were sent.
+    /// Used where the inquiry is an extra step that must not fail the main work: after attachments were sent.
     /// </summary>
     public async Task<PriorAuthDecision?> TryInquireAsync(string requestId, CancellationToken ct)
     {
@@ -759,32 +717,6 @@ public class PasService
         }
         Claim? claim = FhirJson.Read<Claim>(bundle.Entry[0].Resource);
         return claim ?? new Claim();
-    }
-
-    /// <summary>The "type" of a notification (from its SubscriptionStatus Parameters): handshake | heartbeat | event-notification.</summary>
-    private static string NotificationType(JsonObject? body)
-    {
-        Bundle? bundle = FhirJson.Read<Bundle>(body);
-        if (bundle == null)
-        {
-            return "event-notification";
-        }
-        foreach (JsonObject raw in bundle.ResourcesOfType("Parameters"))
-        {
-            Parameters? status = FhirJson.Read<Parameters>(raw);
-            if (status == null)
-            {
-                continue;
-            }
-            foreach (ParametersParameter parameter in status.Parameter)
-            {
-                if (parameter.Name == "type" && parameter.ValueCode != null)
-                {
-                    return parameter.ValueCode;
-                }
-            }
-        }
-        return "event-notification";
     }
 
     /// <summary>The stored request, or 404.</summary>

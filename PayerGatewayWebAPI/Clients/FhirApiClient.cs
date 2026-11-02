@@ -13,13 +13,16 @@ namespace PayerGatewayWebAPI.Clients;
 
 /// <summary>
 /// Talks to the FHIR API (the gateway never calls the EHR's read APIs itself).
-///   GET  {fhir}/{type}/{id}, {fhir}/{type}?...     Patient, Coverage, orders, Organization, documents, forms
-///   PUT  {fhir}/QuestionnaireResponse/{id}          saves a DTR form built by the gateway
+///   GET  {fhir}/{type}/{id}, {fhir}/{type}?...     Patient, Coverage, orders, Organization, documents, forms saved by SMART DTR apps
 ///   POST {root}/internal/access-tokens              fhirAuthorization token for the payer (CRD)
 ///   POST {root}/internal/smart-launches             SMART launch for a payer DTR app
+/// Every call sends FhirApi:ApiKey in the X-Api-Key header (when set): the FHIR API's key for this gateway.
 /// </summary>
 public class FhirApiClient
 {
+    /// <summary>Header that carries FhirApi:ApiKey (the FHIR API's Security:InternalApiKey).</summary>
+    private const string ApiKeyHeader = "X-Api-Key";
+
     private readonly IHttpClientFactory _httpFactory;
     private readonly FhirApiSettings _settings;
 
@@ -203,34 +206,6 @@ public class FhirApiClient
         return document;
     }
 
-    // ================================================================== DTR forms
-
-    /// <summary>
-    /// PUT {fhir}/QuestionnaireResponse/{id}: creates or replaces a DTR form. The FHIR API stores it in the EHR
-    /// database (table PA_QUESTIONNAIRE_RESPONSE) and copies it to the EHR chart. Returns the stored resource.
-    /// </summary>
-    public async Task<JsonObject> SaveQuestionnaireResponseAsync(JsonObject questionnaireResponse, CancellationToken ct)
-    {
-        string? id = FhirJson.Id(questionnaireResponse);
-        if (string.IsNullOrEmpty(id))
-        {
-            throw new FhirApiException("A QuestionnaireResponse needs an id before it can be saved.");
-        }
-
-        string url = GetBaseUrl() + "/QuestionnaireResponse/" + Uri.EscapeDataString(id);
-        HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Put, url);
-        request.Content = new StringContent(questionnaireResponse.ToJsonString(), Encoding.UTF8, ApiHeaders.FhirJson);
-        request.Headers.Add("Accept", ApiHeaders.FhirJson);
-
-        string text = await SendAsync(request, "PUT QuestionnaireResponse/" + id, false, ct);
-        JsonObject? saved = ParseObject(text);
-        if (saved == null)
-        {
-            return questionnaireResponse;
-        }
-        return saved;
-    }
-
     // ================================================================== /internal
 
     /// <summary>
@@ -248,8 +223,9 @@ public class FhirApiClient
 
     /// <summary>
     /// Creates a SMART launch for a payer DTR app. Returns the launch id and iss (the FHIR R4 base URL).
+    /// insurancePlanId: only that payer's registered SMART app may use the launch.
     /// </summary>
-    public async Task<SmartLaunchResult> CreateSmartLaunchAsync(string patientId, string? userPractitionerId,
+    public async Task<SmartLaunchResult> CreateSmartLaunchAsync(int insurancePlanId, string patientId, string? userPractitionerId,
         string? encounterId, List<string> fhirContext, string? appContext, CancellationToken ct)
     {
         JsonArray contextArray = new JsonArray();
@@ -260,6 +236,7 @@ public class FhirApiClient
 
         JsonObject body = new JsonObject();
         body["patientId"] = patientId;
+        body["insurancePlanId"] = insurancePlanId;
         body["userPractitionerId"] = userPractitionerId;
         body["encounterId"] = encounterId;
         body["fhirContext"] = contextArray;
@@ -322,6 +299,10 @@ public class FhirApiClient
         using (request)
         using (CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
+            if (!string.IsNullOrEmpty(_settings.ApiKey))
+            {
+                request.Headers.Add(ApiKeyHeader, _settings.ApiKey);
+            }
             timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds)));
             HttpClient http = _httpFactory.CreateClient();
             try

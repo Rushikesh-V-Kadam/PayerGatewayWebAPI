@@ -51,12 +51,14 @@ CREATE TABLE PA_PAYER (
     AUTH_CLIENT_SECRET       VARCHAR2(500),                         -- auth layer only. SENSITIVE - see the note below
     AUTH_SCOPE               VARCHAR2(500),                         -- auth layer only
     SIGN_CDS_HOOKS_REQUESTS  NUMBER(1)      DEFAULT 1 NOT NULL,     -- auth layer only: 1 = sign each CDS Hooks call
-    USE_SUBSCRIPTIONS        NUMBER(1)      DEFAULT 1 NOT NULL,     -- 1 = ask the payer to notify us about decisions
-    NOTIFICATION_SECRET      VARCHAR2(200),                         -- auth layer only: secret the payer sends on notifications. SENSITIVE
+    USE_SUBSCRIPTIONS        NUMBER(1)      DEFAULT 0 NOT NULL,     -- not read: the gateway makes no PAS Subscription (the client EHR's job inquires)
+    NOTIFICATION_SECRET      VARCHAR2(200),                         -- not used: payers never call the gateway (no PAS notifications, no pushed CDex Tasks). SENSITIVE
     CRD_TIMEOUT_SECONDS      NUMBER(4),                             -- empty or 0 = gateway default (5)
     TIMEOUT_SECONDS          NUMBER(4),                             -- empty or 0 = gateway default (30)
-    -- DTR (questionnaire) settings. Every payer works in FHIR R4.
-    DTR_MODE                 VARCHAR2(10)   DEFAULT 'Forms' NOT NULL, -- Forms = EHR shows the questions | SmartApp = payer's own SMART DTR app
+    -- DTR settings: every payer's questionnaire is filled in with its SMART DTR app (SMART App Launch). FHIR R4.
+    -- DTR_MODE: only SmartApp is supported now (the gateway does not read the column). Forms (the EHR shows the
+    -- questions) is kept in the check so the earlier Forms code (E:\FHIR\PayerGatewayWebAPI_dtrForm) works without an ALTER.
+    DTR_MODE                 VARCHAR2(10)   DEFAULT 'SmartApp' NOT NULL, -- SmartApp = payer's own SMART DTR app
     DTR_APP_LAUNCH_URL       VARCHAR2(500),                         -- payer app launch URL; empty = the URL on the payer's CRD card
     CONSTRAINT PK_PA_PAYER PRIMARY KEY (INSURANCE_PLAN_ID),
     CONSTRAINT CK_PA_PAYER_ENABLED CHECK (ENABLED IN (0, 1)),
@@ -74,9 +76,9 @@ CREATE TABLE PA_PAYER (
 -- Example: the smallest row that works (everything else uses the defaults)
 -- INSERT INTO PA_PAYER (INSURANCE_PLAN_ID, PAYER_NAME, BASE_URL) VALUES (2001, 'AcmeHealth', 'https://api.acmehealth.example');
 
--- Example: a payer with its own SMART DTR app
--- INSERT INTO PA_PAYER (INSURANCE_PLAN_ID, PAYER_NAME, BASE_URL, DTR_MODE)
--- VALUES (2001, 'AcmeHealth', 'https://api.acmehealth.example', 'SmartApp');
+-- Example: a payer whose SMART DTR app has a fixed launch URL
+-- INSERT INTO PA_PAYER (INSURANCE_PLAN_ID, PAYER_NAME, BASE_URL, DTR_APP_LAUNCH_URL)
+-- VALUES (2001, 'AcmeHealth', 'https://api.acmehealth.example', 'https://dtr.acmehealth.example/launch');
 
 -- Example: the local mock payer used for testing (every column filled).
 -- INSURANCE_PLAN_ID must be the insurance plan id the EHR uses for the test patients' insurance.
@@ -86,39 +88,17 @@ CREATE TABLE PA_PAYER (
 --                       CRD_TIMEOUT_SECONDS, TIMEOUT_SECONDS, DTR_MODE, DTR_APP_LAUNCH_URL)
 -- VALUES (1001, 'MockPayer', 1, 'http://localhost:5080', 'cds-services', 'fhir',
 --         'none', NULL, NULL, NULL, NULL,
---         1, 1, NULL,
---         10, 30, 'Forms', NULL);
+--         1, 0, NULL,
+--         10, 30, 'SmartApp', NULL);
 
 -- ------------------------------------------------------------------ STEP 1: CRD (order-sign)
 -- No table. The gateway does not save the order-sign decisions: the EHR stores the order-sign response on its side.
--- DTR and PAS do not read the decisions back; the EHR sends the values they need (insurancePlanId, coverageId,
--- questionnaireUrls, coverageAssertionId) in its DTR and PAS requests.
+-- PAS does not read the decisions back; the EHR sends the values it needs (insurancePlanId, coverageId) in its
+-- PAS requests.
 -- The payer SMART DTR app links that order-sign creates are kept in PA_DTR_LINK (STEP 2).
 
 -- ------------------------------------------------------------------ STEP 2: DTR
--- Payer questionnaires fetched for orders (POST /dtr/forms) and their latest plain answers.
-CREATE TABLE PA_DTR_FORM (
-    FORM_ID                    VARCHAR2(64)   NOT NULL,
-    INSURANCE_PLAN_ID       NUMBER(10)     NOT NULL,   -- payer of the questionnaire (= PA_PAYER.INSURANCE_PLAN_ID)
-    PATIENT_ID                 VARCHAR2(64)   NOT NULL,
-    COVERAGE_ID                VARCHAR2(64),
-    ORDER_IDS_JSON             CLOB,                      -- ["ord-1001"]
-    QUESTIONNAIRE_URL          VARCHAR2(1000) NOT NULL,
-    QUESTIONNAIRE_JSON         CLOB           NOT NULL,   -- the payer's FHIR Questionnaire
-    STATUS                     VARCHAR2(20)   NOT NULL,   -- new | in-progress | completed
-    QUESTIONNAIRE_RESPONSE_ID  VARCHAR2(64),              -- = PA_QUESTIONNAIRE_RESPONSE.ID
-    ANSWERS_JSON               CLOB,                      -- [{"linkId":"egfr","values":["12"]}]
-    ADAPTIVE                   NUMBER(1)      DEFAULT 0 NOT NULL,   -- 1 = the payer adds questions step by step
-    PAYER_FINISHED             NUMBER(1)      DEFAULT 0 NOT NULL,   -- adaptive: 1 = the payer has no more questions
-    ADAPTIVE_RESPONSE_JSON     CLOB,                      -- adaptive: last FHIR QuestionnaireResponse from the payer
-    CREATED_AT                 TIMESTAMP      NOT NULL,   -- UTC
-    UPDATED_AT                 TIMESTAMP      NOT NULL,   -- UTC
-    CONSTRAINT PK_PA_DTR_FORM PRIMARY KEY (FORM_ID),
-    CONSTRAINT CK_PA_DTR_FORM_JSON CHECK (QUESTIONNAIRE_JSON IS JSON)
-);
-CREATE INDEX IX_PA_DTR_FORM_PAT ON PA_DTR_FORM (PATIENT_ID);
-
--- The filled-in forms in FHIR format (QuestionnaireResponse). Saved by the FHIR API; sent UNCHANGED to the
+-- The filled-in forms in FHIR format (QuestionnaireResponse), saved by the payer's SMART DTR app through the FHIR API; sent UNCHANGED to the
 -- payer with the prior authorization request, so RESOURCE_JSON must be returned exactly as stored.
 CREATE TABLE PA_QUESTIONNAIRE_RESPONSE (
     ID                 VARCHAR2(64)   NOT NULL,   -- FHIR id (QuestionnaireResponse.id)
@@ -178,19 +158,9 @@ CREATE TABLE PA_PRIOR_AUTH (
     CONSTRAINT PK_PA_PRIOR_AUTH PRIMARY KEY (REQUEST_ID),
     CONSTRAINT CK_PA_PRIOR_AUTH_DECISION CHECK (DECISION_JSON IS JSON)
 );
-CREATE INDEX IX_PA_PRIOR_AUTH_STATUS ON PA_PRIOR_AUTH (STATUS, INSURANCE_PLAN_ID);   -- GET prior-auths?status=pended
+CREATE INDEX IX_PA_PRIOR_AUTH_STATUS ON PA_PRIOR_AUTH (STATUS, INSURANCE_PLAN_ID);   -- the client EHR's job: WHERE STATUS = 'pended'
 CREATE INDEX IX_PA_PRIOR_AUTH_PAT    ON PA_PRIOR_AUTH (PATIENT_ID);
 CREATE INDEX IX_PA_PRIOR_AUTH_UPD    ON PA_PRIOR_AUTH (UPDATED_AT);            -- "what changed since my last check"
-
--- PAS Subscriptions the gateway created at payers (one per payer + provider organization NPI).
-CREATE TABLE PA_PAYER_SUBSCRIPTION (
-    INSURANCE_PLAN_ID  NUMBER(10)    NOT NULL,     -- payer (= PA_PAYER.INSURANCE_PLAN_ID)
-    ORGANIZATION_NPI  VARCHAR2(20)  NOT NULL,
-    SUBSCRIPTION_ID   VARCHAR2(100),
-    STATUS            VARCHAR2(10)  NOT NULL,         -- active | error
-    CREATED_AT        TIMESTAMP     NOT NULL,         -- UTC
-    CONSTRAINT PK_PA_PAYER_SUBSCRIPTION PRIMARY KEY (INSURANCE_PLAN_ID, ORGANIZATION_NPI)
-);
 
 -- ------------------------------------------------------------------ STEP 4: CDex
 -- Payer information requests (FHIR Tasks) received for our prior authorization requests.
@@ -208,6 +178,73 @@ CREATE TABLE PA_CDEX_TASK (
     CONSTRAINT CK_PA_CDEX_TASK_JSON CHECK (TASK_JSON IS JSON)
 );
 CREATE INDEX IX_PA_CDEX_TASK_REQUEST ON PA_CDEX_TASK (REQUEST_ID);   -- GET cdex-tasks?requestId=...
+
+-- ------------------------------------------------------------------ SMART APP LAUNCH and FHIR API ACCESS (FHIR API only)
+-- Read and saved by the FHIR API (not the gateway) when a payer's SMART DTR app is opened, and on every FHIR call
+-- that sends an access token. Tokens and codes are never stored as they are: the key is base64url(SHA-256(value)).
+
+-- Registered SMART apps (payers' DTR apps). MAINTAINED BY THE EHR TEAM, like PA_PAYER: the FHIR API only reads one
+-- row at a time (GET smart-clients/{clientId}) at every SMART authorize. To register a payer's app: insert a row.
+-- An app that is not in this table (or has ENABLED = 0) cannot get a token.
+CREATE TABLE PA_SMART_CLIENT (
+    CLIENT_ID           VARCHAR2(100)  NOT NULL,           -- the app's client_id, given to the payer
+    INSURANCE_PLAN_ID   NUMBER(10),                        -- payer of the app (= PA_PAYER.INSURANCE_PLAN_ID); NULL = any launch
+    CLIENT_NAME         VARCHAR2(200),                     -- shown in log lines
+    ENABLED             NUMBER(1)      DEFAULT 1 NOT NULL, -- 0 = blocked
+    REDIRECT_URIS_JSON  CLOB           NOT NULL,           -- ["https://dtr.payer.example/callback"]  exact match
+    ALLOWED_SCOPES      VARCHAR2(2000),                    -- space separated, exact strings; NULL = any scope it asks for
+    CONSTRAINT PK_PA_SMART_CLIENT PRIMARY KEY (CLIENT_ID),
+    CONSTRAINT CK_PA_SMART_CLIENT_URIS CHECK (REDIRECT_URIS_JSON IS JSON)
+);
+-- Example (local mock payer's test app):
+-- INSERT INTO PA_SMART_CLIENT (CLIENT_ID, INSURANCE_PLAN_ID, CLIENT_NAME, ENABLED, REDIRECT_URIS_JSON, ALLOWED_SCOPES)
+-- VALUES ('mock-payer-dtr-app', 1001, 'Mock payer DTR app (test)', 1, '["http://localhost:5300/callback"]', NULL);
+
+-- One row per opened DTR link (the EHR launch of a payer's app). Lives 15 minutes.
+CREATE TABLE PA_SMART_LAUNCH (
+    LAUNCH_ID             VARCHAR2(64)   NOT NULL,
+    INSURANCE_PLAN_ID     NUMBER(10),                  -- only this payer's app may use the launch; NULL = any
+    PATIENT_ID            VARCHAR2(64)   NOT NULL,
+    ENCOUNTER_ID          VARCHAR2(64),
+    USER_PRACTITIONER_ID  VARCHAR2(64),
+    FHIR_CONTEXT_JSON     CLOB,                        -- ["ServiceRequest/ord-1001","Coverage/cov-1001"]
+    APP_CONTEXT           CLOB,                        -- appContext from the payer's card (free text)
+    EXPIRES_AT            TIMESTAMP      NOT NULL,     -- UTC
+    CONSTRAINT PK_PA_SMART_LAUNCH PRIMARY KEY (LAUNCH_ID)
+);
+
+-- One-time authorization codes. Lives 2 minutes. DELETE smart-auth-codes/{codeHash} must return the row AND delete it
+-- in one statement, so a code can be used only once:
+--   DELETE FROM PA_SMART_AUTH_CODE WHERE CODE_HASH = :codeHash
+--   RETURNING CLIENT_ID, REDIRECT_URI, SCOPE, CODE_CHALLENGE, LAUNCH_ID, EXPIRES_AT INTO ...;   (no row = 404)
+CREATE TABLE PA_SMART_AUTH_CODE (
+    CODE_HASH       VARCHAR2(64)    NOT NULL,          -- base64url(SHA-256(code))
+    CLIENT_ID       VARCHAR2(100)   NOT NULL,          -- = PA_SMART_CLIENT.CLIENT_ID
+    REDIRECT_URI    VARCHAR2(1000)  NOT NULL,
+    SCOPE           VARCHAR2(2000)  NOT NULL,          -- granted scopes
+    CODE_CHALLENGE  VARCHAR2(128)   NOT NULL,          -- PKCE S256
+    LAUNCH_ID       VARCHAR2(64)    NOT NULL,          -- = PA_SMART_LAUNCH.LAUNCH_ID
+    EXPIRES_AT      TIMESTAMP       NOT NULL,          -- UTC
+    CONSTRAINT PK_PA_SMART_AUTH_CODE PRIMARY KEY (CODE_HASH)
+);
+
+-- Access tokens issued by the FHIR API: SMART app tokens (1 hour) and the CRD fhirAuthorization tokens given to
+-- payers (up to 15 minutes). Read by primary key on every FHIR call that sends a token.
+CREATE TABLE PA_ACCESS_TOKEN (
+    TOKEN_HASH  VARCHAR2(64)    NOT NULL,              -- base64url(SHA-256(token))
+    SUBJECT     VARCHAR2(200)   NOT NULL,              -- SMART client id, or payer name
+    SCOPE       VARCHAR2(2000)  NOT NULL,
+    PATIENT_ID  VARCHAR2(64),                          -- the only patient the token reaches; NULL = no limit
+    AUDIENCE    VARCHAR2(1000)  NOT NULL,              -- FHIR base URL the token is for
+    EXPIRES_AT  TIMESTAMP       NOT NULL,              -- UTC
+    CONSTRAINT PK_PA_ACCESS_TOKEN PRIMARY KEY (TOKEN_HASH)
+);
+
+-- Clean-up: launches, codes and tokens are useless after EXPIRES_AT (the FHIR API ignores them). Delete them with a
+-- scheduled job, e.g. every hour:
+--   DELETE FROM PA_SMART_AUTH_CODE WHERE EXPIRES_AT < SYS_EXTRACT_UTC(SYSTIMESTAMP);
+--   DELETE FROM PA_SMART_LAUNCH    WHERE EXPIRES_AT < SYS_EXTRACT_UTC(SYSTIMESTAMP);
+--   DELETE FROM PA_ACCESS_TOKEN    WHERE EXPIRES_AT < SYS_EXTRACT_UTC(SYSTIMESTAMP);
 
 -- =====================================================================================================
 -- QUERIES FOR THE EHR SCREENS (the EHR reads the tables directly; nothing is pushed to the EHR any more)
@@ -241,12 +278,12 @@ CREATE INDEX IX_PA_CDEX_TASK_REQUEST ON PA_CDEX_TASK (REQUEST_ID);   -- GET cdex
 --              NESTED PATH '$.documentsNeeded[*]' COLUMNS (LOINC_CODE VARCHAR2(20) PATH '$.loincCode'))) i
 --    WHERE p.REQUEST_ID = :requestId;
 --
--- Decisions that changed since the last check (a payer can decide days later; the gateway's background job
--- saves the new decision in the same row):
+-- Decisions that changed since the last check (a payer can decide days later; when the client EHR's job calls
+-- POST /pas/requests/{requestId}/inquire, the gateway saves the new decision in the same row):
 --   SELECT REQUEST_ID, STATUS, AUTHORIZATION_NUMBER, UPDATED_AT FROM PA_PRIOR_AUTH WHERE UPDATED_AT > :lastCheckUtc;
 --
--- Requests still waiting for the payer:
+-- Requests still waiting for the payer (the client EHR's job calls POST /pas/requests/{requestId}/inquire for each):
 --   SELECT REQUEST_ID, INSURANCE_PLAN_ID, SUBMITTED_AT FROM PA_PRIOR_AUTH WHERE STATUS = 'pended';
 --
 -- Forms not finished:
---   SELECT FORM_ID, PATIENT_ID, QUESTIONNAIRE_URL FROM PA_DTR_FORM WHERE STATUS <> 'completed';
+--   SELECT ID, PATIENT_ID, QUESTIONNAIRE_URL FROM PA_QUESTIONNAIRE_RESPONSE WHERE STATUS <> 'completed';

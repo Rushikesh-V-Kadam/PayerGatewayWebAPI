@@ -3,7 +3,7 @@ namespace PayerGatewayWebAPI.Models.Responses;
 /// <summary>
 /// CRD answer for one order. The gateway does not save it: the EHR stores the order-sign response on its side.
 /// What to do next:
-///   callDtr = true  -> DTR: POST /dtr/forms with questionnaireUrls, then POST .../answers
+///   callDtr = true  -> DTR: open the SMART DTR app link of the message (/dtr/launch/{linkId})
 ///   callPas = true  -> PAS: POST /pas/requests (after DTR when both are true)
 ///   both false      -> nothing more for this order (see covered / priorAuthNeeded)
 /// </summary>
@@ -47,7 +47,7 @@ public class CoverageDecision
     /// <example>[]</example>
     public List<string> InformationNeeded { get; set; } = new();
 
-    /// <summary>Payer questionnaires to fill in (pass them to POST /dtr/forms).</summary>
+    /// <summary>Payer questionnaires to fill in (the payer's SMART DTR app shows them; for information only).</summary>
     /// <example>["http://example.org/fhir/Questionnaire/dialysis-incenter-hd"]</example>
     public List<string> QuestionnaireUrls { get; set; } = new();
 

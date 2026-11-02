@@ -21,9 +21,9 @@ namespace PayerGatewayWebAPI.Services.Cdex;
 /// (the first clinical documents are already sent with PAS).
 ///
 ///   1. The payer creates a Task: LOINC document types and/or questionnaires needed, a tracking id and a due date.
-///   2. The gateway gets the Task - by searching the payer (GET {fhir}/Task?owner={organization NPI}), or the payer
-///      pushes it to /cdex/tasks/{insurancePlanId} - adds it to the decision's informationRequests and saves it
-///      (the EHR reads it from table PA_PRIOR_AUTH, column DECISION_JSON).
+///   2. The gateway gets the Task by searching the payer (GET {fhir}/Task?owner={organization NPI}) when the client
+///      EHR's job calls information-requests?refresh=true - payers never call the gateway - adds it to the decision's
+///      informationRequests and saves it (the EHR reads it from table PA_PRIOR_AUTH, column DECISION_JSON).
 ///   3. The EHR sends the documents / completed forms -> POST {fhir}/$submit-attachment with the tracking id.
 ///   4. The payer reviews again; the gateway runs $inquire and returns the new decision.
 /// </summary>
@@ -56,7 +56,8 @@ public class CdexService
 
     /// <summary>
     /// The information requests of a prior auth request. refresh = true searches the payer's Tasks now
-    /// (the client EHR does this for pended requests; there is no background job). Otherwise only Tasks the payer pushed are known.
+    /// (the client EHR's job does this for pended requests; there is no background job and no payer push). Otherwise the
+    /// Tasks found by earlier searches are returned.
     /// </summary>
     public async Task<List<InformationRequest>> GetInformationRequestsAsync(string requestId, bool refresh, CancellationToken ct)
     {
@@ -115,62 +116,6 @@ public class CdexService
             }
         }
         return matched;
-    }
-
-    /// <summary>A Task (or a Bundle of Tasks) pushed by the payer.</summary>
-    public async Task<NotificationResult> ReceivePushedTasksAsync(int insurancePlanId, JsonObject? body, CancellationToken ct)
-    {
-        PayerSettings payer = await _payers.GetRequiredAsync(insurancePlanId, 404, ct);
-
-        List<JsonObject> tasks = new List<JsonObject>();
-        string? type = FhirJson.ResourceType(body);
-        if (type == "Task" && body != null)
-        {
-            tasks.Add(body);
-        }
-        else if (type == "Bundle")
-        {
-            try
-            {
-                Bundle? bundle = FhirJson.Read<Bundle>(body);
-                if (bundle != null)
-                {
-                    tasks.AddRange(bundle.ResourcesOfType("Task"));
-                }
-            }
-            catch (JsonException ex)
-            {
-                // the sender's mistake, so 400 (a payer must not keep re-sending the same body)
-                throw new ApiException(400, "The Bundle is not valid FHIR: " + ex.Message);
-            }
-        }
-        else
-        {
-            throw new ApiException(400, "A Task or a Bundle of Tasks is expected.");
-        }
-
-        int matched = 0;
-        foreach (JsonObject raw in tasks)
-        {
-            FhirTask? task = ReadTask(raw);
-            if (task == null)
-            {
-                throw new ApiException(400, "A Task in the body is not valid FHIR (an element has the wrong type).");
-            }
-            if (await ProcessTaskAsync(payer, task, raw, ct))
-            {
-                matched++;
-            }
-        }
-        if (matched == 0)
-        {
-            throw new ApiException(422, "The Task does not match a prior authorization request sent by this gateway.");
-        }
-
-        NotificationResult outcome = new NotificationResult();
-        outcome.Status = "accepted";
-        outcome.Count = matched;
-        return outcome;
     }
 
     /// <summary>The typed view of a raw Task, or null when the JSON does not have the shape of a FHIR Task.</summary>

@@ -2,9 +2,9 @@
 
 **For the EHR team.** This is what the Payer Gateway needs from the EHR so that all prior authorization data is kept in the EHR's own Oracle database.
 
-- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (7 tables, all named `PA_...`). It is the only
+- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (11 tables, all named `PA_...`). It is the only
   script: no script has been run yet, so there are no ALTER scripts.
-- Web API to build: 15 small endpoints, described below. Each one reads or saves **one row of one table**.
+- Web API to build: 22 small endpoints, described below. Each one reads or saves **one row of one table**.
 - A working example of the whole API (in memory, for testing): `MockEhr.Api/Controllers/PriorAuthDataController.cs`.
 - Swagger file of the API (every endpoint and every property, with its meaning, column, example and required mark):
   `EHR-API-swagger.json`, next to this document. Open it in Swagger Editor or import it into Postman. The same document
@@ -14,11 +14,11 @@
 ## 1. How it fits together
 
 ```
-EHR screens ──(existing gateway API: order-sign, forms, prior auth)──▶ Payer Gateway ──(FHIR)──▶ Payer
+EHR screens ──(existing gateway API: order-sign, SMART DTR link, prior auth)──▶ Payer Gateway ──(FHIR)──▶ Payer
      │                                                                      │
      │ SQL (read)                                                           │ EHR Data API (this document)
      ▼                                                                      ▼
-  EHR Oracle database:  PA_PAYER, PA_DTR_FORM, PA_PRIOR_AUTH, ...  ◀── EHR Web API (runs the SQL)
+  EHR Oracle database:  PA_PAYER, PA_DTR_LINK, PA_PRIOR_AUTH, ...  ◀── EHR Web API (runs the SQL)
 ```
 
 - The gateway has **no database connection**. It calls the EHR Data API for every read and every save.
@@ -61,22 +61,30 @@ All paths are under `{EHR base URL}/api/prior-auth-data`.
 | # | Method and path | Table | Used for |
 | --- | --- | --- | --- |
 | 1 | `GET payers/{insurancePlanId}` | `PA_PAYER` | One payer's configuration by insurance plan id (the only payer endpoint; there is no payer list). `WHERE INSURANCE_PLAN_ID = :insurancePlanId`. Answer in the client's wrapper `{ "PayerDetail": {...}, "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }`; `PayerDetail` is `null` when there is no such payer (section 4.1). |
-| 2 | `GET dtr-forms/{formId}` | `PA_DTR_FORM` | One payer questionnaire and its answers. |
-| 3 | `PUT dtr-forms/{formId}` | `PA_DTR_FORM` | Save it. |
-| 4 | `GET dtr-links/{linkId}` | `PA_DTR_LINK` | One payer SMART DTR app link. |
-| 5 | `PUT dtr-links/{linkId}` | `PA_DTR_LINK` | Save it. |
-| 6 | `GET prior-auths/{requestId}` | `PA_PRIOR_AUTH` | One prior authorization request. |
-| 7 | `PUT prior-auths/{requestId}` | `PA_PRIOR_AUTH` | Save it (new request, update, cancel, new payer decision). |
-| 8 | `GET prior-auths?status=pended[&insurancePlanId=X]` | `PA_PRIOR_AUTH` | Requests still waiting for a payer. `WHERE STATUS = :status [AND INSURANCE_PLAN_ID = :insurancePlanId]` |
-| 9 | `GET payer-subscriptions/{insurancePlanId}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Did we already subscribe at this payer for this organization? |
-| 10 | `PUT payer-subscriptions/{insurancePlanId}/{organizationNpi}` | `PA_PAYER_SUBSCRIPTION` | Save the subscription. |
-| 11 | `PUT cdex-tasks/{insurancePlanId}/{taskId}` | `PA_CDEX_TASK` | Save a payer information request (Task). |
-| 12 | `GET cdex-tasks?requestId=X` | `PA_CDEX_TASK` | All Tasks of one prior authorization request. |
-| 13 | `GET questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | One filled-in form in FHIR format (called by the FHIR API). |
-| 14 | `PUT questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | Save it. |
-| 15 | `GET questionnaire-responses?patientId=X` | `PA_QUESTIONNAIRE_RESPONSE` | All FHIR forms of a patient, newest first (`ORDER BY LAST_UPDATED_UTC DESC`). |
+| 2 | `GET dtr-links/{linkId}` | `PA_DTR_LINK` | One payer SMART DTR app link. |
+| 3 | `PUT dtr-links/{linkId}` | `PA_DTR_LINK` | Save it. |
+| 4 | `GET prior-auths/{requestId}` | `PA_PRIOR_AUTH` | One prior authorization request. |
+| 5 | `PUT prior-auths/{requestId}` | `PA_PRIOR_AUTH` | Save it (new request, update, cancel, new payer decision). |
+| 6 | `PUT cdex-tasks/{insurancePlanId}/{taskId}` | `PA_CDEX_TASK` | Save a payer information request (Task). |
+| 7 | `GET cdex-tasks?requestId=X` | `PA_CDEX_TASK` | All Tasks of one prior authorization request. |
+| 8 | `GET questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | One filled-in form in FHIR format (called by the FHIR API). |
+| 9 | `PUT questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | Save it. |
+| 10 | `GET questionnaire-responses?patientId=X` | `PA_QUESTIONNAIRE_RESPONSE` | All FHIR forms of a patient, newest first (`ORDER BY LAST_UPDATED_UTC DESC`). |
+| 11 | `GET smart-launches/{launchId}` | `PA_SMART_LAUNCH` | One SMART launch (called by the FHIR API). |
+| 12 | `PUT smart-launches/{launchId}` | `PA_SMART_LAUNCH` | Save it. |
+| 13 | `GET smart-clients/{clientId}` | `PA_SMART_CLIENT` | One registered SMART app (a payer's DTR app). Read only: the EHR team maintains the table (called by the FHIR API). |
+| 14 | `PUT smart-auth-codes/{codeHash}` | `PA_SMART_AUTH_CODE` | Save a one-time authorization code (called by the FHIR API). |
+| 15 | `DELETE smart-auth-codes/{codeHash}` | `PA_SMART_AUTH_CODE` | **Take** the code: return the row with `200` **and** delete it in one statement (`404` when there is no row). |
+| 16 | `GET access-tokens/{tokenHash}` | `PA_ACCESS_TOKEN` | One access token (called by the FHIR API on every FHIR call that sends a token). |
+| 17 | `PUT access-tokens/{tokenHash}` | `PA_ACCESS_TOKEN` | Save it. |
 
-There is no DELETE. Nothing is removed by the gateway.
+
+The only DELETE is endpoint 15. Nothing else is removed by the gateway or the FHIR API; rows of
+`PA_SMART_LAUNCH`, `PA_SMART_AUTH_CODE` and `PA_ACCESS_TOKEN` past `EXPIRES_AT` can be deleted by a scheduled job (SQL at
+the end of the SMART section of `01_create_tables.sql`).
+
+`codeHash` and `tokenHash` are `base64url(SHA-256(value))` (43 characters of `A-Z a-z 0-9 - _`): the codes and tokens
+themselves are never sent to the data API and never stored.
 
 ## 4. The rows
 
@@ -104,11 +112,11 @@ complete `http` / `https` address in `baseUrl`, is left out (also with a warning
 | authClientSecret | text | *Not read by the gateway (kept for the authentication layer).* Client secret (`client-secret` only). **Sensitive.** |
 | authScope | text | *Not read by the gateway (kept for the authentication layer).* OAuth scopes. |
 | signCdsHooksRequests | bool | *Not read by the gateway (kept for the authentication layer).* Send a signed JWT with each CDS Hooks call. |
-| useSubscriptions | bool | Ask the payer to notify the gateway about decisions. Empty = `true`. |
-| notificationSecret | text | *Not read by the gateway (kept for the authentication layer).* Secret the payer sends with notifications. **Sensitive.** |
+| useSubscriptions | bool | *Not read by the gateway:* it makes no PAS Subscription (the client EHR's job inquires). Default `false`. |
+| notificationSecret | text | *Not used:* payers never call the gateway (no PAS notifications, no pushed CDex Tasks). **Sensitive.** |
 | crdTimeoutSeconds | int | Seconds to wait for the payer at order-sign. Empty or 0 = 5. |
 | timeoutSeconds | int | Seconds to wait for every other payer call. Empty or 0 = 30. |
-| dtrMode | text | `Forms` (the EHR shows the payer's questions) or `SmartApp` (the payer's own SMART DTR app). Empty = `Forms`. |
+| dtrMode | text | `SmartApp` (the payer's own SMART DTR app; the only mode now). Default `SmartApp`. *Not read by the gateway.* |
 | dtrAppLaunchUrl | text | Launch URL of the payer's DTR app. Empty = the URL on the payer's CRD card. |
 
 **Changed (Oct 30, 2026):** the payer key is renamed: property `piInsurancePlanId` is now `insurancePlanId` and column
@@ -141,9 +149,9 @@ GET {EHR base URL}/api/prior-auth-data/payers/1001
     "BaseURL": "http://localhost:5080",
     "CDSServicesPath": "cds-services", "FHIRPath": "fhir",
     "AuthType": "none", "AuthTokenURL": null, "AuthClientID": null, "AuthClientSecret": null, "AuthScope": null,
-    "SignCDSHooksRequests": true, "UseSubscriptions": true, "NotificationSecret": null,
+    "SignCDSHooksRequests": true, "UseSubscriptions": false, "NotificationSecret": null,
     "CRDTimeoutSeconds": 30, "TimeoutSeconds": 30,
-    "DTRMode": "Forms", "DTRAppLaunchURL": null
+    "DTRMode": "SmartApp", "DTRAppLaunchURL": null
   },
   "TOKEN_EXPIRED": "",
   "ERROR_MESSAGE": ""
@@ -161,27 +169,7 @@ The smallest row that works: `{ "PayerDetail": { "InsurancePlanID": 2001, "Payer
 A new or changed payer is picked up by the gateway within `Storage:PayerCacheMinutes` (default 5 minutes); an insurance plan id the
 gateway has no payer for yet is looked up again immediately.
 
-### 4.2 `PA_DTR_FORM` (endpoints 2, 3)
-
-| Property | Type | Meaning |
-| --- | --- | --- |
-| **formId** | text | Key (created by the gateway, e.g. `frm-235b7ad69e85`). |
-| **insurancePlanId** | int | Insurance plan id of the payer. |
-| **patientId** | text | |
-| coverageId | text | |
-| orderIdsJson | JSON text | `["ord-1-hd"]` |
-| **questionnaireUrl** | text | Up to 1000 characters. |
-| **questionnaireJson** | JSON text | The payer's FHIR Questionnaire (can be 100 KB or more). |
-| **status** | text | `new`, `in-progress`, `completed` |
-| questionnaireResponseId | text | Id of the row in `PA_QUESTIONNAIRE_RESPONSE`. |
-| answersJson | JSON text | `[{"linkId":"egfr","values":["9"]}]` |
-| **adaptive** | bool | |
-| **payerFinished** | bool | |
-| adaptiveResponseJson | JSON text | |
-| **createdAt** | time | |
-| **updatedAt** | time | |
-
-### 4.3 `PA_DTR_LINK` (endpoints 4, 5)
+### 4.2 `PA_DTR_LINK` (endpoints 2, 3)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -195,7 +183,7 @@ gateway has no payer for yet is looked up again immediately.
 | **appUrl** | text | Up to 1000 characters. |
 | **expiresAt** | time | |
 
-### 4.4 `PA_PRIOR_AUTH` (endpoints 6, 7, 8)
+### 4.3 `PA_PRIOR_AUTH` (endpoints 4, 5)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -236,17 +224,7 @@ gateway has no payer for yet is looked up again immediately.
 }
 ```
 
-### 4.5 `PA_PAYER_SUBSCRIPTION` (endpoints 9, 10)
-
-| Property | Type | Meaning |
-| --- | --- | --- |
-| **insurancePlanId** | int | Insurance plan id of the payer. Key, part 1. |
-| **organizationNpi** | text | Key, part 2. |
-| subscriptionId | text | The payer's id of the subscription. |
-| **status** | text | `active`, `error` |
-| **createdAt** | time | |
-
-### 4.6 `PA_CDEX_TASK` (endpoints 11, 12)
+### 4.4 `PA_CDEX_TASK` (endpoints 6, 7)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -260,7 +238,7 @@ gateway has no payer for yet is looked up again immediately.
 | **taskJson** | JSON text | The FHIR Task as received. |
 | **receivedAt** | time | |
 
-### 4.7 `PA_QUESTIONNAIRE_RESPONSE` (endpoints 13, 14, 15; called by the FHIR API)
+### 4.5 `PA_QUESTIONNAIRE_RESPONSE` (endpoints 8, 9, 10; called by the FHIR API)
 
 | Property | Type | Meaning |
 | --- | --- | --- |
@@ -275,6 +253,59 @@ gateway has no payer for yet is looked up again immediately.
 | **ehrSyncStatus** | text | `PENDING`, `SENT`, `FAILED` (state of that chart copy). |
 | **lastUpdatedUtc** | time | |
 
+### 4.6 `PA_SMART_LAUNCH` (endpoints 11, 12; called by the FHIR API)
+
+| Property | Type | Meaning |
+| --- | --- | --- |
+| **launchId** | text | Key. |
+| insurancePlanId | int | Only this payer's app may use the launch. |
+| **patientId** | text | |
+| encounterId | text | |
+| userPractitionerId | text | |
+| fhirContextJson | JSON text | `["ServiceRequest/ord-1001","Coverage/cov-1001"]` |
+| appContext | text | appContext from the payer's card, returned unchanged. |
+| **expiresAt** | time | 15 minutes after it was created. |
+
+### 4.7 `PA_SMART_CLIENT` (endpoint 13; maintained by the EHR team, read by the FHIR API)
+
+One row per payer SMART DTR app. To let a payer's app open: insert a row with the `client_id` given to the payer and
+the redirect URIs the payer registers. Only public apps (browser apps protected by PKCE, no client secret) for now.
+
+| Property | Type | Meaning |
+| --- | --- | --- |
+| **clientId** | text | The app's `client_id`. Key. |
+| insurancePlanId | int | Payer of the app (`PA_PAYER.INSURANCE_PLAN_ID`). The app may only use launches of that payer's DTR links. Empty = any launch. |
+| clientName | text | Shown in log lines. |
+| **enabled** | bool | `false` = the app is blocked. |
+| **redirectUrisJson** | JSON text | Array of redirect URIs, e.g. `["https://dtr.payer.example/callback"]`. The app must send one of them exactly. |
+| allowedScopes | text | Scopes the app may get, separated by a space (exact strings, e.g. `launch fhirUser patient/*.rs patient/QuestionnaireResponse.cu`). Empty = any scope it asks for. |
+
+### 4.8 `PA_SMART_AUTH_CODE` (endpoints 14, 15; called by the FHIR API)
+
+| Property | Type | Meaning |
+| --- | --- | --- |
+| **codeHash** | text | Key. |
+| **clientId** | text | |
+| **redirectUri** | text | |
+| **scope** | text | Granted scopes. |
+| **codeChallenge** | text | PKCE S256 challenge. |
+| **launchId** | text | `PA_SMART_LAUNCH.LAUNCH_ID` |
+| **expiresAt** | time | 2 minutes after it was created. |
+
+### 4.9 `PA_ACCESS_TOKEN` (endpoints 16, 17; called by the FHIR API)
+
+| Property | Type | Meaning |
+| --- | --- | --- |
+| **tokenHash** | text | Key. |
+| **subject** | text | SMART `client_id`, or the payer name for CRD `fhirAuthorization` tokens. |
+| **scope** | text | Granted scopes. |
+| patientId | text | The only patient the token reaches. |
+| **audience** | text | FHIR base URL the token is for. |
+| **expiresAt** | time | |
+
+**Speed.** Endpoint 16 runs on every FHIR call a payer or a payer app makes with a token: a primary-key read, aim for
+well under 100 ms.
+
 ## 5. What the EHR reads itself
 
 Nothing is pushed to the EHR. The EHR screens read the tables (example SQL is at the end of `01_create_tables.sql`):
@@ -284,12 +315,14 @@ Nothing is pushed to the EHR. The EHR screens read the tables (example SQL is at
 | Status and authorization number of a request | `PA_PRIOR_AUTH` by `REQUEST_ID` (`STATUS`, `AUTHORIZATION_NUMBER`) |
 | Decision per order line, validity dates | `PA_PRIOR_AUTH.DECISION_JSON` → `lines[]` |
 | What the payer still needs (documents, due date) | `PA_PRIOR_AUTH.DECISION_JSON` → `informationRequests[]` |
-| The questionnaire and the answers given | `PA_DTR_FORM` (`ANSWERS_JSON`), or `GET /dtr/forms/{formId}` on the gateway |
+| The questionnaire and the answers given | `PA_QUESTIONNAIRE_RESPONSE` (`RESOURCE_JSON`, saved by the payer's SMART DTR app), or `GET /dtr/saved-forms` on the gateway |
 
-**Decisions that arrive later.** A payer can pend a request and decide days later. The payer's notification, or the
-EHR's own call to inquire for a pended request (the gateway has no background job), then updates the same `PA_PRIOR_AUTH` row. The EHR can notice this in any of three ways:
+**Decisions that arrive later.** A payer can pend a request and decide days later. The gateway makes no PAS
+Subscription and receives no payer callback: the client EHR's own job reads the `PA_PRIOR_AUTH` rows with
+`STATUS = 'pended'` and calls the gateway's `POST /pas/requests/{requestId}/inquire` for each, at the interval it
+chooses. A new decision then updates the same `PA_PRIOR_AUTH` row. The EHR can notice this in any of three ways:
 read the row when the screen opens; ask for rows with `UPDATED_AT > :lastCheck`; or react inside the Web API when
-endpoint 7 is called (for example, raise a task for the user when `status` changes).
+endpoint 5 is called (for example, raise a task for the user when `status` changes).
 The gateway saves a row only when something in it changed: asking a payer again and getting the same answer does not
 save, so `UPDATED_AT` of `PA_PRIOR_AUTH` and `RECEIVED_AT` of `PA_CDEX_TASK` move only when there is something new.
 
@@ -311,12 +344,11 @@ Data API calls per gateway operation (for sizing):
 | Gateway operation | Data API calls |
 | --- | --- |
 | Order-sign | `GET payers/{insurancePlanId}` (kept 5 minutes), and `PUT dtr-links` for each payer app link |
-| Get a form | `PUT dtr-forms` per questionnaire |
-| Save answers | `GET dtr-forms`, `GET` + `PUT questionnaire-responses`, `PUT dtr-forms` |
-| Submit / update a request | `GET prior-auths/{id}`, `GET questionnaire-responses?patientId`, `PUT prior-auths/{id}`, `GET payer-subscriptions` (+ `PUT` the first time) |
+| Open the SMART DTR app link (`/dtr/launch/{linkId}`) | `GET dtr-links/{linkId}`, `GET payers/{insurancePlanId}`; the FHIR API then saves the launch (`PUT smart-launches`) |
+| SMART DTR app saves its form (at the FHIR API) | `GET` + `PUT questionnaire-responses` |
+| Submit / update a request | `GET prior-auths/{id}`, `GET questionnaire-responses?patientId`, `PUT prior-auths/{id}` |
 | Ask the payer again (inquire) | `GET prior-auths/{id}`; `PUT prior-auths/{id}` only when the decision changed |
 | Look for payer Tasks (`information-requests?refresh=true`, called by the EHR for a pended request) | `GET prior-auths/{id}`, then per Task the payer has open `GET prior-auths/{id}` + `GET cdex-tasks?requestId`. A `PUT` (`prior-auths`, `cdex-tasks`) follows only when something changed |
-| Payer notification | `GET prior-auths?status=pended&insurancePlanId={insurancePlanId}`, then the inquire calls above per request |
 
 ## 7. Testing
 
@@ -329,5 +361,23 @@ Data API calls per gateway operation (for sizing):
 ```
 curl {EHR}/api/prior-auth-data/payers/1001
 curl -i {EHR}/api/prior-auth-data/prior-auths/DOES-NOT-EXIST        (expect 404)
-curl "{EHR}/api/prior-auth-data/prior-auths?status=pended"           (expect [] or rows)
 ```
+
+**Changed (Nov 1, 2026):** DTR now works only with the payer's SMART DTR app (SMART App Launch). Removed the
+`dtr-forms` endpoints and table `PA_DTR_FORM`; the endpoints after them are renumbered. Column `DTR_MODE` (`dtrMode`)
+stays, with default `SmartApp`.
+
+
+**Changed (Nov 2, 2026, PAS):** the gateway no longer creates PAS Subscriptions and has no payer notification
+endpoint; the client EHR's job inquires pended requests itself. Removed table `PA_PAYER_SUBSCRIPTION`, its endpoints
+(`payer-subscriptions`) and the list endpoint `GET prior-auths?status=pended`. Column `USE_SUBSCRIPTIONS` stays
+(default 0, not read). Endpoints after them are renumbered (CDex tasks 6, 7; questionnaire responses 8-10; SMART
+launches 11, 12).
+
+**Changed (Nov 2, 2026, CDex):** payers can no longer push information requests (Tasks) to the gateway. The client
+EHR's job gets them with `GET /cdex/requests/{requestId}/information-requests?refresh=true`; the data API endpoints
+are unchanged. Column `NOTIFICATION_SECRET` stays but is not used.
+
+**Changed (Nov 2, 2026, tokens):** Keycloak is not used for now (not confirmed by the client). The FHIR API issues the
+SMART and `fhirAuthorization` tokens itself, with `PA_SMART_CLIENT`, `PA_SMART_LAUNCH`, `PA_SMART_AUTH_CODE` and
+`PA_ACCESS_TOKEN` (endpoints 11 to 17).

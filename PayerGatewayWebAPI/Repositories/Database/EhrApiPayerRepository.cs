@@ -26,11 +26,11 @@ namespace PayerGatewayWebAPI.Repositories.Database;
 /// missing, null or an empty text, and the gateway then uses its default. The properties the gateway reads:
 ///   InsurancePlanID                          whole number (1001 or "1001"); required
 ///   PayerName, BaseURL                       required
-///   Enabled, UseSubscriptions                true / false; empty = true
+///   Enabled                                  true / false; empty = true
 ///   CDSServicesPath, FHIRPath                text; empty = "cds-services" / "fhir"; "/" = no extra path
 ///   CRDTimeoutSeconds, TimeoutSeconds        whole number; empty or 0 = 5 / 30
-///   DTRMode                                  Forms | SmartApp; empty = Forms
 ///   DTRAppLaunchURL                          text; empty = the URL on the payer's CRD card
+/// DTRMode (column DTR_MODE, default SmartApp) is not read: DTR always opens the payer's SMART DTR app.
 /// PA_PAYER also has login columns (AUTH_*, SIGN_CDS_HOOKS_REQUESTS, NOTIFICATION_SECRET). The gateway does not
 /// read them: they belong to the authentication layer that is added outside this code.
 ///
@@ -123,11 +123,6 @@ public class EhrApiPayerRepository : IPayerRepository
         {
             payer.Enabled = enabled.Value;
         }
-        bool? useSubscriptions = ReadFlag(row, "useSubscriptions", payer.PayerName);
-        if (useSubscriptions != null)
-        {
-            payer.UseSubscriptions = useSubscriptions.Value;
-        }
 
         string? cdsServicesPath = ReadText(row, "cdsServicesPath");
         if (!string.IsNullOrWhiteSpace(cdsServicesPath))
@@ -151,11 +146,6 @@ public class EhrApiPayerRepository : IPayerRepository
             payer.TimeoutSeconds = timeoutSeconds.Value;
         }
 
-        string? dtrMode = ReadText(row, "dtrMode");
-        if (!string.IsNullOrWhiteSpace(dtrMode))
-        {
-            payer.DtrMode = dtrMode;
-        }
         payer.DtrAppLaunchUrl = ReadText(row, "dtrAppLaunchUrl");
         return payer;
     }

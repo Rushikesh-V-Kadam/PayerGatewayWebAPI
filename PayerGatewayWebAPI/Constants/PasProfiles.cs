@@ -9,5 +9,4 @@ public static class PasProfiles
     public const string Claim = Base + "profile-claim";
     public const string ClaimUpdate = Base + "profile-claim-update";
     public const string ClaimInquiry = Base + "profile-claim-inquiry";
-    public const string Subscription = Base + "profile-subscription";
 }

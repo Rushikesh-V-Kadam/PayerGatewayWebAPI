@@ -92,9 +92,8 @@ public class ApiExceptionHandler : IExceptionHandler
         else if (exception is JsonException)
         {
             // Not the caller's JSON: a request body that is not valid JSON is refused by MVC before a controller runs
-            // (400, see ModelValidationResponse), and the two endpoints payers call (PAS notifications, CDex Tasks)
-            // answer 400 themselves when the FHIR body has the wrong shape. A JsonException that arrives here means
-            // data the gateway asked for - from the payer, the FHIR API or the EHR database - could not be read.
+            // (400, see ModelValidationResponse). A JsonException that arrives here means data the gateway asked
+            // for - from the payer, the FHIR API or the EHR database - could not be read.
             status = StatusCodes.Status502BadGateway;
             error.Error = "Data received from the payer, the FHIR API or the EHR database could not be read.";
             error.Details.Add(exception.Message);

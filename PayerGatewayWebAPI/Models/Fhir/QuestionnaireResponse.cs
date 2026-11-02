@@ -6,7 +6,7 @@ namespace PayerGatewayWebAPI.Models.Fhir;
 // 1..1 / 1..* = required by FHIR; 0..1 / 0..* = optional (left out when there is no data).
 /// <summary>
 /// FHIR QuestionnaireResponse (DTR profile): the filled-in payer form.
-/// Built by the gateway from the EHR's plain answers, saved at the FHIR API, and attached to PAS / CDex.
+/// Saved at the FHIR API by the payer's SMART DTR app; the gateway reads it and attaches it to PAS / CDex.
 /// </summary>
 public class QuestionnaireResponse
 {

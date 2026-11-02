@@ -455,7 +455,6 @@ public class CrdService
 
         message.Link.Url = _workflow.GetGatewayBaseUrl() + "/dtr/launch/" + dtrLink.LinkId;
         message.Link.Type = CrdCodes.LinkTypeSmart;
-        message.Link.OpensPayerApp = payer.UsesSmartApp();
         return message;
     }
 

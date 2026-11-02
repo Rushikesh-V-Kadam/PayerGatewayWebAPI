@@ -20,7 +20,7 @@ public class InformationRequest
     /// <summary>Document types needed (LOINC).</summary>
     public List<DocumentNeeded> DocumentsNeeded { get; set; } = new();
 
-    /// <summary>Payer questionnaires to complete: POST /dtr/forms with these URLs, answer, then send the form here.</summary>
+    /// <summary>Payer questionnaires to complete: fill them in with the payer's SMART DTR app, then send the saved form (GET /dtr/saved-forms) here.</summary>
     /// <example>[]</example>
     public List<string> QuestionnairesNeeded { get; set; } = new();
 }

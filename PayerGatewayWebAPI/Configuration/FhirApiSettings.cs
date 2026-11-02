@@ -21,6 +21,13 @@ public class FhirApiSettings
     /// </summary>
     public string InternalBaseUrl { get; set; } = "http://localhost:5100";
 
+    /// <summary>
+    /// Key sent in the X-Api-Key header on every call to the FHIR API (/fhir/r4 and /internal). Must equal the FHIR
+    /// API's Security:InternalApiKey; with it the gateway reads any patient without a token. Empty = no header.
+    /// Keep it secret (encrypted settings file).
+    /// </summary>
+    public string ApiKey { get; set; } = string.Empty;
+
     /// <summary>Timeout of each call, in seconds.</summary>
     public int TimeoutSeconds { get; set; } = 10;
 

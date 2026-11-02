@@ -9,8 +9,8 @@ using PayerGatewayWebAPI.Services.Pas;
 namespace PayerGatewayWebAPI.Controllers;
 
 /// <summary>
-/// STEP 3 - PAS (prior authorization requests): submit, update, cancel, read, inquire, plus the endpoint the payer
-/// calls when a pended decision changes.
+/// STEP 3 - PAS (prior authorization requests): submit, update, cancel, read, inquire. There is no payer callback
+/// (no PAS Subscription): the client EHR's job calls inquire for its pended requests.
 /// </summary>
 [ApiController]
 [Route("pas")]
@@ -152,26 +152,5 @@ public class PasController : ControllerBase
     {
         PriorAuthDecision decision = await _pas.InquireAsync(requestId, ct);
         return Ok(decision);
-    }
-
-    /// <summary>Called BY THE PAYER (PAS Subscription rest-hook) when a decision changes.</summary>
-    /// <remarks>
-    /// The gateway then inquires every open request of that payer and saves the new decisions.
-    /// </remarks>
-    /// <param name="insurancePlanId">The EHR's insurance plan id of the payer (part of the Subscription endpoint the gateway registered).</param>
-    /// <param name="body">Subscription notification Bundle.</param>
-    /// <param name="ct">Cancelled when the caller disconnects.</param>
-    /// <response code="200">Handled.</response>
-    /// <response code="400">The body is not a valid FHIR Bundle.</response>
-    /// <response code="404">No payer is configured or enabled for this insurance plan id.</response>
-    [HttpPost("notifications/{insurancePlanId:int}")]
-    [Consumes(ApiHeaders.FhirJson, ApiHeaders.Json)]
-    [ProducesResponseType(typeof(NotificationResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ApiError), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(ApiError), StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<NotificationResult>> Notification(int insurancePlanId, [FromBody] JsonObject? body, CancellationToken ct)
-    {
-        NotificationResult result = await _pas.HandleNotificationAsync(insurancePlanId, body, ct);
-        return Ok(result);
     }
 }

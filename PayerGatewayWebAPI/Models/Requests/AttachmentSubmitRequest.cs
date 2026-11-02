@@ -16,7 +16,7 @@ public class AttachmentSubmitRequest
     /// <example>["doc-1-labs"]</example>
     public List<string> DocumentIds { get; set; } = new();
 
-    /// <summary>QuestionnaireResponse ids (from POST /dtr/forms/{formId}/answers).</summary>
+    /// <summary>QuestionnaireResponse ids (forms saved by the payer's SMART DTR app; see GET /dtr/saved-forms).</summary>
     /// <example>[]</example>
     public List<string> QuestionnaireResponseIds { get; set; } = new();
 

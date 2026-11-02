@@ -10,7 +10,4 @@ public interface IPriorAuthRepository
 
     /// <summary>Inserts or updates the request.</summary>
     Task SaveAsync(PriorAuthRecord record, CancellationToken ct);
-
-    /// <summary>Requests still pended at a payer (null insurancePlanId = all payers).</summary>
-    Task<List<PriorAuthRecord>> GetOpenAsync(int? insurancePlanId, CancellationToken ct);
 }
