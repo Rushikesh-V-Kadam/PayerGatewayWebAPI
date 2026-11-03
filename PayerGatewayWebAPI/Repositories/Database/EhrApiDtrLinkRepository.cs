@@ -6,7 +6,7 @@ using PayerGatewayWebAPI.Repositories.Interfaces;
 
 namespace PayerGatewayWebAPI.Repositories.Database;
 
-/// <summary>Payer SMART DTR app links in the EHR database, through the EHR data API: dtr-links/{linkId} (table PA_DTR_LINK).</summary>
+/// <summary>Payer SMART DTR app links in the EHR database, through the EHR data API: POST dtr-links, GET dtr-links/{linkId} (table PA_DTR_LINK).</summary>
 public class EhrApiDtrLinkRepository : IDtrLinkRepository
 {
     private readonly EhrDataClient _ehr;
@@ -17,7 +17,7 @@ public class EhrApiDtrLinkRepository : IDtrLinkRepository
         _ehr = ehr;
     }
 
-    /// <summary>Inserts or updates one DTR app link: PUT dtr-links/{linkId}. The list of references is sent as JSON text.</summary>
+    /// <summary>Inserts one new DTR app link: POST dtr-links (linkId, created by the gateway, is in the body). The list of references is sent as JSON text.</summary>
     public async Task SaveAsync(DtrLinkRecord record, CancellationToken ct)
     {
         DtrLinkRow row = new DtrLinkRow();
@@ -30,7 +30,7 @@ public class EhrApiDtrLinkRepository : IDtrLinkRepository
         row.AppContext = record.AppContext;
         row.AppUrl = record.AppUrl;
         row.ExpiresAt = record.ExpiresAt;
-        await _ehr.PutAsync("dtr-links/" + EhrDataClient.Esc(record.LinkId), row, ct);
+        await _ehr.PostAsync("dtr-links", row, ct);
     }
 
     /// <summary>One DTR app link: GET dtr-links/{linkId}. Null when it does not exist.</summary>

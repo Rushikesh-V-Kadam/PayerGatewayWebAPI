@@ -560,8 +560,14 @@ public class PasService
             problems.Add("previousTreatments cannot be negative.");
         }
 
+        // includeDtr has no default: the EHR says whether DTR forms belong to these orders
+        if (request.IncludeDtr == null)
+        {
+            problems.Add("includeDtr is required (true or false).");
+        }
+
         // includeDtr = false means "no DTR forms": naming forms at the same time is a contradiction, not something to guess
-        if (!request.IncludeDtr && TextHelper.Distinct(request.QuestionnaireResponseIds).Count > 0)
+        if (request.IncludeDtr == false && TextHelper.Distinct(request.QuestionnaireResponseIds).Count > 0)
         {
             problems.Add("questionnaireResponseIds cannot be sent when includeDtr is false.");
         }
@@ -613,7 +619,7 @@ public class PasService
         List<string> added = new List<string>();
 
         // The EHR said the orders need no DTR (CRD callDtr = false): no QuestionnaireResponse read or search at all.
-        if (!request.IncludeDtr)
+        if (request.IncludeDtr != true)
         {
             return forms;
         }

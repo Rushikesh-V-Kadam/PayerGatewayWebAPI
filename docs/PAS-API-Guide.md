@@ -125,7 +125,7 @@ Two values are worked out by the gateway rather than taken from the EHR: `Claim.
 | `previousTreatments` | No | | Number of treatments given under the previous authorization (0 or more) |
 | `patientType` | No | `permanent` | `permanent` or `transient` (a patient visiting the facility) |
 | `referringPractitionerId` | No | | Physician who referred the patient |
-| `includeDtr` | No | `true` | `true`: completed DTR forms of the orders are found and attached. `false`: no DTR form is read or attached and no DTR call is made. Send `false` when CRD answered `callDtr = false` |
+| `includeDtr` | Yes | | `true` or `false`, on submit and update (400 when missing). `true`: completed DTR forms of the orders are found and attached. `false`: no DTR form is read or attached and no DTR call is made. Send `false` when CRD answered `callDtr = false` |
 | `questionnaireResponseIds` | No | `[]` | Extra DTR forms to attach. Completed forms of these orders are attached automatically. Not allowed with `includeDtr = false` (400) |
 | `documentIds` | No | `[]` | EHR documents (DocumentReference ids) to attach now. The file content is embedded |
 | `notes` | No | | Free-text note for the reviewer. The first 264 characters are sent |
@@ -141,6 +141,7 @@ Content-Type: application/json
   "insurancePlanId": 1001,
   "patientId": "pat-2",
   "requestingPractitionerId": "prac-3",
+  "includeDtr": true,
   "orderLocationCode": "loc-main",
   "orderIds": ["ord-2-home-pd"],
   "priority": "routine",
@@ -159,6 +160,7 @@ A renewal for a transient patient:
   "patientId": "pat-1",
   "orderLocationCode": "loc-main",
   "requestingPractitionerId": "prac-1",
+  "includeDtr": true,
   "orderIds": ["ord-1-hd"],
   "priority": "routine",
   "requestType": "renewal",
@@ -318,6 +320,7 @@ Content-Type: application/json
   "patientId": "pat-1",
   "orderLocationCode": "loc-main",
   "requestingPractitionerId": "prac-1",
+  "includeDtr": true,
   "orderIds": ["ord-1-hd", "ord-1-retacrit"],
   "priority": "routine",
   "documentIds": ["doc-1-labs"]
@@ -791,6 +794,7 @@ Content-Type: application/json
   "patientId": "pat-1",
   "orderLocationCode": "loc-main",
   "requestingPractitionerId": "prac-1",
+  "includeDtr": true,
   "orderIds": ["ord-1-hd"],
   "priority": "routine",
   "documentIds": ["doc-1-note"]
@@ -811,6 +815,7 @@ Content-Type: application/json
   "patientId": "pat-1",
   "orderLocationCode": "loc-main",
   "requestingPractitionerId": "prac-1",
+  "includeDtr": true,
   "orderIds": ["ord-1-hd", "ord-1-retacrit"],
   "documentIds": ["doc-1-labs", "doc-1-note"]
 }

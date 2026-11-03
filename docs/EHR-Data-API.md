@@ -41,15 +41,16 @@ EHR screens ──(existing gateway API: order-sign, SMART DTR link, prior auth)
 | Base URL | `{EHR base URL}/api/prior-auth-data` (the path can be changed: gateway setting `Ehr:DataPath`) |
 | Security | No authentication is built into the gateway; it is added outside the gateway code. Use HTTPS. |
 | Format | JSON, UTF-8, `Content-Type: application/json`, property names in camelCase. |
-| Row = columns | A row is a flat JSON object. **One property = one column**: `requestId` ↔ `REQUEST_ID`, `decisionJson` ↔ `DECISION_JSON`. |
+| Answer format | **Every answer** has the client's format, with HTTP `200`: `{ "<EntityName>": <row, list of rows, or null>, "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }`. The entity names per endpoint are in `EHR-Data-API-swagger.json` (`PayerDetail`, `DtrLinkDetail`, `PriorAuthDetail`, `CdexTaskDetail`, `CdexTaskList`, `QuestionnaireResponseDetail`, `QuestionnaireResponseList`, `SmartClientDetail`, `SmartLaunchDetail`, `SmartAuthCodeDetail`, `AccessTokenDetail`). The gateway and the FHIR API read the one entity property whatever its name. |
+| Row = columns | A row (the entity, and the body of a PUT / POST) is a flat JSON object. **One property = one column**: `requestId` ↔ `REQUEST_ID`, `decisionJson` ↔ `DECISION_JSON`. Request bodies are the plain row, not wrapped. |
 | JSON text columns | Properties ending in `Json` or `Bundle`, and `appContext`, are **strings** that contain JSON text. Store the string unchanged in the CLOB column and return it unchanged. Do not parse or re-format it. |
 | Timestamps | UTC, ISO-8601 with `Z`: `"2026-10-07T18:36:17Z"` (fractions of a second are allowed). |
 | Booleans | JSON `true` / `false` (stored as `NUMBER(1)` 1 / 0). When it reads a row, the gateway also understands `1` / `0` and `"Y"` / `"N"`, but `true` / `false` is the agreed format. |
 | Empty values | `null` (or leave the property out). |
-| PUT | **Insert, or update when the key in the URL already exists** (Oracle `MERGE`). Answer `204` (or `200`). The key in the URL wins over the key in the body. |
-| GET one row | `200` with the row, or `404` when there is no such row. |
-| GET a list | `200` with a JSON array `[ {...}, {...} ]`; an empty array `[]` when nothing matches. |
-| Errors | Any other status (`400`, `401`, `500` ...) means failure. A short text or JSON body with the reason helps: the gateway logs the first 300 characters. |
+| PUT | **Insert, or update when the key in the URL already exists** (Oracle `MERGE`). The answer's entity is the saved row. The key in the URL wins over the key in the body. |
+| GET one row | The entity is the row, or `null` when there is no such row (an HTTP `404` is also understood). |
+| GET a list | The entity is a JSON array `[ {...}, {...} ]`; an empty array `[]` (or `null`) when nothing matches. |
+| Errors | Fill `TOKEN_EXPIRED` or `ERROR_MESSAGE`: any text in either is a failure (the reason is written to the log, first 300 characters). Any HTTP status other than `2xx` (`400`, `401`, `500` ...) is a failure too. |
 | Ids in the URL | URL-encoded by the gateway (`PA%2F2026%2F1`). Decode them before use. |
 | Payer key | `insurancePlanId` (a whole number, column `INSURANCE_PLAN_ID`) is the payer's key everywhere: in `PA_PAYER` and in every other table, path and filter. The gateway sends it as a plain number (`1001`). |
 | Extra properties | You may return extra properties (your own audit columns); the gateway ignores them. |
@@ -62,7 +63,7 @@ All paths are under `{EHR base URL}/api/prior-auth-data`.
 | --- | --- | --- | --- |
 | 1 | `GET payers/{insurancePlanId}` | `PA_PAYER` | One payer's configuration by insurance plan id (the only payer endpoint; there is no payer list). `WHERE INSURANCE_PLAN_ID = :insurancePlanId`. Answer in the client's wrapper `{ "PayerDetail": {...}, "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }`; `PayerDetail` is `null` when there is no such payer (section 4.1). |
 | 2 | `GET dtr-links/{linkId}` | `PA_DTR_LINK` | One payer SMART DTR app link. |
-| 3 | `PUT dtr-links/{linkId}` | `PA_DTR_LINK` | Save it. |
+| 3 | `POST dtr-links` | `PA_DTR_LINK` | Save a new link (`linkId`, created by the gateway, is in the body). A repeated call with the same `linkId` must answer success (`200`) and change nothing. |
 | 4 | `GET prior-auths/{requestId}` | `PA_PRIOR_AUTH` | One prior authorization request. |
 | 5 | `PUT prior-auths/{requestId}` | `PA_PRIOR_AUTH` | Save it (new request, update, cancel, new payer decision). |
 | 6 | `PUT cdex-tasks/{insurancePlanId}/{taskId}` | `PA_CDEX_TASK` | Save a payer information request (Task). |
@@ -74,7 +75,7 @@ All paths are under `{EHR base URL}/api/prior-auth-data`.
 | 12 | `PUT smart-launches/{launchId}` | `PA_SMART_LAUNCH` | Save it. |
 | 13 | `GET smart-clients/{clientId}` | `PA_SMART_CLIENT` | One registered SMART app (a payer's DTR app). Read only: the EHR team maintains the table (called by the FHIR API). |
 | 14 | `PUT smart-auth-codes/{codeHash}` | `PA_SMART_AUTH_CODE` | Save a one-time authorization code (called by the FHIR API). |
-| 15 | `DELETE smart-auth-codes/{codeHash}` | `PA_SMART_AUTH_CODE` | **Take** the code: return the row with `200` **and** delete it in one statement (`404` when there is no row). |
+| 15 | `DELETE smart-auth-codes/{codeHash}` | `PA_SMART_AUTH_CODE` | **Take** the code: return the row **and** delete it in one statement (entity `null` when there is no row). |
 | 16 | `GET access-tokens/{tokenHash}` | `PA_ACCESS_TOKEN` | One access token (called by the FHIR API on every FHIR call that sends a token). |
 | 17 | `PUT access-tokens/{tokenHash}` | `PA_ACCESS_TOKEN` | Save it. |
 
@@ -343,7 +344,7 @@ Data API calls per gateway operation (for sizing):
 
 | Gateway operation | Data API calls |
 | --- | --- |
-| Order-sign | `GET payers/{insurancePlanId}` (kept 5 minutes), and `PUT dtr-links` for each payer app link |
+| Order-sign | `GET payers/{insurancePlanId}` (kept 5 minutes), and `POST dtr-links` for each payer app link |
 | Open the SMART DTR app link (`/dtr/launch/{linkId}`) | `GET dtr-links/{linkId}`, `GET payers/{insurancePlanId}`; the FHIR API then saves the launch (`PUT smart-launches`) |
 | SMART DTR app saves its form (at the FHIR API) | `GET` + `PUT questionnaire-responses` |
 | Submit / update a request | `GET prior-auths/{id}`, `GET questionnaire-responses?patientId`, `PUT prior-auths/{id}` |
@@ -360,7 +361,7 @@ Data API calls per gateway operation (for sizing):
 
 ```
 curl {EHR}/api/prior-auth-data/payers/1001
-curl -i {EHR}/api/prior-auth-data/prior-auths/DOES-NOT-EXIST        (expect 404)
+curl -i {EHR}/api/prior-auth-data/prior-auths/DOES-NOT-EXIST        (expect { "PriorAuthDetail": null, ... })
 ```
 
 **Changed (Nov 1, 2026):** DTR now works only with the payer's SMART DTR app (SMART App Launch). Removed the
@@ -381,3 +382,11 @@ are unchanged. Column `NOTIFICATION_SECRET` stays but is not used.
 **Changed (Nov 2, 2026, tokens):** Keycloak is not used for now (not confirmed by the client). The FHIR API issues the
 SMART and `fhirAuthorization` tokens itself, with `PA_SMART_CLIENT`, `PA_SMART_LAUNCH`, `PA_SMART_AUTH_CODE` and
 `PA_ACCESS_TOKEN` (endpoints 11 to 17).
+
+**Changed (Nov 3, 2026):** saving a DTR link is now `POST dtr-links` (body with `linkId`) instead of
+`PUT dtr-links/{linkId}`. Answer `201` when saved, `200` when the `linkId` already exists (the gateway retried; keep the
+row as it is). `GET dtr-links/{linkId}` is unchanged.
+
+**Changed (Nov 3, 2026, answer format):** every answer now has the client's format
+`{ "<EntityName>": ..., "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }` (previously only `GET payers`). "No such row" is
+`<EntityName>: null`; saves answer with the saved row instead of an empty `204`.

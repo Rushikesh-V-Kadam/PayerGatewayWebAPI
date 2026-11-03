@@ -38,6 +38,7 @@ Content-Type: application/json
   "insurancePlanId": 1001,
   "patientId": "pat-1",
   "requestingPractitionerId": "prac-1",
+  "includeDtr": true,
   "orderLocationCode": "loc-main",
   "orderIds": ["ord-1-hd"],
   "priority": "routine",

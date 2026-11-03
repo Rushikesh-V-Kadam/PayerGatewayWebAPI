@@ -1,7 +1,7 @@
 namespace PayerGatewayWebAPI.Models.Storage;
 
 /// <summary>
-/// A payer SMART DTR app link exactly as it is sent to / returned by the EHR data API (dtr-links)
+/// A payer SMART DTR app link exactly as it is sent to / returned by the EHR data API (POST dtr-links, GET dtr-links/{linkId})
 /// = one row of table PA_DTR_LINK.
 /// </summary>
 public class DtrLinkRow

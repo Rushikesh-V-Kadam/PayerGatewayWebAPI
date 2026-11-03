@@ -93,12 +93,14 @@ public class PriorAuthRequest
     public string? ReferringPractitionerId { get; set; }
 
     /// <summary>
-    /// Optional, default true. true: completed DTR forms of these orders are found and attached (plus questionnaireResponseIds).
+    /// Required on submit and update. true: completed DTR forms of these orders are found and attached (plus questionnaireResponseIds).
     /// false: no DTR form is read or attached and no DTR call is made; send false when CRD answered callDtr = false.
     /// </summary>
     /// <example>true</example>
-    [DefaultValue(true)]
-    public bool IncludeDtr { get; set; } = true;
+    // No default on purpose: the EHR must say whether DTR was done for these orders, so a missing value is a 400
+    // instead of a silent "true".
+    [Required]
+    public bool? IncludeDtr { get; set; }
 
     /// <summary>Extra DTR forms to attach. Completed forms saved for these orders are attached automatically. Not allowed when includeDtr is false.</summary>
     /// <example>[]</example>

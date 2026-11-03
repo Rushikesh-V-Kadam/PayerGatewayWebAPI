@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using PayerGatewayWebAPI.Configuration;
 using PayerGatewayWebAPI.Constants;
@@ -14,8 +15,12 @@ namespace PayerGatewayWebAPI.Clients;
 /// The gateway has no database connection of its own; every repository in Repositories/Database (EhrApi*Repository.cs) uses this client.
 ///   GET {Ehr:BaseUrl}/{Ehr:DataPath}/{path}    one row (404 = no such row) or a list of rows
 ///   PUT {Ehr:BaseUrl}/{Ehr:DataPath}/{path}    insert or update one row (tried up to 3 times)
-/// Rows are plain JSON with camelCase names; one JSON property = one table column.
-/// Any failure becomes EhrException (returned to the caller as 503).
+///   POST {Ehr:BaseUrl}/{Ehr:DataPath}/{path}   insert one new row whose key is in the body (tried up to 3 times;
+///                                              the EHR answers success when the key already exists)
+/// Rows are plain JSON with camelCase names; one JSON property = one table column. Every answer has the client's format
+/// { "<EntityName>": ..., "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" } (EhrResponse): the entity is the row (null = no
+/// such row) or the list of rows.
+/// Any failure (also TOKEN_EXPIRED / ERROR_MESSAGE filled) becomes EhrException (returned to the caller as 503).
 /// </summary>
 public class EhrDataClient
 {
@@ -37,26 +42,32 @@ public class EhrDataClient
         _logger = logger;
     }
 
-    /// <summary>Reads one row. Returns null when the EHR answers 404 (the row does not exist).</summary>
+    /// <summary>Reads one row. Returns null when the entity is null or the EHR answers 404 (the row does not exist).</summary>
     public async Task<T?> GetAsync<T>(string path, CancellationToken ct) where T : class
     {
         string? text = await SendAsync(HttpMethod.Get, path, null, true, ct);
-        if (string.IsNullOrWhiteSpace(text))
+        JsonNode? entity = EhrResponse.Unwrap(text, "EHR data API GET " + path);
+        if (entity == null)
         {
             return null;
         }
-        return Read<T>(path, text);
+        return Read<T>(path, entity);
     }
 
-    /// <summary>Reads a list of rows (a JSON array). An empty answer is an empty list.</summary>
+    /// <summary>Reads a list of rows (the entity is a JSON array). A null entity or an empty answer is an empty list.</summary>
     public async Task<List<T>> GetListAsync<T>(string path, CancellationToken ct)
     {
         string? text = await SendAsync(HttpMethod.Get, path, null, false, ct);
-        if (string.IsNullOrWhiteSpace(text))
+        JsonNode? entity = EhrResponse.Unwrap(text, "EHR data API GET " + path);
+        if (entity == null)
         {
             return new List<T>();
         }
-        List<T>? rows = Read<List<T>>(path, text);
+        if (!(entity is JsonArray))
+        {
+            throw new EhrException("EHR data API GET " + path + " answered an entity that is not a list.");
+        }
+        List<T>? rows = Read<List<T>>(path, entity);
         if (rows == null)
         {
             return new List<T>();
@@ -67,12 +78,29 @@ public class EhrDataClient
     /// <summary>Inserts the row, or updates it when the key in the path already exists.</summary>
     public async Task PutAsync<T>(string path, T row, CancellationToken ct)
     {
+        await SaveAsync(HttpMethod.Put, path, row, ct);
+    }
+
+    /// <summary>
+    /// Inserts a new row; its key (created by the gateway) is in the body. A repeated call with the same key must be
+    /// answered with success by the EHR (the row is already there), so a retry after a timeout is harmless.
+    /// </summary>
+    public async Task PostAsync<T>(string path, T row, CancellationToken ct)
+    {
+        await SaveAsync(HttpMethod.Post, path, row, ct);
+    }
+
+    /// <summary>PUT or POST of one row, tried up to SaveAttempts times.</summary>
+    private async Task SaveAsync<T>(HttpMethod method, string path, T row, CancellationToken ct)
+    {
         string json = ApiJson.Write(row);
         for (int attempt = 1; attempt <= SaveAttempts; attempt++)
         {
             try
             {
-                await SendAsync(HttpMethod.Put, path, json, false, ct);
+                string? answer = await SendAsync(method, path, json, false, ct);
+                // the saved row in the answer is not needed; only TOKEN_EXPIRED / ERROR_MESSAGE are checked
+                EhrResponse.Unwrap(answer, "EHR data API " + method.Method + " " + path);
                 return;
             }
             catch (EhrException ex)
@@ -148,12 +176,12 @@ public class EhrDataClient
         }
     }
 
-    /// <summary>JSON text -> object; a body that is not the expected JSON becomes EhrException.</summary>
-    private static T? Read<T>(string path, string text)
+    /// <summary>The entity -> object; an entity that does not have the expected shape becomes EhrException.</summary>
+    private static T? Read<T>(string path, JsonNode entity)
     {
         try
         {
-            return JsonSerializer.Deserialize<T>(text, ApiJson.Options);
+            return entity.Deserialize<T>(ApiJson.Options);
         }
         catch (JsonException ex)
         {

@@ -2546,7 +2546,8 @@
           "orderLocationCode",
           "patientId",
           "insurancePlanId",
-          "requestingPractitionerId"
+          "requestingPractitionerId",
+          "includeDtr"
         ],
         "type": "object",
         "properties": {
@@ -2648,8 +2649,7 @@
           },
           "includeDtr": {
             "type": "boolean",
-            "description": "Optional, default true. true: completed DTR forms of these orders are found and attached (plus questionnaireResponseIds). false: no DTR form is read or attached and no DTR call is made; send false when CRD answered callDtr = false.",
-            "default": true,
+            "description": "Required on submit and update. true: completed DTR forms of these orders are found and attached (plus questionnaireResponseIds). false: no DTR form is read or attached and no DTR call is made; send false when CRD answered callDtr = false.",
             "example": true
           },
           "questionnaireResponseIds": {

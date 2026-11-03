@@ -61,38 +61,15 @@ public class EhrApiPayerRepository : IPayerRepository
     {
         // TODO: confirm the path with the EHR team; it is the gateway setting Ehr:DataPath + "payers/{id}".
         string path = "payers/" + insurancePlanId.ToString(CultureInfo.InvariantCulture);
-        JsonObject? body = await _ehr.GetAsync<JsonObject>(path, ct);
-        if (body == null)
-        {
-            return null;   // HTTP 404 (or an empty answer): no such payer
-        }
-        JsonElement answer = JsonSerializer.SerializeToElement(body);
-
-        // CLIENT-EHR: TOKEN_EXPIRED and ERROR_MESSAGE are empty texts when the call worked.
-        // TODO: confirm with the EHR team which values TOKEN_EXPIRED holds; for now any text in it is an error.
-        string? tokenExpired = ReadText(answer, "TOKEN_EXPIRED");
-        if (!string.IsNullOrWhiteSpace(tokenExpired))
-        {
-            throw new EhrException("EHR data API GET " + path + " answered TOKEN_EXPIRED = '" + TextHelper.Shorten(tokenExpired, 100) + "'.");
-        }
-        string? errorMessage = ReadText(answer, "ERROR_MESSAGE");
-        if (!string.IsNullOrWhiteSpace(errorMessage))
-        {
-            throw new EhrException("EHR data API GET " + path + " answered with an error: " + TextHelper.Shorten(errorMessage, 300));
-        }
-
-        // CLIENT-EHR: "PayerDetail": null means there is no payer with this insurance plan id.
-        JsonElement? detail = Find(answer, "PayerDetail");
-        if (detail == null || detail.Value.ValueKind == JsonValueKind.Null)
+        // CLIENT-EHR: EhrDataClient reads the answer format { "PayerDetail": ..., "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }
+        // and returns PayerDetail; null = no payer with this insurance plan id (or HTTP 404).
+        JsonObject? detail = await _ehr.GetAsync<JsonObject>(path, ct);
+        if (detail == null)
         {
             return null;
         }
-        if (detail.Value.ValueKind != JsonValueKind.Object)
-        {
-            throw new EhrException("EHR data API GET " + path + " answered a PayerDetail that is not a JSON object.");
-        }
 
-        JsonElement row = detail.Value;
+        JsonElement row = JsonSerializer.SerializeToElement(detail);
         int? rowId = ReadNumber(row, "InsurancePlanID", "insurance plan id " + insurancePlanId);
         if (rowId == null || rowId.Value != insurancePlanId)
         {
