@@ -6,7 +6,7 @@ namespace PayerGatewayWebAPI.Services.Pas;
 /// </summary>
 public class PasFacility
 {
-    /// <summary>Id of the facility Organization (Location.managingOrganization), e.g. facility-loc-main.</summary>
+    /// <summary>Id of the facility Organization (Location.managingOrganization), e.g. org-1 (the location's OrganizationID).</summary>
     public string OrganizationId { get; set; } = string.Empty;
 
     /// <summary>CMS place-of-service code of the facility (Location.type), e.g. 65. Null when the location has none.</summary>

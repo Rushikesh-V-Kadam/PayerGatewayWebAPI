@@ -141,8 +141,8 @@ public class PasService
                 coverage.Id, request.PatientId, request.RequestId);
         }
 
-        // CLIENT-EHR: the client's organization has no NPI, each facility (location) has one, so Claim.provider is the
-        // facility, not the parent organization.
+        // CLIENT-EHR: each facility (location) has its own NPI, so Claim.provider is the organization of the request's
+        // location (Location.managingOrganization), which carries that facility's NPI and tax id.
         // Claim.provider (1..1 in FHIR) is the facility of orderLocationCode, with its own NPI (see FacilityResolver).
         // CLIENT-EHR: the place of service also comes from orderLocationCode (the location), not from the orders.
         PasFacility facility = await _facilities.ResolveAsync(request, ct);

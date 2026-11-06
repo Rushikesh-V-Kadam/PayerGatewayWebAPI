@@ -71,7 +71,7 @@ Every endpoint 1 to 5 returns the same object: the **decision** (section 5).
 - **Authentication:** none is built in. It is added outside this code.
 - **Errors:** `{ "error": "...", "details": ["..."], "traceId": "..." }`. One exception: when the **payer rejects** a request, the body is a decision with `overallStatus = "error"` and the payer's messages in `errors` (section 4.1).
 - **`requestId`** is the EHR's own id of the request. It becomes `Claim.identifier` and is the key for update, cancel, inquire and CDex.
-- **The requesting facility (`Claim.provider`).** The client has many facilities, each with its own NPI; the parent organization has only a tax id. The EHR keeps each facility as a location (name, address, NPI). The FHIR API serves every location also as an Organization, `Organization/facility-{locationId}`, with the facility NPI, the parent's tax id and `partOf` = the parent organization. The gateway takes the facility from
+- **The requesting facility (`Claim.provider`).** The client has many facilities, each with its own NPI. The EHR keeps each facility as a location (`LocationID`, name, address, NPI) that points to its organization (`OrganizationID`); the organization carries the same facility NPI plus the tax id, name and address. The FHIR API serves the location as `Location/{locationId}` with `managingOrganization` = `Organization/{organizationId}`, and that Organization is `Claim.provider`. The gateway takes the facility from
   `orderLocationCode` (required): `Location/{orderLocationCode}` → `managingOrganization`. The client's orders carry no facility, so the orders' location is not read or compared. The payer subscription and the CDex Task search run per payer and facility NPI.
 
 
@@ -558,7 +558,7 @@ Entries of a real request:
 | 2 | Patient | `pat-2` |
 | 3 | Coverage | `cov-2` |
 | 4 | Organization (the payer, `Claim.insurer`) | `payer-MockPayer` |
-| 5 | Organization (the provider: the facility) | `facility-loc-main` |
+| 5 | Organization (the provider: the facility) | `org-1` |
 | 6 | Practitioner (requesting) | `prac-3` |
 | 7 | Practitioner (referring) | `prac-4` |
 | 8 | ServiceRequest (one per order) | `ord-2-home-pd` |
@@ -633,7 +633,7 @@ The Claim of the real request (shortened):
   "patient": { "reference": "Patient/pat-2" },
   "created": "2026-10-08T19:12:01Z",
   "insurer": { "reference": "Organization/payer-MockPayer" },
-  "provider": { "reference": "Organization/facility-loc-main" },
+  "provider": { "reference": "Organization/org-1" },
   "priority": { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/processpriority", "code": "normal" } ] },
   "careTeam": [
     { "sequence": 1, "provider": { "reference": "Practitioner/prac-3" }, "role": { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/claimcareteamrole", "code": "primary", "display": "Primary provider" } ] } },

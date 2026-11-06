@@ -212,7 +212,7 @@ gateway has no payer for yet is looked up again immediately.
 ```json
 {
   "requestId": "PA-2026-0001", "insurancePlanId": 1001, "patientId": "pat-1", "coverageId": "cov-1",
-  "memberId": "MBR-1001", "organizationId": "facility-loc-main", "organizationNpi": "1999999992",
+  "memberId": "MBR-1001", "organizationId": "org-1", "organizationNpi": "1999999992",
   "practitionerId": "prac-1", "practitionerNpi": "1111111112",
   "priority": "routine", "status": "pended", "authorizationNumber": null, "versionNo": 1,
   "orderIdsJson": "[\"ord-1-hd\"]",

@@ -8,14 +8,14 @@ using PayerGatewayWebAPI.Models.Requests;
 
 namespace PayerGatewayWebAPI.Services.Pas;
 
-// CLIENT-EHR: this whole class exists because of the client's EHR. Its organization has a tax id but no NPI; inside it
-// are many facilities (locations), each with its own NPI, name and address. Payers identify the requester by NPI, so
-// every request is sent as coming from the facility.
+// CLIENT-EHR: this whole class exists because of the client's EHR. The client has many facilities, each with its own
+// NPI; the client's orders carry no facility, so the facility of a request comes only from orderLocationCode. Payers
+// identify the requester by NPI, so every request is sent as coming from that facility.
 /// <summary>
-/// Finds the facility of a PAS request. The client has many facilities, each with its own NPI; the parent organization
-/// has only a tax id. The EHR keeps each facility as a location; the FHIR API serves it as Location/{orderLocationCode}
-/// and, because FHIR needs the facility as an Organization (PAS Claim.provider), as the Location's managingOrganization
-/// (facility NPI, the parent's tax id, partOf = the parent).
+/// Finds the facility of a PAS request. The EHR keeps each facility as a location (LocationID) with an organization
+/// (OrganizationID). The FHIR API serves the location as Location/{orderLocationCode} with managingOrganization =
+/// Organization/{OrganizationID}, and that organization carries the facility NPI, tax id, name and address (the
+/// client's organization API), so it is the PAS Claim.provider (FHIR needs an Organization there, never a Location).
 ///
 /// Everything comes only from orderLocationCode of the PAS request (Location/{orderLocationCode}):
 ///   - the facility Organization (Claim.provider): Location.managingOrganization
