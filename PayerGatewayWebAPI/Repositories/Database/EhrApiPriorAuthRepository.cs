@@ -11,7 +11,9 @@ namespace PayerGatewayWebAPI.Repositories.Database;
 
 /// <summary>
 /// Prior auth requests in the EHR database, through the EHR data API (table PA_PRIOR_AUTH):
-///   prior-auths/{requestId}                      one request (GET, PUT)
+///   GET  prior-auths/{requestId}                 one request
+///   POST prior-auths                             save one request: insert, or update when RequestID exists (the
+///                                                client's API; the body uses the client's names, see PriorAuthRow)
 /// The EHR reads the decision from the same table, so no separate write-back is needed.
 /// </summary>
 public class EhrApiPriorAuthRepository : IPriorAuthRepository
@@ -35,11 +37,15 @@ public class EhrApiPriorAuthRepository : IPriorAuthRepository
         return ToRecord(row);
     }
 
-    /// <summary>Inserts or updates one request: PUT prior-auths/{requestId}. Sets UpdatedAt to now, so call it only when something changed.</summary>
+    /// <summary>
+    /// Inserts or updates one request: POST prior-auths with RequestID in the body. The client's POST updates the row
+    /// when the RequestID already exists (the gateway saves the same request on submit, update, cancel and every changed
+    /// decision), so a retry after a timeout is harmless. Sets UpdatedAt to now, so call it only when something changed.
+    /// </summary>
     public async Task SaveAsync(PriorAuthRecord record, CancellationToken ct)
     {
         record.UpdatedAt = DateTime.UtcNow;
-        await _ehr.PutAsync("prior-auths/" + EhrDataClient.Esc(record.RequestId), ToRow(record), ct);
+        await _ehr.PostAsync("prior-auths", ToRow(record), ct);
     }
 
     /// <summary>Record -> row: lists, the decision and the Bundles become JSON text.</summary>
