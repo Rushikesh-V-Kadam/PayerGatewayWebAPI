@@ -1,0 +1,1164 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "CDex - EHR REST APIs (provided by the EHR team)",
+    "version": "v1",
+    "description": "REST APIs the EHR team provides for the CDex step (Da Vinci CDex 2.0.0 / PAS 2.0.1 Task) of the Payer Gateway prior authorization workflow. The Payer Gateway and the FHIR API have no database of their own: they save and read CDex data in the EHR's Oracle database through these APIs.\n\n**Rules**\n- Every answer is HTTP 200 in the client's format: `{ \"<EntityName>\": <row, list or null>, \"TOKEN_EXPIRED\": \"\", \"ERROR_MESSAGE\": \"\" }`. The callers read the one entity property whatever its name.\n- Any text in `TOKEN_EXPIRED` or `ERROR_MESSAGE`, or any non-2xx HTTP status, is a failure.\n- No row: entity = `null` (HTTP 404 is understood too). Empty list: `[]`.\n- Request bodies are the plain row (not wrapped); one property = one column.\n- PUT = insert, or update when the key in the URL exists (Oracle MERGE); safe to repeat; the key in the URL wins.\n- Properties ending in Json / JSON / Bundle are strings holding JSON: store in the CLOB and return unchanged.\n- Timestamps: UTC ISO-8601 with Z. Allow request / response bodies of at least 20 MB.\n- Ids in the URL are URL-encoded by the caller.\n- No authentication is built in yet; use HTTPS.\n\n**Open points to confirm:** entity names of the document APIs (DocumentDetail, DocumentContentDetail, DocumentList are suggestions); whether cdex-tasks should use the client's naming (InsurancePlanID, TaskID, TaskJSON) like prior-auths; values of TOKEN_EXPIRED; largest document size."
+  },
+  "servers": [
+    {
+      "url": "{ehrBaseUrl}",
+      "variables": {
+        "ehrBaseUrl": {
+          "default": "https://ehr.example.com",
+          "description": "EHR base URL"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "name": "CDex Tasks (PA_CDEX_TASK)",
+      "description": "Payer information requests (FHIR Tasks). Called by the Payer Gateway."
+    },
+    {
+      "name": "Prior auth request (PA_PRIOR_AUTH)",
+      "description": "Same APIs as the PAS step; CDex reads the member id and NPIs and updates DecisionJSON. Called by the Payer Gateway."
+    },
+    {
+      "name": "Documents",
+      "description": "EHR clinical documents. Called by the FHIR API (turned into DocumentReference and Binary)."
+    },
+    {
+      "name": "DTR forms (PA_QUESTIONNAIRE_RESPONSE)",
+      "description": "Filled-in DTR forms sent with the attachments. Called by the FHIR API."
+    }
+  ],
+  "paths": {
+    "/api/prior-auth-data/cdex-tasks/{insurancePlanId}/{taskId}": {
+      "put": {
+        "tags": [
+          "CDex Tasks (PA_CDEX_TASK)"
+        ],
+        "operationId": "saveCdexTask",
+        "summary": "A1 - Save (insert / update) one payer Task",
+        "description": "Called for every Task found at the payer for a pended request, and after the attachments were sent (status completed / in-progress). MERGE on (INSURANCE_PLAN_ID, TASK_ID).",
+        "parameters": [
+          {
+            "name": "insurancePlanId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "example": 1001,
+            "description": "Payer key (PA_PAYER.INSURANCE_PLAN_ID)."
+          },
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "example": "5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6",
+            "description": "The payer's Task id (Task.id)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CdexTaskRow"
+              },
+              "example": {
+                "insurancePlanId": 1001,
+                "taskId": "5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6",
+                "requestId": "PA-2026-0102",
+                "trackingId": "TRK-3f9a1c2b7d4e5f60",
+                "trackingSystem": "http://example.org/cdex/tracking-ids",
+                "status": "requested",
+                "dueDate": "2026-10-23",
+                "taskJson": "{\"resourceType\":\"Task\",\"id\":\"5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6\",\"status\":\"requested\"}",
+                "receivedAt": "2026-10-09T05:31:02Z"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved; CdexTaskDetail = the saved row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CdexTaskDetailResponse"
+                },
+                "example": {
+                  "CdexTaskDetail": {
+                    "insurancePlanId": 1001,
+                    "taskId": "5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6",
+                    "requestId": "PA-2026-0102",
+                    "trackingId": "TRK-3f9a1c2b7d4e5f60",
+                    "trackingSystem": "http://example.org/cdex/tracking-ids",
+                    "status": "requested",
+                    "dueDate": "2026-10-23",
+                    "taskJson": "{\"resourceType\":\"Task\",\"id\":\"5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6\",\"status\":\"requested\"}",
+                    "receivedAt": "2026-10-09T05:31:02Z"
+                  },
+                  "TOKEN_EXPIRED": "",
+                  "ERROR_MESSAGE": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (any non-2xx is a failure for the caller)."
+          },
+          "500": {
+            "description": "Server error (any non-2xx is a failure for the caller)."
+          }
+        }
+      }
+    },
+    "/api/prior-auth-data/cdex-tasks": {
+      "get": {
+        "tags": [
+          "CDex Tasks (PA_CDEX_TASK)"
+        ],
+        "operationId": "listCdexTasks",
+        "summary": "A2 - All Tasks of one prior authorization request",
+        "description": "SELECT ... FROM PA_CDEX_TASK WHERE REQUEST_ID = :requestId (index IX_PA_CDEX_TASK_REQUEST).",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "example": "PA-2026-0102"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The matching rows ([] when nothing matches).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CdexTaskListResponse"
+                },
+                "example": {
+                  "CdexTaskList": [
+                    {
+                      "insurancePlanId": 1001,
+                      "taskId": "5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6",
+                      "requestId": "PA-2026-0102",
+                      "trackingId": "TRK-3f9a1c2b7d4e5f60",
+                      "trackingSystem": "http://example.org/cdex/tracking-ids",
+                      "status": "requested",
+                      "dueDate": "2026-10-23",
+                      "taskJson": "{\"resourceType\":\"Task\",\"id\":\"5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6\",\"status\":\"requested\"}",
+                      "receivedAt": "2026-10-09T05:31:02Z"
+                    }
+                  ],
+                  "TOKEN_EXPIRED": "",
+                  "ERROR_MESSAGE": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (any non-2xx is a failure for the caller)."
+          },
+          "500": {
+            "description": "Server error (any non-2xx is a failure for the caller)."
+          }
+        }
+      }
+    },
+    "/api/prior-auth-data/prior-auths/{requestId}": {
+      "get": {
+        "tags": [
+          "Prior auth request (PA_PRIOR_AUTH)"
+        ],
+        "operationId": "getPriorAuth",
+        "summary": "A3 - Read one prior authorization request",
+        "description": "CDex uses: InsurancePlanID (payer), Status (Tasks are searched only while 'pended'), MemberID ($submit-attachment MemberId, required), OrganizationNPI (OrganizationId and Task search owner), PractitionerNPI (ProviderId), DecisionJSON (informationRequests). Property names: any letter case is accepted.",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "example": "PA-2026-0102"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row, or PriorAuthDetail = null when there is no such request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriorAuthDetailResponse"
+                },
+                "example": {
+                  "PriorAuthDetail": {
+                    "RequestID": "PA-2026-0102",
+                    "InsurancePlanID": 1001,
+                    "PatientID": "pat-1",
+                    "CoverageID": "cov-1",
+                    "MemberID": "MBR-1001",
+                    "OrganizationID": "org-1",
+                    "OrganizationNPI": "1999999992",
+                    "PractitionerID": "prac-1",
+                    "PractitionerNPI": "1111111112",
+                    "Priority": "routine",
+                    "Status": "pended",
+                    "AuthorizationNumber": null,
+                    "VersionNo": 1,
+                    "OrderIDsJSON": "[\"ord-1-hd\"]",
+                    "LineNumbersJSON": "{\"ord-1-hd\":1}",
+                    "DecisionJSON": "{\"requestId\":\"PA-2026-0102\",\"overallStatus\":\"pended\",\"lines\":[{\"sequence\":1,\"orderId\":\"ord-1-hd\",\"decision\":\"pended\"}],\"informationRequests\":[{\"trackingId\":\"TRK-3f9a1c2b7d4e5f60\",\"taskId\":\"5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6\",\"dueDate\":\"2026-10-23\",\"status\":\"requested\",\"documentsNeeded\":[{\"loincCode\":\"11502-2\",\"display\":null,\"lineNumber\":1}],\"questionnairesNeeded\":[]}],\"errors\":[]}",
+                    "LastRequestBundle": "{\"resourceType\":\"Bundle\"}",
+                    "LastResponseBundle": "{\"resourceType\":\"Bundle\"}",
+                    "SubmittedAt": "2026-10-09T05:30:00Z",
+                    "UpdatedAt": "2026-10-09T05:31:02Z"
+                  },
+                  "TOKEN_EXPIRED": "",
+                  "ERROR_MESSAGE": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (any non-2xx is a failure for the caller)."
+          },
+          "500": {
+            "description": "Server error (any non-2xx is a failure for the caller)."
+          }
+        }
+      }
+    },
+    "/api/prior-auth-data/prior-auths": {
+      "post": {
+        "tags": [
+          "Prior auth request (PA_PRIOR_AUTH)"
+        ],
+        "operationId": "savePriorAuth",
+        "summary": "A4 - Save (insert / update by RequestID) the prior authorization request",
+        "description": "CDex calls it to store the payer's information requests in DecisionJSON.informationRequests and, after a final submit, the new decision. The client's property names are used. A repeated call with the same body must answer success.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriorAuthRow"
+              },
+              "example": {
+                "RequestID": "PA-2026-0102",
+                "InsurancePlanID": 1001,
+                "PatientID": "pat-1",
+                "CoverageID": "cov-1",
+                "MemberID": "MBR-1001",
+                "OrganizationID": "org-1",
+                "OrganizationNPI": "1999999992",
+                "PractitionerID": "prac-1",
+                "PractitionerNPI": "1111111112",
+                "Priority": "routine",
+                "Status": "pended",
+                "AuthorizationNumber": null,
+                "VersionNo": 1,
+                "OrderIDsJSON": "[\"ord-1-hd\"]",
+                "LineNumbersJSON": "{\"ord-1-hd\":1}",
+                "DecisionJSON": "{\"requestId\":\"PA-2026-0102\",\"overallStatus\":\"pended\",\"lines\":[{\"sequence\":1,\"orderId\":\"ord-1-hd\",\"decision\":\"pended\"}],\"informationRequests\":[{\"trackingId\":\"TRK-3f9a1c2b7d4e5f60\",\"taskId\":\"5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6\",\"dueDate\":\"2026-10-23\",\"status\":\"requested\",\"documentsNeeded\":[{\"loincCode\":\"11502-2\",\"display\":null,\"lineNumber\":1}],\"questionnairesNeeded\":[]}],\"errors\":[]}",
+                "LastRequestBundle": "{\"resourceType\":\"Bundle\"}",
+                "LastResponseBundle": "{\"resourceType\":\"Bundle\"}",
+                "SubmittedAt": "2026-10-09T05:30:00Z",
+                "UpdatedAt": "2026-10-09T05:31:02Z"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved; PriorAuthDetail = the saved row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriorAuthDetailResponse"
+                },
+                "example": {
+                  "PriorAuthDetail": {
+                    "RequestID": "PA-2026-0102",
+                    "InsurancePlanID": 1001,
+                    "PatientID": "pat-1",
+                    "CoverageID": "cov-1",
+                    "MemberID": "MBR-1001",
+                    "OrganizationID": "org-1",
+                    "OrganizationNPI": "1999999992",
+                    "PractitionerID": "prac-1",
+                    "PractitionerNPI": "1111111112",
+                    "Priority": "routine",
+                    "Status": "pended",
+                    "AuthorizationNumber": null,
+                    "VersionNo": 1,
+                    "OrderIDsJSON": "[\"ord-1-hd\"]",
+                    "LineNumbersJSON": "{\"ord-1-hd\":1}",
+                    "DecisionJSON": "{\"requestId\":\"PA-2026-0102\",\"overallStatus\":\"pended\",\"lines\":[{\"sequence\":1,\"orderId\":\"ord-1-hd\",\"decision\":\"pended\"}],\"informationRequests\":[{\"trackingId\":\"TRK-3f9a1c2b7d4e5f60\",\"taskId\":\"5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6\",\"dueDate\":\"2026-10-23\",\"status\":\"requested\",\"documentsNeeded\":[{\"loincCode\":\"11502-2\",\"display\":null,\"lineNumber\":1}],\"questionnairesNeeded\":[]}],\"errors\":[]}",
+                    "LastRequestBundle": "{\"resourceType\":\"Bundle\"}",
+                    "LastResponseBundle": "{\"resourceType\":\"Bundle\"}",
+                    "SubmittedAt": "2026-10-09T05:30:00Z",
+                    "UpdatedAt": "2026-10-09T05:31:02Z"
+                  },
+                  "TOKEN_EXPIRED": "",
+                  "ERROR_MESSAGE": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (any non-2xx is a failure for the caller)."
+          },
+          "500": {
+            "description": "Server error (any non-2xx is a failure for the caller)."
+          }
+        }
+      }
+    },
+    "/api/documents/{documentId}": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "getDocument",
+        "summary": "A5 - One clinical document (description, not the file)",
+        "description": "The FHIR API turns it into a US Core DocumentReference (GET /fhir/r4/DocumentReference/{id}). Payers ask for documents by LOINC type, so typeCode must be filled.",
+        "parameters": [
+          {
+            "name": "documentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "doc-1-labs"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The document, or DocumentDetail = null (HTTP 404 also understood).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDetailResponse"
+                },
+                "example": {
+                  "DocumentDetail": {
+                    "documentId": "doc-1-labs",
+                    "patientId": "pat-1",
+                    "typeCode": "11502-2",
+                    "typeCodeSystem": "LOINC",
+                    "typeDisplay": "Laboratory report",
+                    "category": "clinical-note",
+                    "title": "Monthly dialysis labs - September 2026",
+                    "createdDateTime": "2026-09-22T12:00:00Z",
+                    "authorPractitionerId": "prac-1",
+                    "organizationId": "org-1",
+                    "encounterId": "enc-1",
+                    "status": "current",
+                    "contentType": "application/pdf",
+                    "sizeBytes": 48213,
+                    "contentUrl": "/api/documents/doc-1-labs/content"
+                  },
+                  "TOKEN_EXPIRED": "",
+                  "ERROR_MESSAGE": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (any non-2xx is a failure for the caller)."
+          },
+          "500": {
+            "description": "Server error (any non-2xx is a failure for the caller)."
+          }
+        }
+      }
+    },
+    "/api/documents/{documentId}/content": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "getDocumentContent",
+        "summary": "A6 - The file of a document, Base64",
+        "description": "The FHIR API turns it into a FHIR Binary (GET /fhir/r4/Binary/{id}). The gateway embeds the file in $submit-attachment, so files of several MB must work.",
+        "parameters": [
+          {
+            "name": "documentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "doc-1-labs"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file, or DocumentContentDetail = null.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentContentDetailResponse"
+                },
+                "example": {
+                  "DocumentContentDetail": {
+                    "documentId": "doc-1-labs",
+                    "contentType": "application/pdf",
+                    "contentBase64": "JVBERi0xLjcKJcfsj6IK..."
+                  },
+                  "TOKEN_EXPIRED": "",
+                  "ERROR_MESSAGE": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (any non-2xx is a failure for the caller)."
+          },
+          "500": {
+            "description": "Server error (any non-2xx is a failure for the caller)."
+          }
+        }
+      }
+    },
+    "/api/patients/{patientId}/documents": {
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "operationId": "listPatientDocuments",
+        "summary": "A7 - Documents of a patient (no file)",
+        "description": "Used by the FHIR DocumentReference search (GET /fhir/r4/DocumentReference?patient=&type=).",
+        "parameters": [
+          {
+            "name": "patientId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "pat-1"
+          },
+          {
+            "name": "typeCode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "11502-2",
+            "description": "Only documents of this LOINC type."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The documents ([] when none).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentListResponse"
+                },
+                "example": {
+                  "DocumentList": [
+                    {
+                      "documentId": "doc-1-labs",
+                      "patientId": "pat-1",
+                      "typeCode": "11502-2",
+                      "typeCodeSystem": "LOINC",
+                      "typeDisplay": "Laboratory report",
+                      "category": "clinical-note",
+                      "title": "Monthly dialysis labs - September 2026",
+                      "createdDateTime": "2026-09-22T12:00:00Z",
+                      "authorPractitionerId": "prac-1",
+                      "organizationId": "org-1",
+                      "encounterId": "enc-1",
+                      "status": "current",
+                      "contentType": "application/pdf",
+                      "sizeBytes": 48213,
+                      "contentUrl": "/api/documents/doc-1-labs/content"
+                    }
+                  ],
+                  "TOKEN_EXPIRED": "",
+                  "ERROR_MESSAGE": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (any non-2xx is a failure for the caller)."
+          },
+          "500": {
+            "description": "Server error (any non-2xx is a failure for the caller)."
+          }
+        }
+      }
+    },
+    "/api/prior-auth-data/questionnaire-responses/{id}": {
+      "get": {
+        "tags": [
+          "DTR forms (PA_QUESTIONNAIRE_RESPONSE)"
+        ],
+        "operationId": "getQuestionnaireResponse",
+        "summary": "A8 - One filled-in DTR form",
+        "description": "Read by the FHIR API (GET /fhir/r4/QuestionnaireResponse/{id}) when the EHR sends a form id in questionnaireResponseIds. resourceJson must be returned exactly as stored.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "example": "qr-frm-235b7ad69e85"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row, or QuestionnaireResponseDetail = null.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuestionnaireResponseDetailResponse"
+                },
+                "example": {
+                  "QuestionnaireResponseDetail": {
+                    "id": "qr-frm-235b7ad69e85",
+                    "patientId": "pat-1",
+                    "orderId": "ord-1-hd",
+                    "coverageId": "cov-1",
+                    "questionnaireUrl": "http://example.org/fhir/Questionnaire/dialysis-incenter-hd",
+                    "status": "completed",
+                    "resourceJson": "{\"resourceType\":\"QuestionnaireResponse\",\"id\":\"qr-frm-235b7ad69e85\",\"status\":\"completed\"}",
+                    "ehrResponseId": null,
+                    "ehrSyncStatus": "PENDING",
+                    "lastUpdatedUtc": "2026-10-09T05:20:00Z"
+                  },
+                  "TOKEN_EXPIRED": "",
+                  "ERROR_MESSAGE": ""
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request (any non-2xx is a failure for the caller)."
+          },
+          "500": {
+            "description": "Server error (any non-2xx is a failure for the caller)."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CdexTaskRow": {
+        "type": "object",
+        "description": "Row of PA_CDEX_TASK. Primary key (INSURANCE_PLAN_ID, TASK_ID).",
+        "required": [
+          "insurancePlanId",
+          "taskId",
+          "requestId",
+          "trackingId",
+          "taskJson",
+          "receivedAt"
+        ],
+        "properties": {
+          "insurancePlanId": {
+            "type": "integer",
+            "format": "int32",
+            "description": "INSURANCE_PLAN_ID NUMBER(10). Payer key, part 1."
+          },
+          "taskId": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "TASK_ID. The payer's Task id, part 2."
+          },
+          "requestId": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "REQUEST_ID = PA_PRIOR_AUTH.REQUEST_ID."
+          },
+          "trackingId": {
+            "type": "string",
+            "maxLength": 100,
+            "description": "TRACKING_ID. Sent back to the payer with the documents."
+          },
+          "trackingSystem": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "description": "TRACKING_SYSTEM. Sent back unchanged."
+          },
+          "status": {
+            "type": "string",
+            "maxLength": 20,
+            "nullable": true,
+            "description": "STATUS: requested | in-progress | completed | cancelled ..."
+          },
+          "dueDate": {
+            "type": "string",
+            "maxLength": 30,
+            "nullable": true,
+            "description": "DUE_DATE. Date text as the payer sent it (Task.restriction.period.end)."
+          },
+          "taskJson": {
+            "type": "string",
+            "description": "TASK_JSON CLOB (IS JSON). The FHIR Task as received; return unchanged."
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RECEIVED_AT TIMESTAMP (UTC)."
+          }
+        }
+      },
+      "PriorAuthRow": {
+        "type": "object",
+        "description": "Row of PA_PRIOR_AUTH with the client's property names.",
+        "required": [
+          "RequestID",
+          "InsurancePlanID",
+          "PatientID",
+          "CoverageID",
+          "OrganizationID",
+          "Priority",
+          "Status",
+          "VersionNo",
+          "SubmittedAt",
+          "UpdatedAt"
+        ],
+        "properties": {
+          "RequestID": {
+            "type": "string",
+            "description": "Key."
+          },
+          "InsurancePlanID": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "PatientID": {
+            "type": "string"
+          },
+          "CoverageID": {
+            "type": "string"
+          },
+          "MemberID": {
+            "type": "string",
+            "nullable": true,
+            "description": "Required by CDex ($submit-attachment MemberId 1..1)."
+          },
+          "OrganizationID": {
+            "type": "string"
+          },
+          "OrganizationNPI": {
+            "type": "string",
+            "nullable": true,
+            "description": "CDex OrganizationId and Task search owner. One of OrganizationNPI / PractitionerNPI must be filled for CDex."
+          },
+          "PractitionerID": {
+            "type": "string",
+            "nullable": true
+          },
+          "PractitionerNPI": {
+            "type": "string",
+            "nullable": true,
+            "description": "CDex ProviderId."
+          },
+          "Priority": {
+            "type": "string",
+            "enum": [
+              "routine",
+              "urgent"
+            ]
+          },
+          "Status": {
+            "type": "string",
+            "enum": [
+              "approved",
+              "partially-approved",
+              "denied",
+              "pended",
+              "not-required",
+              "cancelled",
+              "contact-payer",
+              "error"
+            ]
+          },
+          "AuthorizationNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "VersionNo": {
+            "type": "integer"
+          },
+          "OrderIDsJSON": {
+            "type": "string",
+            "nullable": true,
+            "description": "JSON text."
+          },
+          "LineNumbersJSON": {
+            "type": "string",
+            "nullable": true,
+            "description": "JSON text."
+          },
+          "DecisionJSON": {
+            "type": "string",
+            "nullable": true,
+            "description": "JSON text: the full decision including informationRequests (see InformationRequest)."
+          },
+          "LastRequestBundle": {
+            "type": "string",
+            "nullable": true,
+            "description": "JSON text; can be several MB."
+          },
+          "LastResponseBundle": {
+            "type": "string",
+            "nullable": true,
+            "description": "JSON text."
+          },
+          "SubmittedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "UpdatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "InformationRequest": {
+        "type": "object",
+        "description": "One entry of DecisionJSON.informationRequests (the payer's Task as plain JSON). For reference: it is stored inside the DecisionJSON text.",
+        "properties": {
+          "trackingId": {
+            "type": "string"
+          },
+          "taskId": {
+            "type": "string"
+          },
+          "dueDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string"
+          },
+          "documentsNeeded": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "loincCode": {
+                  "type": "string"
+                },
+                "display": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "lineNumber": {
+                  "type": "integer",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "questionnairesNeeded": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Questionnaire URL"
+            }
+          }
+        }
+      },
+      "Document": {
+        "type": "object",
+        "description": "EHR clinical document (description, not the file). Becomes a US Core DocumentReference.",
+        "required": [
+          "documentId",
+          "patientId",
+          "typeCode",
+          "status"
+        ],
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "→ DocumentReference.id, identifier.value. Sent in documentIds."
+          },
+          "patientId": {
+            "type": "string",
+            "description": "→ subject Patient/{id}."
+          },
+          "typeCode": {
+            "type": "string",
+            "description": "LOINC document type, e.g. 11502-2 Laboratory report, 11506-3 Progress note, 18842-5 Discharge summary → type; Attachment.Code."
+          },
+          "typeCodeSystem": {
+            "type": "string",
+            "default": "LOINC"
+          },
+          "typeDisplay": {
+            "type": "string",
+            "nullable": true
+          },
+          "category": {
+            "type": "string",
+            "nullable": true,
+            "description": "Empty = clinical-note."
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "→ description, attachment.title."
+          },
+          "createdDateTime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "→ date, attachment.creation."
+          },
+          "authorPractitionerId": {
+            "type": "string",
+            "nullable": true,
+            "description": "→ author Practitioner/{id}."
+          },
+          "organizationId": {
+            "type": "string",
+            "nullable": true
+          },
+          "encounterId": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "current",
+              "superseded",
+              "entered-in-error"
+            ]
+          },
+          "contentType": {
+            "type": "string",
+            "nullable": true,
+            "description": "MIME type: application/pdf, text/plain, image/png ..."
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true
+          },
+          "contentUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "Information only."
+          }
+        }
+      },
+      "DocumentContent": {
+        "type": "object",
+        "description": "The file of a document. Becomes a FHIR Binary.",
+        "required": [
+          "documentId",
+          "contentBase64"
+        ],
+        "properties": {
+          "documentId": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string",
+            "nullable": true,
+            "description": "Empty = application/octet-stream."
+          },
+          "contentBase64": {
+            "type": "string",
+            "format": "byte",
+            "description": "The whole file, Base64."
+          }
+        }
+      },
+      "QuestionnaireResponseRow": {
+        "type": "object",
+        "description": "Row of PA_QUESTIONNAIRE_RESPONSE (DTR step).",
+        "required": [
+          "id",
+          "patientId",
+          "status",
+          "resourceJson",
+          "ehrSyncStatus",
+          "lastUpdatedUtc"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "patientId": {
+            "type": "string"
+          },
+          "orderId": {
+            "type": "string",
+            "nullable": true
+          },
+          "coverageId": {
+            "type": "string",
+            "nullable": true
+          },
+          "questionnaireUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "in-progress",
+              "completed",
+              "amended",
+              "entered-in-error",
+              "stopped"
+            ]
+          },
+          "resourceJson": {
+            "type": "string",
+            "description": "The complete FHIR QuestionnaireResponse; return unchanged."
+          },
+          "ehrResponseId": {
+            "type": "string",
+            "nullable": true
+          },
+          "ehrSyncStatus": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "SENT",
+              "FAILED"
+            ]
+          },
+          "lastUpdatedUtc": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CdexTaskDetailResponse": {
+        "type": "object",
+        "description": "Client format: { CdexTaskDetail, TOKEN_EXPIRED, ERROR_MESSAGE }.",
+        "required": [
+          "CdexTaskDetail",
+          "TOKEN_EXPIRED",
+          "ERROR_MESSAGE"
+        ],
+        "properties": {
+          "CdexTaskDetail": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CdexTaskRow"
+              }
+            ],
+            "nullable": true
+          },
+          "TOKEN_EXPIRED": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          },
+          "ERROR_MESSAGE": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          }
+        }
+      },
+      "CdexTaskListResponse": {
+        "type": "object",
+        "description": "Client format: { CdexTaskList, TOKEN_EXPIRED, ERROR_MESSAGE }.",
+        "required": [
+          "CdexTaskList",
+          "TOKEN_EXPIRED",
+          "ERROR_MESSAGE"
+        ],
+        "properties": {
+          "CdexTaskList": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CdexTaskRow"
+            }
+          },
+          "TOKEN_EXPIRED": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          },
+          "ERROR_MESSAGE": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          }
+        }
+      },
+      "PriorAuthDetailResponse": {
+        "type": "object",
+        "description": "Client format: { PriorAuthDetail, TOKEN_EXPIRED, ERROR_MESSAGE }.",
+        "required": [
+          "PriorAuthDetail",
+          "TOKEN_EXPIRED",
+          "ERROR_MESSAGE"
+        ],
+        "properties": {
+          "PriorAuthDetail": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PriorAuthRow"
+              }
+            ],
+            "nullable": true
+          },
+          "TOKEN_EXPIRED": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          },
+          "ERROR_MESSAGE": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          }
+        }
+      },
+      "DocumentDetailResponse": {
+        "type": "object",
+        "description": "Client format: { DocumentDetail, TOKEN_EXPIRED, ERROR_MESSAGE }. Entity name to be confirmed.",
+        "required": [
+          "DocumentDetail",
+          "TOKEN_EXPIRED",
+          "ERROR_MESSAGE"
+        ],
+        "properties": {
+          "DocumentDetail": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Document"
+              }
+            ],
+            "nullable": true
+          },
+          "TOKEN_EXPIRED": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          },
+          "ERROR_MESSAGE": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          }
+        }
+      },
+      "DocumentContentDetailResponse": {
+        "type": "object",
+        "description": "Client format: { DocumentContentDetail, TOKEN_EXPIRED, ERROR_MESSAGE }. Entity name to be confirmed.",
+        "required": [
+          "DocumentContentDetail",
+          "TOKEN_EXPIRED",
+          "ERROR_MESSAGE"
+        ],
+        "properties": {
+          "DocumentContentDetail": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DocumentContent"
+              }
+            ],
+            "nullable": true
+          },
+          "TOKEN_EXPIRED": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          },
+          "ERROR_MESSAGE": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          }
+        }
+      },
+      "DocumentListResponse": {
+        "type": "object",
+        "description": "Client format: { DocumentList, TOKEN_EXPIRED, ERROR_MESSAGE }. Entity name to be confirmed.",
+        "required": [
+          "DocumentList",
+          "TOKEN_EXPIRED",
+          "ERROR_MESSAGE"
+        ],
+        "properties": {
+          "DocumentList": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            }
+          },
+          "TOKEN_EXPIRED": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          },
+          "ERROR_MESSAGE": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          }
+        }
+      },
+      "QuestionnaireResponseDetailResponse": {
+        "type": "object",
+        "description": "Client format: { QuestionnaireResponseDetail, TOKEN_EXPIRED, ERROR_MESSAGE }.",
+        "required": [
+          "QuestionnaireResponseDetail",
+          "TOKEN_EXPIRED",
+          "ERROR_MESSAGE"
+        ],
+        "properties": {
+          "QuestionnaireResponseDetail": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/QuestionnaireResponseRow"
+              }
+            ],
+            "nullable": true
+          },
+          "TOKEN_EXPIRED": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          },
+          "ERROR_MESSAGE": {
+            "type": "string",
+            "example": "",
+            "description": "Empty when the call worked. Any text = failure."
+          }
+        }
+      }
+    }
+  }
+}

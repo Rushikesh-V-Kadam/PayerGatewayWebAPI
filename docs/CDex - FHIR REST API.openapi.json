@@ -1,0 +1,1362 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "CDex - FHIR REST APIs (FHIR R4, Da Vinci CDex 2.0.0 / PAS 2.0.1)",
+    "version": "v1",
+    "description": "FHIR REST APIs of the CDex workflow.\n\n- **Provider FHIR API (FHIRAPI)**, base `{fhirApiBaseUrl}/fhir/r4`: DocumentReference, Binary and QuestionnaireResponse, read by the Payer Gateway to build $submit-attachment.\n- **Payer FHIR APIs** (per-path server `{payerBaseUrl}/{fhirPath}`): Task search, $submit-attachment and Claim/$inquire, called by the Payer Gateway.\n- **Payer Gateway CDex endpoints** (per-path server `{gatewayBaseUrl}`): called by the EHR.\n\nMedia type application/fhir+json (application/json accepted). Errors are FHIR OperationOutcome. Payers never call the gateway (no pushed Tasks): the EHR's scheduled job calls information-requests?refresh=true for every pended request. Identifiers (MRN, document id, member id, payer id) are sent without a system for now; NPIs use http://hl7.org/fhir/sid/us-npi."
+  },
+  "servers": [
+    {
+      "url": "{fhirApiBaseUrl}/fhir/r4",
+      "description": "Provider FHIR API (FHIRAPI)",
+      "variables": {
+        "fhirApiBaseUrl": {
+          "default": "http://localhost:5100"
+        }
+      }
+    }
+  ],
+  "tags": [
+    {
+      "name": "Provider FHIR API - DocumentReference"
+    },
+    {
+      "name": "Provider FHIR API - Binary"
+    },
+    {
+      "name": "Provider FHIR API - QuestionnaireResponse"
+    },
+    {
+      "name": "Payer FHIR API (called by the gateway)"
+    },
+    {
+      "name": "Payer Gateway CDex (called by the EHR)"
+    }
+  ],
+  "paths": {
+    "/DocumentReference/{id}": {
+      "get": {
+        "tags": [
+          "Provider FHIR API - DocumentReference"
+        ],
+        "operationId": "readDocumentReference",
+        "summary": "B1 - Read one DocumentReference (US Core)",
+        "description": "Built from EHR GET api/documents/{id}. The file is not embedded: content.attachment.url points to Binary/{id}; the gateway downloads it and puts it in attachment.data.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "doc-1-labs"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The DocumentReference.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resource"
+                },
+                "example": {
+                  "resourceType": "DocumentReference",
+                  "id": "doc-1-labs",
+                  "meta": {
+                    "profile": [
+                      "http://hl7.org/fhir/us/core/StructureDefinition/us-core-documentreference"
+                    ]
+                  },
+                  "identifier": [
+                    {
+                      "value": "doc-1-labs"
+                    }
+                  ],
+                  "status": "current",
+                  "type": {
+                    "coding": [
+                      {
+                        "system": "http://loinc.org",
+                        "code": "11502-2",
+                        "display": "Laboratory report"
+                      }
+                    ]
+                  },
+                  "category": [
+                    {
+                      "coding": [
+                        {
+                          "system": "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category",
+                          "code": "clinical-note"
+                        }
+                      ]
+                    }
+                  ],
+                  "subject": {
+                    "reference": "Patient/pat-1"
+                  },
+                  "date": "2026-09-22T12:00:00Z",
+                  "author": [
+                    {
+                      "reference": "Practitioner/prac-1"
+                    }
+                  ],
+                  "description": "Monthly dialysis labs - September 2026",
+                  "content": [
+                    {
+                      "attachment": {
+                        "contentType": "application/pdf",
+                        "url": "http://localhost:5100/fhir/r4/Binary/doc-1-labs",
+                        "title": "Monthly dialysis labs - September 2026",
+                        "creation": "2026-09-22T12:00:00Z"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such document in the EHR.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "not-found",
+                      "diagnostics": "DocumentReference/doc-9 was not found."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The EHR could not be reached or answered with an error.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "exception",
+                      "diagnostics": "The EHR answered with an error."
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/DocumentReference": {
+      "get": {
+        "tags": [
+          "Provider FHIR API - DocumentReference"
+        ],
+        "operationId": "searchDocumentReference",
+        "summary": "B1s - Search DocumentReference by patient and LOINC type",
+        "description": "Built from EHR GET api/patients/{patientId}/documents?typeCode=. Use the loincCode of the payer's documentsNeeded as type.",
+        "parameters": [
+          {
+            "name": "patient",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "pat-1",
+            "description": "Required unless subject is sent. Patient id or Patient/{id}."
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Same as patient."
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "http://loinc.org|11502-2",
+            "description": "system|code."
+          },
+          {
+            "name": "_include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "example": [
+              "DocumentReference:patient"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "searchset Bundle (total 0 when nothing found).",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resource"
+                },
+                "example": {
+                  "resourceType": "Bundle",
+                  "type": "searchset",
+                  "total": 1,
+                  "entry": [
+                    {
+                      "fullUrl": "http://localhost:5100/fhir/r4/DocumentReference/doc-1-labs",
+                      "resource": {
+                        "resourceType": "DocumentReference",
+                        "id": "doc-1-labs",
+                        "meta": {
+                          "profile": [
+                            "http://hl7.org/fhir/us/core/StructureDefinition/us-core-documentreference"
+                          ]
+                        },
+                        "identifier": [
+                          {
+                            "value": "doc-1-labs"
+                          }
+                        ],
+                        "status": "current",
+                        "type": {
+                          "coding": [
+                            {
+                              "system": "http://loinc.org",
+                              "code": "11502-2",
+                              "display": "Laboratory report"
+                            }
+                          ]
+                        },
+                        "category": [
+                          {
+                            "coding": [
+                              {
+                                "system": "http://hl7.org/fhir/us/core/CodeSystem/us-core-documentreference-category",
+                                "code": "clinical-note"
+                              }
+                            ]
+                          }
+                        ],
+                        "subject": {
+                          "reference": "Patient/pat-1"
+                        },
+                        "date": "2026-09-22T12:00:00Z",
+                        "author": [
+                          {
+                            "reference": "Practitioner/prac-1"
+                          }
+                        ],
+                        "description": "Monthly dialysis labs - September 2026",
+                        "content": [
+                          {
+                            "attachment": {
+                              "contentType": "application/pdf",
+                              "url": "http://localhost:5100/fhir/r4/Binary/doc-1-labs",
+                              "title": "Monthly dialysis labs - September 2026",
+                              "creation": "2026-09-22T12:00:00Z"
+                            }
+                          }
+                        ]
+                      },
+                      "search": {
+                        "mode": "match"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "patient / subject missing.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "required",
+                      "diagnostics": "DocumentReference search requires the patient parameter."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The EHR could not be reached or answered with an error.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "exception",
+                      "diagnostics": "The EHR answered with an error."
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/Binary/{id}": {
+      "get": {
+        "tags": [
+          "Provider FHIR API - Binary"
+        ],
+        "operationId": "readBinary",
+        "summary": "B2 - Read the file of a document",
+        "description": "Built from EHR GET api/documents/{id}/content. id = the EHR document id. With a patient-limited token it is checked against its DocumentReference's patient.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "doc-1-labs"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Binary.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resource"
+                },
+                "example": {
+                  "resourceType": "Binary",
+                  "id": "doc-1-labs",
+                  "contentType": "application/pdf",
+                  "data": "JVBERi0xLjcKJcfsj6IK..."
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No file for this document.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "not-found",
+                      "diagnostics": "Binary/doc-9 was not found."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The EHR could not be reached or answered with an error.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "exception",
+                      "diagnostics": "The EHR answered with an error."
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/QuestionnaireResponse/{id}": {
+      "get": {
+        "tags": [
+          "Provider FHIR API - QuestionnaireResponse"
+        ],
+        "operationId": "readQuestionnaireResponse",
+        "summary": "B3 - Read one filled-in DTR form exactly as saved",
+        "description": "From EHR data API GET questionnaire-responses/{id}. Sent as an Attachment with LOINC 102089-0.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "qr-frm-235b7ad69e85"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The QuestionnaireResponse.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resource"
+                },
+                "example": {
+                  "resourceType": "QuestionnaireResponse",
+                  "id": "qr-frm-235b7ad69e85",
+                  "questionnaire": "http://example.org/fhir/Questionnaire/dialysis-incenter-hd",
+                  "status": "completed",
+                  "subject": {
+                    "reference": "Patient/pat-1"
+                  },
+                  "item": []
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No form with this id.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "not-found",
+                      "diagnostics": "QuestionnaireResponse/qr-9 was not found."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The EHR data API could not be reached or answered with an error.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "exception",
+                      "diagnostics": "The EHR data API answered with an error."
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/QuestionnaireResponse": {
+      "get": {
+        "tags": [
+          "Provider FHIR API - QuestionnaireResponse"
+        ],
+        "operationId": "searchQuestionnaireResponse",
+        "summary": "B3s - All forms of a patient (newest first)",
+        "parameters": [
+          {
+            "name": "patient",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "pat-1"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "searchset Bundle (total 0 when none).",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resource"
+                },
+                "example": {
+                  "resourceType": "Bundle",
+                  "type": "searchset",
+                  "total": 0
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "patient missing.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "required",
+                      "diagnostics": "QuestionnaireResponse search requires the patient parameter."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The EHR data API could not be reached or answered with an error.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "exception",
+                      "diagnostics": "The EHR data API answered with an error."
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/Task": {
+      "servers": [
+        {
+          "url": "{payerBaseUrl}/{fhirPath}",
+          "description": "Payer FHIR base = PA_PAYER.BASE_URL / PA_PAYER.FHIR_PATH",
+          "variables": {
+            "payerBaseUrl": {
+              "default": "https://api.payer.example"
+            },
+            "fhirPath": {
+              "default": "fhir"
+            }
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Payer FHIR API (called by the gateway)"
+        ],
+        "operationId": "payerSearchTask",
+        "summary": "B4 - Search the payer's information requests (PAS / CDex Task)",
+        "description": "Called when the EHR calls information-requests?refresh=true and the request is pended; skipped when the request has no OrganizationNPI. A Task is accepted when Task.id is present, Task.reasonReference.identifier.value (else Task.focus.identifier.value) = our RequestID, and the request belongs to this payer. Tracking id: the identifier of type tracking-id, else the first. documentsNeeded: inputs of type attachments-needed (LOINC, line from paLineNumber / serviceLineNumber). questionnairesNeeded: inputs of type questionnaires-needed / questionnaire. The payer-url input is not used.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "1999999992",
+            "description": "Requesting organization NPI (PA_PRIOR_AUTH.OrganizationNPI)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "searchset Bundle of Tasks.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resource"
+                },
+                "example": {
+                  "resourceType": "Bundle",
+                  "type": "searchset",
+                  "entry": [
+                    {
+                      "resource": {
+                        "resourceType": "Task",
+                        "id": "5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6",
+                        "meta": {
+                          "profile": [
+                            "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/profile-task"
+                          ]
+                        },
+                        "identifier": [
+                          {
+                            "type": {
+                              "coding": [
+                                {
+                                  "system": "http://hl7.org/fhir/us/davinci-cdex/CodeSystem/cdex-temp",
+                                  "code": "tracking-id",
+                                  "display": "Tracking Id"
+                                }
+                              ]
+                            },
+                            "system": "http://example.org/cdex/tracking-ids",
+                            "value": "TRK-3f9a1c2b7d4e5f60"
+                          }
+                        ],
+                        "status": "requested",
+                        "intent": "order",
+                        "code": {
+                          "coding": [
+                            {
+                              "system": "http://hl7.org/fhir/us/davinci-pas/CodeSystem/PASTempCodes",
+                              "code": "attachment-request-code"
+                            }
+                          ]
+                        },
+                        "owner": {
+                          "identifier": {
+                            "system": "http://hl7.org/fhir/sid/us-npi",
+                            "value": "1999999992"
+                          }
+                        },
+                        "reasonReference": {
+                          "type": "Claim",
+                          "identifier": {
+                            "system": "http://provider.example.org/fhir/sid/prior-auth-request-id",
+                            "value": "PA-2026-0102"
+                          }
+                        },
+                        "restriction": {
+                          "period": {
+                            "end": "2026-10-23"
+                          }
+                        },
+                        "input": [
+                          {
+                            "type": {
+                              "coding": [
+                                {
+                                  "system": "http://hl7.org/fhir/us/davinci-pas/CodeSystem/PASTempCodes",
+                                  "code": "payer-url"
+                                }
+                              ]
+                            },
+                            "valueUrl": "https://api.payer.example/fhir/$submit-attachment"
+                          },
+                          {
+                            "extension": [
+                              {
+                                "url": "http://hl7.org/fhir/us/davinci-pas/StructureDefinition/extension-paLineNumber",
+                                "valueInteger": 1
+                              }
+                            ],
+                            "type": {
+                              "coding": [
+                                {
+                                  "system": "http://hl7.org/fhir/us/davinci-pas/CodeSystem/PASTempCodes",
+                                  "code": "attachments-needed"
+                                }
+                              ]
+                            },
+                            "valueCodeableConcept": {
+                              "coding": [
+                                {
+                                  "system": "http://loinc.org",
+                                  "code": "11502-2"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Logged only; the stored list is returned to the EHR."
+          },
+          "5XX": {
+            "description": "Logged only; the stored list is returned to the EHR."
+          }
+        }
+      }
+    },
+    "/$submit-attachment": {
+      "servers": [
+        {
+          "url": "{payerBaseUrl}/{fhirPath}",
+          "description": "Payer FHIR base = PA_PAYER.BASE_URL / PA_PAYER.FHIR_PATH",
+          "variables": {
+            "payerBaseUrl": {
+              "default": "https://api.payer.example"
+            },
+            "fhirPath": {
+              "default": "fhir"
+            }
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Payer FHIR API (called by the gateway)"
+        ],
+        "operationId": "payerSubmitAttachment",
+        "summary": "B5 - Send the documents and forms (CDex $submit-attachment)",
+        "description": "TrackingId 1..1: the Task's tracking id and system; unsolicited = our RequestID with system Workflow:ClaimIdentifierSystem. AttachTo 1..1: preauthorization. PayerId 0..1: Coverage.payor.identifier. OrganizationId 0..1: OrganizationNPI. ProviderId 0..1: PractitionerNPI (one of the two SHALL be present). MemberId 1..1: PA_PRIOR_AUTH.MemberID. Attachment 1..*: one per document / form; LineItem 0..*; Code 0..1 (document LOINC type, form 102089-0); Content 1..1 (DocumentReference with the file in attachment.data, or QuestionnaireResponse). Final 0..1.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/fhir+json": {
+              "schema": {
+                "$ref": "#/components/schemas/Resource"
+              },
+              "example": {
+                "resourceType": "Parameters",
+                "meta": {
+                  "profile": [
+                    "http://hl7.org/fhir/us/davinci-cdex/StructureDefinition/cdex-parameters-submit-attachment"
+                  ]
+                },
+                "parameter": [
+                  {
+                    "name": "TrackingId",
+                    "valueIdentifier": {
+                      "system": "http://example.org/cdex/tracking-ids",
+                      "value": "TRK-3f9a1c2b7d4e5f60"
+                    }
+                  },
+                  {
+                    "name": "AttachTo",
+                    "valueCode": "preauthorization"
+                  },
+                  {
+                    "name": "PayerId",
+                    "valueIdentifier": {
+                      "value": "PAYER001"
+                    }
+                  },
+                  {
+                    "name": "OrganizationId",
+                    "valueIdentifier": {
+                      "system": "http://hl7.org/fhir/sid/us-npi",
+                      "value": "1999999992"
+                    }
+                  },
+                  {
+                    "name": "ProviderId",
+                    "valueIdentifier": {
+                      "system": "http://hl7.org/fhir/sid/us-npi",
+                      "value": "1111111112"
+                    }
+                  },
+                  {
+                    "name": "MemberId",
+                    "valueIdentifier": {
+                      "value": "MBR-1001"
+                    }
+                  },
+                  {
+                    "name": "Attachment",
+                    "part": [
+                      {
+                        "name": "LineItem",
+                        "valueString": "1"
+                      },
+                      {
+                        "name": "Code",
+                        "valueCodeableConcept": {
+                          "coding": [
+                            {
+                              "system": "http://loinc.org",
+                              "code": "11502-2",
+                              "display": "Laboratory report"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "name": "Content",
+                        "resource": {
+                          "resourceType": "DocumentReference",
+                          "id": "doc-1-labs",
+                          "status": "current",
+                          "type": {
+                            "coding": [
+                              {
+                                "system": "http://loinc.org",
+                                "code": "11502-2"
+                              }
+                            ]
+                          },
+                          "subject": {
+                            "reference": "Patient/pat-1"
+                          },
+                          "content": [
+                            {
+                              "attachment": {
+                                "contentType": "application/pdf",
+                                "data": "JVBERi0xLjcKJcfsj6IK..."
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "name": "Attachment",
+                    "part": [
+                      {
+                        "name": "Code",
+                        "valueCodeableConcept": {
+                          "coding": [
+                            {
+                              "system": "http://loinc.org",
+                              "code": "102089-0"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "name": "Content",
+                        "resource": {
+                          "resourceType": "QuestionnaireResponse",
+                          "id": "qr-frm-235b7ad69e85",
+                          "status": "completed"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "name": "Final",
+                    "valueBoolean": true
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted (body may be empty or an OperationOutcome with messages)."
+          },
+          "4XX": {
+            "description": "Rejected: the gateway answers the EHR 422 with status rejected.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationOutcome"
+                },
+                "example": {
+                  "resourceType": "OperationOutcome",
+                  "issue": [
+                    {
+                      "severity": "error",
+                      "code": "invalid",
+                      "diagnostics": "Unknown tracking id TRK-3f9a1c2b7d4e5f60."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Payer failure: the gateway answers the EHR 502 with status rejected."
+          }
+        }
+      }
+    },
+    "/Claim/$inquire": {
+      "servers": [
+        {
+          "url": "{payerBaseUrl}/{fhirPath}",
+          "description": "Payer FHIR base = PA_PAYER.BASE_URL / PA_PAYER.FHIR_PATH",
+          "variables": {
+            "payerBaseUrl": {
+              "default": "https://api.payer.example"
+            },
+            "fhirPath": {
+              "default": "fhir"
+            }
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Payer FHIR API (called by the gateway)"
+        ],
+        "operationId": "payerClaimInquire",
+        "summary": "B6 - Ask for the new decision (PAS Claim/$inquire)",
+        "description": "Called after a successful $submit-attachment with Final = true. Same PAS inquiry Bundle as the PAS step (see the PAS guide / PayerGatewayWebAPI swagger). A failure does not fail the submit (decision = null).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/fhir+json": {
+              "schema": {
+                "$ref": "#/components/schemas/Resource"
+              },
+              "example": {
+                "resourceType": "Bundle",
+                "type": "collection",
+                "entry": [
+                  {
+                    "resource": {
+                      "resourceType": "Claim",
+                      "use": "preauthorization"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ClaimResponse Bundle.",
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Resource"
+                },
+                "example": {
+                  "resourceType": "Bundle",
+                  "type": "collection",
+                  "entry": [
+                    {
+                      "resource": {
+                        "resourceType": "ClaimResponse",
+                        "outcome": "complete"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cdex/requests/{requestId}/information-requests": {
+      "servers": [
+        {
+          "url": "{gatewayBaseUrl}",
+          "description": "Payer Gateway",
+          "variables": {
+            "gatewayBaseUrl": {
+              "default": "http://localhost:5200"
+            }
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Payer Gateway CDex (called by the EHR)"
+        ],
+        "operationId": "gatewayInformationRequests",
+        "summary": "G1 - What the payer needs on a pended request",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "PA-2026-0102"
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "true = search the payer (B4) first, when the request is pended."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The information requests ([] when none).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InformationRequest"
+                  }
+                },
+                "example": [
+                  {
+                    "trackingId": "TRK-3f9a1c2b7d4e5f60",
+                    "taskId": "5b2c9a7e4d1f4c0e8a36f1d2c3b4a5e6",
+                    "dueDate": "2026-10-23",
+                    "status": "requested",
+                    "documentsNeeded": [
+                      {
+                        "loincCode": "11502-2",
+                        "display": null,
+                        "lineNumber": 1
+                      }
+                    ],
+                    "questionnairesNeeded": []
+                  }
+                ]
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown requestId.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "refresh=true and the payer could not be reached."
+          },
+          "503": {
+            "description": "The EHR data API is not available."
+          },
+          "504": {
+            "description": "refresh=true and the payer did not answer in time."
+          }
+        }
+      }
+    },
+    "/cdex/requests/{requestId}/attachments": {
+      "servers": [
+        {
+          "url": "{gatewayBaseUrl}",
+          "description": "Payer Gateway",
+          "variables": {
+            "gatewayBaseUrl": {
+              "default": "http://localhost:5200"
+            }
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Payer Gateway CDex (called by the EHR)"
+        ],
+        "operationId": "gatewaySubmitAttachments",
+        "summary": "G2 - Send documents and / or completed forms to the payer",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "PA-2026-0102"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachmentSubmitRequest"
+              },
+              "example": {
+                "trackingId": "TRK-3f9a1c2b7d4e5f60",
+                "documentIds": [
+                  "doc-1-labs"
+                ],
+                "questionnaireResponseIds": [],
+                "lineNumbers": [
+                  1
+                ],
+                "final": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentResult"
+                },
+                "example": {
+                  "requestId": "PA-2026-0102",
+                  "trackingId": "TRK-3f9a1c2b7d4e5f60",
+                  "status": "sent",
+                  "attachmentCount": 1,
+                  "messages": [],
+                  "decision": {
+                    "overallStatus": "approved"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No ids; or trackingId is not a Task of this request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown requestId; a document or form not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "No member id or no NPI; payer not configured; or payer rejected (AttachmentResult with status rejected)."
+          },
+          "502": {
+            "description": "Payer or FHIR API failed (payer 5xx: AttachmentResult with status rejected)."
+          },
+          "503": {
+            "description": "The EHR data API is not available."
+          },
+          "504": {
+            "description": "The payer did not answer in time."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Resource": {
+        "type": "object",
+        "description": "A FHIR R4 resource (JSON).",
+        "required": [
+          "resourceType"
+        ],
+        "properties": {
+          "resourceType": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      },
+      "OperationOutcome": {
+        "type": "object",
+        "properties": {
+          "resourceType": {
+            "type": "string",
+            "enum": [
+              "OperationOutcome"
+            ]
+          },
+          "issue": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "diagnostics": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "InformationRequest": {
+        "type": "object",
+        "description": "One entry of DecisionJSON.informationRequests (the payer's Task as plain JSON). For reference: it is stored inside the DecisionJSON text.",
+        "properties": {
+          "trackingId": {
+            "type": "string"
+          },
+          "taskId": {
+            "type": "string"
+          },
+          "dueDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string"
+          },
+          "documentsNeeded": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "loincCode": {
+                  "type": "string"
+                },
+                "display": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "lineNumber": {
+                  "type": "integer",
+                  "nullable": true
+                }
+              }
+            }
+          },
+          "questionnairesNeeded": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Questionnaire URL"
+            }
+          }
+        }
+      },
+      "AttachmentSubmitRequest": {
+        "type": "object",
+        "description": "One of documentIds / questionnaireResponseIds must have an id.",
+        "properties": {
+          "trackingId": {
+            "type": "string",
+            "nullable": true,
+            "description": "Empty = the latest open Task; none open = unsolicited."
+          },
+          "documentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "questionnaireResponseIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "lineNumbers": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "default": [],
+            "description": "PAS decision line sequence numbers. Empty = whole request."
+          },
+          "final": {
+            "type": "boolean",
+            "default": true,
+            "description": "true = nothing more follows; the gateway inquires for the new decision."
+          }
+        }
+      },
+      "AttachmentResult": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "trackingId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "sent",
+              "rejected"
+            ]
+          },
+          "attachmentCount": {
+            "type": "integer"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "decision": {
+            "type": "object",
+            "nullable": true,
+            "description": "The PAS decision after the payer reviewed again (same as POST /pas/requests). null when final = false or the inquiry failed.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "GatewayError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "traceId": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
