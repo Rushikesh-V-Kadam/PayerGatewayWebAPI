@@ -172,7 +172,9 @@ public class CdexService
 
         // ---- the Task row (PA_CDEX_TASK): new, or the payer changed anything in the Task
         string taskJson = raw.ToJsonString();
-        CdexTaskRecord? storedTask = await _tasks.GetAsync(payer.InsurancePlanId, task.Id, ct);
+        // the client reads Tasks by request id only (a list): pick this Task from the request's Tasks
+        List<CdexTaskRecord> requestTasks = await _tasks.GetByRequestIdAsync(record.RequestId, ct);
+        CdexTaskRecord? storedTask = FindTask(requestTasks, payer.InsurancePlanId, task.Id);
         if (storedTask == null || storedTask.TaskJson != taskJson)
         {
             CdexTaskRecord taskRecord = new CdexTaskRecord();
@@ -316,6 +318,22 @@ public class CdexService
     // ================================================================== helpers
 
     /// <summary>
+    /// The Task with this insurance plan id and Task id from the Tasks of a request, or null when it is not in the list.
+    /// (Insurance plan id + Task id is the key of PA_CDEX_TASK.)
+    /// </summary>
+    private static CdexTaskRecord? FindTask(List<CdexTaskRecord> tasks, int insurancePlanId, string taskId)
+    {
+        foreach (CdexTaskRecord task in tasks)
+        {
+            if (task.InsurancePlanId == insurancePlanId && task.TaskId == taskId)
+            {
+                return task;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Tracking id to send: the one given, else the latest open information request, else our own request id
     /// (an unsolicited attachment - the payer matches it to the Claim identifier).
     /// </summary>
@@ -338,12 +356,13 @@ public class CdexService
         }
 
         // The Task of this tracking id: its Task id is in the decision (informationRequests), the Task itself in
-        // PA_CDEX_TASK (read by insurance plan id + Task id; the client has no "all Tasks of a request" API).
+        // PA_CDEX_TASK (the client reads all Tasks of the request by request id; the one needed is picked from the list).
+        List<CdexTaskRecord> requestTasks = await _tasks.GetByRequestIdAsync(record.RequestId, ct);
         foreach (InformationRequest info in record.Decision.InformationRequests)
         {
             if (info.TrackingId == trackingId && !string.IsNullOrEmpty(info.TaskId))
             {
-                CdexTaskRecord? task = await _tasks.GetAsync(record.InsurancePlanId, info.TaskId, ct);
+                CdexTaskRecord? task = FindTask(requestTasks, record.InsurancePlanId, info.TaskId);
                 if (task != null && task.TrackingId == trackingId)
                 {
                     return new Identifier(SystemOrNull(task.TrackingSystem), task.TrackingId);

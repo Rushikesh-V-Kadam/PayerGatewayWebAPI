@@ -16,15 +16,18 @@ public class InMemoryCdexTaskRepository : ICdexTaskRepository
         return Task.CompletedTask;
     }
 
-    /// <summary>One Task by insurance plan id and Task id. Null when it does not exist.</summary>
-    public Task<CdexTaskRecord?> GetAsync(int insurancePlanId, string taskId, CancellationToken ct)
+    /// <summary>All Tasks of one prior authorization request (by request id). Empty list when there are none.</summary>
+    public Task<List<CdexTaskRecord>> GetByRequestIdAsync(string requestId, CancellationToken ct)
     {
-        CdexTaskRecord? record;
-        if (_tasks.TryGetValue(Key(insurancePlanId, taskId), out record))
+        List<CdexTaskRecord> records = new List<CdexTaskRecord>();
+        foreach (CdexTaskRecord record in _tasks.Values)
         {
-            return Task.FromResult<CdexTaskRecord?>(record);
+            if (record.RequestId == requestId)
+            {
+                records.Add(record);
+            }
         }
-        return Task.FromResult<CdexTaskRecord?>(null);
+        return Task.FromResult(records);
     }
 
     /// <summary>The dictionary key of a Task.</summary>

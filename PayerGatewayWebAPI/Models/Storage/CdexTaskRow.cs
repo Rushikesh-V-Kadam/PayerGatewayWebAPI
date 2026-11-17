@@ -5,6 +5,7 @@ namespace PayerGatewayWebAPI.Models.Storage;
 /// <summary>
 /// A payer information request (FHIR Task) exactly as it is sent to / returned by the client's APIs
 /// (POST savecdxdtl, GET getcdxdtl under Ehr:DataPath) = one row of table PA_CDEX_TASK.
+/// GET getcdxdtl (by RequestID) answers a list of these rows, one per Task id.
 /// CLIENT-EHR: the JSON names (JsonPropertyName) are the client's own names (InsurancePlanID, TaskID, TaskJSON ...),
 /// not the gateway's usual camelCase. Reading accepts any letter case.
 /// </summary>

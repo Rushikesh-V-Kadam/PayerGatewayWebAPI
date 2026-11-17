@@ -1,4 +1,3 @@
-using System.Globalization;
 using PayerGatewayWebAPI.Clients;
 using PayerGatewayWebAPI.Models.Entities;
 using PayerGatewayWebAPI.Models.Storage;
@@ -9,9 +8,9 @@ namespace PayerGatewayWebAPI.Repositories.Database;
 /// <summary>
 /// Payer information requests (Tasks) in the EHR database (table PA_CDEX_TASK), through the client's own APIs:
 ///   POST {Ehr:BaseUrl}/{Ehr:DataPath}/savecdxdtl                                        save one Task: insert, or update by InsurancePlanID + TaskID
-///   GET  {Ehr:BaseUrl}/{Ehr:DataPath}/getcdxdtl?InsurancePlanID={id}&amp;TaskID={taskId}   one Task ({ "CDXTaskDetail": row or null, ... })
-/// CLIENT-EHR: the body uses the client's names (CdexTaskRow). There is no "all Tasks of a request" API: the gateway
-/// knows the Task ids of a request from its decision (informationRequests[].taskId).
+///   GET  {Ehr:BaseUrl}/{Ehr:DataPath}/getcdxdtl?RequestID={requestId}                     all Tasks of one request ({ "CDXTaskDetail": [rows], ... })
+/// CLIENT-EHR: the body uses the client's names (CdexTaskRow). The read API takes only the request id and answers a
+/// list of rows (one per Task id); the caller picks the Task it needs from that list.
 /// </summary>
 public class EhrApiCdexTaskRepository : ICdexTaskRepository
 {
@@ -22,8 +21,8 @@ public class EhrApiCdexTaskRepository : ICdexTaskRepository
     private const string SavePath = "savecdxdtl";
 
     /// <summary>
-    /// The client's read API (one Task by insurance plan id and Task id), under Ehr:DataPath.
-    /// TODO: the client's path name and its parameter names (InsurancePlanID, TaskID) are not confirmed yet.
+    /// The client's read API (all Tasks of one request id), under Ehr:DataPath.
+    /// TODO: the client's path name and its parameter name (RequestID) are not confirmed yet.
     /// </summary>
     private const string ReadPath = "getcdxdtl";
 
@@ -41,18 +40,20 @@ public class EhrApiCdexTaskRepository : ICdexTaskRepository
         await _ehr.PostAsync(SavePath, ToRow(record), ct);
     }
 
-    /// <summary>One Task: GET getcdxdtl?InsurancePlanID={id}&amp;TaskID={taskId}. Null when it does not exist.</summary>
-    public async Task<CdexTaskRecord?> GetAsync(int insurancePlanId, string taskId, CancellationToken ct)
+    /// <summary>
+    /// All Tasks of one prior authorization request: GET getcdxdtl?RequestID={requestId}.
+    /// The client answers a list of rows (one per Task id). Empty list when the request has no Tasks.
+    /// </summary>
+    public async Task<List<CdexTaskRecord>> GetByRequestIdAsync(string requestId, CancellationToken ct)
     {
-        string path = ReadPath
-            + "?InsurancePlanID=" + EhrDataClient.Esc(insurancePlanId.ToString(CultureInfo.InvariantCulture))
-            + "&TaskID=" + EhrDataClient.Esc(taskId);
-        CdexTaskRow? row = await _ehr.GetAsync<CdexTaskRow>(path, ct);
-        if (row == null)
+        string path = ReadPath + "?RequestID=" + EhrDataClient.Esc(requestId);
+        List<CdexTaskRow> rows = await _ehr.GetListAsync<CdexTaskRow>(path, ct);
+        List<CdexTaskRecord> records = new List<CdexTaskRecord>();
+        foreach (CdexTaskRow row in rows)
         {
-            return null;
+            records.Add(ToRecord(row));
         }
-        return ToRecord(row);
+        return records;
     }
 
     /// <summary>Record -> the client's row.</summary>

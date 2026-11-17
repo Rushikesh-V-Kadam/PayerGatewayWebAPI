@@ -8,6 +8,6 @@ public interface ICdexTaskRepository
     /// <summary>Inserts or updates the Task (key: insurance plan id + Task id).</summary>
     Task SaveAsync(CdexTaskRecord record, CancellationToken ct);
 
-    /// <summary>One Task by insurance plan id and Task id. Null when it does not exist.</summary>
-    Task<CdexTaskRecord?> GetAsync(int insurancePlanId, string taskId, CancellationToken ct);
+    /// <summary>All Tasks of one prior authorization request (by request id). Empty list when there are none.</summary>
+    Task<List<CdexTaskRecord>> GetByRequestIdAsync(string requestId, CancellationToken ct);
 }
