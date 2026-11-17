@@ -12,21 +12,24 @@ public class InMemoryCdexTaskRepository : ICdexTaskRepository
     /// <summary>Keeps the Task under insurance plan id + Task id (a second save replaces the first).</summary>
     public Task SaveAsync(CdexTaskRecord record, CancellationToken ct)
     {
-        _tasks[record.InsurancePlanId + "|" + record.TaskId] = record;
+        _tasks[Key(record.InsurancePlanId, record.TaskId)] = record;
         return Task.CompletedTask;
     }
 
-    /// <summary>All Tasks of one prior authorization request.</summary>
-    public Task<List<CdexTaskRecord>> GetForRequestAsync(string requestId, CancellationToken ct)
+    /// <summary>One Task by insurance plan id and Task id. Null when it does not exist.</summary>
+    public Task<CdexTaskRecord?> GetAsync(int insurancePlanId, string taskId, CancellationToken ct)
     {
-        List<CdexTaskRecord> result = new List<CdexTaskRecord>();
-        foreach (CdexTaskRecord record in _tasks.Values)
+        CdexTaskRecord? record;
+        if (_tasks.TryGetValue(Key(insurancePlanId, taskId), out record))
         {
-            if (record.RequestId == requestId)
-            {
-                result.Add(record);
-            }
+            return Task.FromResult<CdexTaskRecord?>(record);
         }
-        return Task.FromResult(result);
+        return Task.FromResult<CdexTaskRecord?>(null);
+    }
+
+    /// <summary>The dictionary key of a Task.</summary>
+    private static string Key(int insurancePlanId, string taskId)
+    {
+        return insurancePlanId + "|" + taskId;
     }
 }

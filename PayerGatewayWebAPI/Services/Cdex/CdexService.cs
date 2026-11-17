@@ -172,14 +172,7 @@ public class CdexService
 
         // ---- the Task row (PA_CDEX_TASK): new, or the payer changed anything in the Task
         string taskJson = raw.ToJsonString();
-        CdexTaskRecord? storedTask = null;
-        foreach (CdexTaskRecord candidate in await _tasks.GetForRequestAsync(record.RequestId, ct))
-        {
-            if (candidate.TaskId == task.Id && candidate.InsurancePlanId == payer.InsurancePlanId)
-            {
-                storedTask = candidate;
-            }
-        }
+        CdexTaskRecord? storedTask = await _tasks.GetAsync(payer.InsurancePlanId, task.Id, ct);
         if (storedTask == null || storedTask.TaskJson != taskJson)
         {
             CdexTaskRecord taskRecord = new CdexTaskRecord();
@@ -344,12 +337,17 @@ public class CdexService
             return new Identifier(SystemOrNull(_workflow.ClaimIdentifierSystem), record.RequestId);
         }
 
-        List<CdexTaskRecord> tasks = await _tasks.GetForRequestAsync(record.RequestId, ct);
-        foreach (CdexTaskRecord task in tasks)
+        // The Task of this tracking id: its Task id is in the decision (informationRequests), the Task itself in
+        // PA_CDEX_TASK (read by insurance plan id + Task id; the client has no "all Tasks of a request" API).
+        foreach (InformationRequest info in record.Decision.InformationRequests)
         {
-            if (task.TrackingId == trackingId)
+            if (info.TrackingId == trackingId && !string.IsNullOrEmpty(info.TaskId))
             {
-                return new Identifier(SystemOrNull(task.TrackingSystem), task.TrackingId);
+                CdexTaskRecord? task = await _tasks.GetAsync(record.InsurancePlanId, info.TaskId, ct);
+                if (task != null && task.TrackingId == trackingId)
+                {
+                    return new Identifier(SystemOrNull(task.TrackingSystem), task.TrackingId);
+                }
             }
         }
         throw new ApiException(400, "Tracking id " + trackingId + " is not an information request of " + record.RequestId + ".");

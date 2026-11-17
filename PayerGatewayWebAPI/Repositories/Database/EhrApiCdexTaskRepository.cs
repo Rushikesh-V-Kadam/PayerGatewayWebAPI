@@ -1,18 +1,32 @@
 using System.Globalization;
 using PayerGatewayWebAPI.Clients;
 using PayerGatewayWebAPI.Models.Entities;
+using PayerGatewayWebAPI.Models.Storage;
 using PayerGatewayWebAPI.Repositories.Interfaces;
 
 namespace PayerGatewayWebAPI.Repositories.Database;
 
 /// <summary>
-/// Payer information requests (Tasks) in the EHR database, through the EHR data API (table PA_CDEX_TASK):
-///   cdex-tasks/{insurancePlanId}/{taskId}   save one Task
-///   cdex-tasks?requestId=...                  all Tasks of one prior auth request
-/// The record is sent as it is: every property is one column.
+/// Payer information requests (Tasks) in the EHR database (table PA_CDEX_TASK), through the client's own APIs:
+///   POST {Ehr:BaseUrl}/{Ehr:DataPath}/savecdxdtl                                        save one Task: insert, or update by InsurancePlanID + TaskID
+///   GET  {Ehr:BaseUrl}/{Ehr:DataPath}/getcdxdtl?InsurancePlanID={id}&amp;TaskID={taskId}   one Task ({ "CDXTaskDetail": row or null, ... })
+/// CLIENT-EHR: the body uses the client's names (CdexTaskRow). There is no "all Tasks of a request" API: the gateway
+/// knows the Task ids of a request from its decision (informationRequests[].taskId).
 /// </summary>
 public class EhrApiCdexTaskRepository : ICdexTaskRepository
 {
+    /// <summary>
+    /// The client's save API, under Ehr:DataPath.
+    /// TODO: the client's path name; update it when the client confirms it.
+    /// </summary>
+    private const string SavePath = "savecdxdtl";
+
+    /// <summary>
+    /// The client's read API (one Task by insurance plan id and Task id), under Ehr:DataPath.
+    /// TODO: the client's path name and its parameter names (InsurancePlanID, TaskID) are not confirmed yet.
+    /// </summary>
+    private const string ReadPath = "getcdxdtl";
+
     private readonly EhrDataClient _ehr;
 
     /// <summary>Created by dependency injection.</summary>
@@ -21,16 +35,55 @@ public class EhrApiCdexTaskRepository : ICdexTaskRepository
         _ehr = ehr;
     }
 
-    /// <summary>Inserts or updates one Task: PUT cdex-tasks/{insurancePlanId}/{taskId}.</summary>
+    /// <summary>Inserts or updates one Task: POST savecdxdtl with the row in the body.</summary>
     public async Task SaveAsync(CdexTaskRecord record, CancellationToken ct)
     {
-        string path = "cdex-tasks/" + EhrDataClient.Esc(record.InsurancePlanId.ToString(CultureInfo.InvariantCulture)) + "/" + EhrDataClient.Esc(record.TaskId);
-        await _ehr.PutAsync(path, record, ct);
+        await _ehr.PostAsync(SavePath, ToRow(record), ct);
     }
 
-    /// <summary>All Tasks of one prior authorization request: GET cdex-tasks?requestId=... (an empty list when there are none).</summary>
-    public async Task<List<CdexTaskRecord>> GetForRequestAsync(string requestId, CancellationToken ct)
+    /// <summary>One Task: GET getcdxdtl?InsurancePlanID={id}&amp;TaskID={taskId}. Null when it does not exist.</summary>
+    public async Task<CdexTaskRecord?> GetAsync(int insurancePlanId, string taskId, CancellationToken ct)
     {
-        return await _ehr.GetListAsync<CdexTaskRecord>("cdex-tasks?requestId=" + EhrDataClient.Esc(requestId), ct);
+        string path = ReadPath
+            + "?InsurancePlanID=" + EhrDataClient.Esc(insurancePlanId.ToString(CultureInfo.InvariantCulture))
+            + "&TaskID=" + EhrDataClient.Esc(taskId);
+        CdexTaskRow? row = await _ehr.GetAsync<CdexTaskRow>(path, ct);
+        if (row == null)
+        {
+            return null;
+        }
+        return ToRecord(row);
+    }
+
+    /// <summary>Record -> the client's row.</summary>
+    private static CdexTaskRow ToRow(CdexTaskRecord record)
+    {
+        CdexTaskRow row = new CdexTaskRow();
+        row.InsurancePlanId = record.InsurancePlanId;
+        row.TaskId = record.TaskId;
+        row.RequestId = record.RequestId;
+        row.TrackingId = record.TrackingId;
+        row.TrackingSystem = record.TrackingSystem;
+        row.Status = record.Status;
+        row.DueDate = record.DueDate;
+        row.TaskJson = record.TaskJson;
+        row.ReceivedAt = record.ReceivedAt;
+        return row;
+    }
+
+    /// <summary>The client's row -> record.</summary>
+    private static CdexTaskRecord ToRecord(CdexTaskRow row)
+    {
+        CdexTaskRecord record = new CdexTaskRecord();
+        record.InsurancePlanId = row.InsurancePlanId;
+        record.TaskId = row.TaskId;
+        record.RequestId = row.RequestId;
+        record.TrackingId = row.TrackingId;
+        record.TrackingSystem = row.TrackingSystem;
+        record.Status = row.Status;
+        record.DueDate = row.DueDate;
+        record.TaskJson = row.TaskJson;
+        record.ReceivedAt = row.ReceivedAt;
+        return record;
     }
 }
