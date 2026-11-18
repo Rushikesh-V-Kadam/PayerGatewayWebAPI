@@ -34,7 +34,6 @@ The EHR sends plain JSON (ids only). The gateway reads the FHIR data, calls the 
   |                              |                                   |<-----------------------|
   |                              |  cards + systemActions (coverage-information)              |
   |                              |<-----------------------------------------------------------|
-  |                              |  save PA_DTR_LINK (payer app links only)                   |
   |  200: one decision per order |                                   |                        |
   |<-----------------------------|                                   |                        |
 ```
@@ -114,7 +113,7 @@ GET /payers/1001
 | `enabled` | `false` = the payer is configured but switched off; requests for it get "not configured or enabled" |
 | `dtrMode` | `Forms` = questionnaire through the gateway forms. `SmartApp` = the payer's own SMART DTR app |
 
-The payer comes from table `PA_PAYER` through the EHR data API (`GET payers/{insurancePlanId}`). It is kept for `Storage:PayerCacheMinutes` (5 minutes). An id without a payer is asked again at the next request, so a new payer row works without a restart.
+The payer comes from table `PA_PAYER` through the EHR data API (`GET payers/{insurancePlanId}`). It is read for every request (no cache), so a new or changed payer row works right away without a restart.
 
 | HTTP | When |
 |---|---|
@@ -278,7 +277,7 @@ This example is a real answer from the mock payer.
             "label": "Coverage policy",
             "url": "https://example.org/policies/home-dialysis",
             "type": "absolute",
-            "opensPayerApp": false
+            "appContext": null
           }
         },
         {
@@ -287,9 +286,9 @@ This example is a real answer from the mock payer.
           "detail": "Complete the payer documentation for Home peritoneal dialysis (APD cycler). Purpose: withpa.",
           "link": {
             "label": "Launch documentation (DTR)",
-            "url": "http://localhost:5200/dtr/launch/3a3df604a18c4d479f4ed4f05b9a1896",
+            "url": "http://localhost:5300/launch",
             "type": "smart",
-            "opensPayerApp": false
+            "appContext": "questionnaire=http://example.org/fhir/Questionnaire/dialysis-home-pd"
           }
         }
       ],
@@ -347,13 +346,13 @@ This example is a real answer from the mock payer.
 
 **Message links**
 
-| `link.type` | `opensPayerApp` | What the EHR does |
-|---|---|---|
-| `absolute` | `false` | A normal web page (for example the coverage policy). Open it in a browser if the user asks |
-| `smart` | `false` | The payer works with the gateway forms (`DTR_MODE = Forms`). Use `POST /dtr/forms`. See `DTR-Forms-API-Guide.md` |
-| `smart` | `true` | The payer has its own SMART DTR app (`DTR_MODE = SmartApp`). Open `link.url` in a browser window. See `DTR-SmartApp-API-Guide.md` |
+The link is passed to the EHR exactly as the payer sent it on its card (`label`, `url`, `type`, `appContext`); the
+gateway does not rewrite it and stores nothing.
 
-A `smart` link is always a gateway URL (`/dtr/launch/{linkId}`). The payer's real app URL and launch context are kept in table `PA_DTR_LINK` for `Workflow:DtrLinkHours` (72 hours).
+| `link.type` | What it is |
+|---|---|
+| `absolute` | A normal web page (for example the coverage policy). Open it in a browser if the user asks |
+| `smart` | The payer's SMART DTR app: `link.url` is the payer's launch URL and `link.appContext` the payer's launch context. How the EHR launches it is not decided yet (the DTR flow is open) |
 
 #### Special cases (still HTTP 200)
 
@@ -429,7 +428,7 @@ The payer may still have received the hook, but its late answer is lost: the gat
 | 400 | A required field is missing (`coverageId` and `userPractitionerId` included) or `orderIds` is empty (`details` lists each problem); unknown or disabled `insurancePlanId`; an order belongs to another patient; invalid JSON |
 | 404 | The patient is not found at the FHIR API, or none of the orders are found |
 | 502 | The FHIR API failed or timed out |
-| 503 | The EHR data API is not available (the payer could not be read, or a payer app link could not be saved) |
+| 503 | The EHR data API is not available (the payer could not be read) |
 | 500 | Unexpected error. Look up `traceId` in the log |
 
 A payer failure is **not** an HTTP error here. It returns 200 with `covered = "unknown"`, so the clinician is never blocked at signing.
@@ -462,11 +461,9 @@ The payer's **cards** become messages:
 | `indicator` | `severity` (`info`, `warning`, `critical`) |
 | `summary` | `summary` |
 | `detail` | `detail` |
-| `links` | `link`: the first `smart` link, else the first link |
+| `links` | `link`: the first `smart` link, else the first link, unchanged (`label`, `url`, `type`, `appContext`) |
 
 A card goes on the order it is about: the only order in the request, or the order whose `Type/id` appears in the card text or link `appContext`. Otherwise it goes to the top-level `messages`.
-
-Which DTR app a `smart` link opens, in this order: `PA_PAYER.DTR_APP_LAUNCH_URL`, then `Workflow:DtrAppUrl`, then the URL on the payer's card.
 
 ---
 
@@ -484,7 +481,6 @@ All rows are in the EHR's Oracle database and are read and saved through the EHR
 | Table | Key | What |
 |---|---|---|
 | `PA_PAYER` | `INSURANCE_PLAN_ID` | The payers (maintained by the EHR team) |
-| `PA_DTR_LINK` | `LINK_ID` | One row per `smart` link given to the EHR |
 
 The decisions themselves are not stored by the gateway: the EHR stores the order-sign response on its side.
 
@@ -497,12 +493,7 @@ The decisions themselves are not stored by the gateway: the EHR stores the order
 | `PA_PAYER.BASE_URL` + `CDS_SERVICES_PATH` | `cds-services` | Where the payer's CDS services are |
 | `PA_PAYER.CRD_TIMEOUT_SECONDS` | 5 | Seconds to wait for the hook call. The clinician is waiting, so keep it short |
 | `PA_PAYER.TIMEOUT_SECONDS` | 30 | Seconds to wait for discovery |
-| `PA_PAYER.DTR_MODE` | `Forms` | Sets `opensPayerApp` on `smart` links |
-| `PA_PAYER.DTR_APP_LAUNCH_URL` | empty | Fixed launch URL of the payer's DTR app |
-| `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the `/dtr/launch/{linkId}` links |
-| `Workflow:DtrLinkHours` | 72 | How long a launch link stays valid |
 | `Workflow:FhirAuthorizationMinutes` | 5 | Lifetime of the `fhirAuthorization` token |
-| `Storage:PayerCacheMinutes` | 5 | How long the payer list is kept |
 | `FhirApi:BaseUrl`, `InternalBaseUrl` | localhost:5100 | The FHIR API (FHIR R4) |
 
 ---

@@ -26,7 +26,7 @@ public class CrdController : ControllerBase
     /// insurancePlanId, and reads pa-needed / doc-needed from the payer's answer.
     ///
     /// What to do with each decision:
-    /// - **callDtr = true** → open the message link (type "smart", /dtr/launch/{linkId}) in a browser: the payer's SMART DTR app starts and saves the form at the FHIR API. GET /dtr/saved-forms shows it.
+    /// - **callDtr = true** → the payer's questionnaire must be filled in. The message link (type "smart") is the payer's SMART DTR app link exactly as the payer sent it (url, appContext); how it is launched is not decided yet.
     /// - **callPas = true** → POST /pas/requests (after DTR when both are true).
     /// - both false → nothing more is needed for that order.
     ///

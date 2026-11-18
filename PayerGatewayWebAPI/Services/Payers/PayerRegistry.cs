@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Options;
 using PayerGatewayWebAPI.Configuration;
 using PayerGatewayWebAPI.Exceptions;
 using PayerGatewayWebAPI.Models.CdsHooks;
@@ -11,9 +10,8 @@ namespace PayerGatewayWebAPI.Services.Payers;
 /// Finds the payer of a request. The EHR sends insurancePlanId in each request and the gateway reads that one
 /// payer's configuration (IPayerRepository: GET payers/{insurancePlanId} on the EHR data API). There is no payer list.
 ///
-/// A payer that was read is kept for Storage:PayerCacheMinutes and then read again, so a change by the EHR team is
-/// used after a few minutes without a restart. An insurance plan id without a payer is not kept: it is asked again
-/// at the next request, so a payer added by the EHR team works right away.
+/// The payer configuration is not kept in memory: it is read from the EHR data API for every request, so a payer
+/// added or changed by the EHR team is used right away without a restart.
 ///
 /// When a payer is read, its empty optional values get their defaults (PayerSettings.ApplyDefaults), and a payer that
 /// cannot be used (no name, or no valid base URL) is refused with a warning in the log. So the rest of the gateway
@@ -26,16 +24,13 @@ public class PayerRegistry
 {
     private readonly IPayerRepository _repository;
     private readonly ILogger<PayerRegistry> _logger;
-    private readonly int _cacheMinutes;
     private readonly ConcurrentDictionary<string, CachedDiscovery> _discovery = new ConcurrentDictionary<string, CachedDiscovery>();
-    private readonly ConcurrentDictionary<int, CachedPayer> _payers = new ConcurrentDictionary<int, CachedPayer>();
 
     /// <summary>Created by dependency injection.</summary>
-    public PayerRegistry(IPayerRepository repository, IOptions<StorageSettings> storage, ILogger<PayerRegistry> logger)
+    public PayerRegistry(IPayerRepository repository, ILogger<PayerRegistry> logger)
     {
         _repository = repository;
         _logger = logger;
-        _cacheMinutes = Math.Max(0, storage.Value.PayerCacheMinutes);
     }
 
     /// <summary>
@@ -44,17 +39,10 @@ public class PayerRegistry
     /// </summary>
     public async Task<PayerSettings?> GetAsync(int insurancePlanId, CancellationToken ct)
     {
-        CachedPayer? cached;
-        if (_payers.TryGetValue(insurancePlanId, out cached) && cached.Expires > DateTime.UtcNow)
-        {
-            return cached.Payer;
-        }
-
+        // Read for every request (no cache): the EHR data API always gives the current PA_PAYER row.
         PayerSettings? payer = await _repository.GetByInsurancePlanIdAsync(insurancePlanId, ct);
         if (payer == null)
         {
-            CachedPayer? removed;
-            _payers.TryRemove(insurancePlanId, out removed);
             return null;
         }
 
@@ -64,18 +52,9 @@ public class PayerRegistry
         {
             _logger.LogWarning("Payer of insurancePlanId {InsurancePlanId} ('{Payer}') is not used: {Problem}. Correct the row in table PA_PAYER.",
                 insurancePlanId, payer.PayerName, problem);
-            CachedPayer? removed;
-            _payers.TryRemove(insurancePlanId, out removed);
             return null;
         }
 
-        if (_cacheMinutes > 0)
-        {
-            CachedPayer entry = new CachedPayer();
-            entry.Payer = payer;
-            entry.Expires = DateTime.UtcNow.AddMinutes(_cacheMinutes);
-            _payers[insurancePlanId] = entry;
-        }
         return payer;
     }
 

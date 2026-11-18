@@ -62,12 +62,6 @@ public class PayerSettings
     public int TimeoutSeconds { get; set; } = DefaultTimeoutSeconds;
 
     /// <summary>
-    /// Optional. Launch URL of the payer's SMART DTR app. Empty = the URL on the payer's CRD card (normal case).
-    /// Set it when the payer gives a fixed URL or the card URL must be overridden.
-    /// </summary>
-    public string? DtrAppLaunchUrl { get; set; }
-
-    /// <summary>
     /// Fills in the default of every optional value that is empty and removes spaces around the texts.
     /// Called once each time a payer configuration is read, so the rest of the code never sees an empty optional value.
     /// </summary>
@@ -94,15 +88,6 @@ public class PayerSettings
         if (TimeoutSeconds <= 0)
         {
             TimeoutSeconds = DefaultTimeoutSeconds;
-        }
-
-        if (string.IsNullOrWhiteSpace(DtrAppLaunchUrl))
-        {
-            DtrAppLaunchUrl = null;
-        }
-        else
-        {
-            DtrAppLaunchUrl = DtrAppLaunchUrl.Trim();
         }
     }
 

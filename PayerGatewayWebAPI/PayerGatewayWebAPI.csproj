@@ -6,7 +6,7 @@
     The EHR sends the insurance plan id (insurancePlanId); the gateway reads that payer's configuration
     (EHR data API GET payers/{insurancePlanId}) and calls it.
     EHR data is read as FHIR from the FHIR API. Gateway data is stored in the EHR's Oracle database through
-    the EHR data API (or in memory for testing); the gateway has no database connection of its own.
+    the EHR data API; the gateway has no database connection of its own.
     All FHIR / CDS Hooks classes are written in this project (Models) - no FHIR SDK package is used.
   -->
   <PropertyGroup>

@@ -37,7 +37,7 @@ namespace PayerGatewayWebAPI.Repositories.Database;
 /// Every value is read on its own and in a forgiving way (a yes / no column may arrive as true, 1, "1" or "Y";
 /// a number as 30 or "30"). An optional value that still cannot be understood is reported in the log and its
 /// default is used - one bad optional value never switches a payer off.
-/// The payer is not kept here: PayerRegistry keeps it for Storage:PayerCacheMinutes.
+/// The payer is not kept in memory: it is read for every request.
 /// </summary>
 public class EhrApiPayerRepository : IPayerRepository
 {
@@ -123,7 +123,6 @@ public class EhrApiPayerRepository : IPayerRepository
             payer.TimeoutSeconds = timeoutSeconds.Value;
         }
 
-        payer.DtrAppLaunchUrl = ReadText(row, "dtrAppLaunchUrl");
         return payer;
     }
 

@@ -26,7 +26,7 @@ public class CdexController : ControllerBase
     /// <summary>Documents / forms the payer asked for on a pended request.</summary>
     /// <remarks>
     /// Each information request lists LOINC document types (documentsNeeded) and / or questionnaires (questionnairesNeeded).
-    /// For questionnaires: fill them in with the payer's SMART DTR app, find the saved form with GET /dtr/saved-forms, then send its questionnaireResponseId.
+    /// For questionnaires: fill them in with the payer's SMART DTR app and send the saved form's questionnaireResponseId.
     /// </remarks>
     /// <param name="requestId">EHR prior auth request id.</param>
     /// <param name="refresh">true = search the payer's Tasks now (the gateway has no background job; the client EHR calls this with refresh=true for each pended request). false = return what is stored.</param>

@@ -769,7 +769,6 @@ The EHR reads the result with `GET /pas/requests/{requestId}` or straight from `
 | The payer id of the patient's insurance (FHIR API, `Coverage.payor.identifier`) | | The payer's id in `Claim.insurer` |
 | The member id of the patient's insurance (FHIR API, `Coverage.subscriberId`) | | The member id in the Coverage. Optional: sent without it when the insurance has none |
 | `PA_PAYER.USE_SUBSCRIPTIONS` | 1 | Create the PAS Subscription |
-| `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the notification URL given to the payer. The payer must be able to reach it |
 | `Workflow:ClaimIdentifierSystem` | `http://provider.example.org/fhir/sid/prior-auth-request-id` | System of `Claim.identifier` |
 | `Workflow:BundleIdentifierSystem` | `http://provider.example.org/fhir/sid/pas-bundle-id` | System of `Bundle.identifier` |
 | `Workflow:ExpeditedDecisionHours` | 72 | `decisionDueBy` for `urgent` |

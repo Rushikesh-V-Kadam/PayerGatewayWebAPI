@@ -2,7 +2,7 @@ namespace PayerGatewayWebAPI.Configuration;
 
 /// <summary>
 /// How to reach the EHR data API (appsettings "Ehr"). The gateway keeps all its data in the EHR's Oracle database
-/// and reads / saves it through this API (see docs/EHR-Data-API.md). Used when Storage:Provider is "EhrApi".
+/// and reads / saves it through this API (see docs/EHR-Data-API.md).
 /// </summary>
 public class EhrSettings
 {

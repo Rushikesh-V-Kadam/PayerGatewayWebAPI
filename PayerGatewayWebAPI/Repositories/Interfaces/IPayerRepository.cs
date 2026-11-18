@@ -5,7 +5,7 @@ namespace PayerGatewayWebAPI.Repositories.Interfaces;
 /// <summary>
 /// Where one payer's configuration comes from: EhrApiPayerRepository reads it by insurance plan id from the EHR data
 /// API (GET payers/{insurancePlanId}, table PA_PAYER). There is no payer list: the gateway always asks for one payer.
-/// PayerRegistry reads the payer through this interface and keeps it for a few minutes.
+/// PayerRegistry reads the payer through this interface for every request (no cache).
 /// </summary>
 public interface IPayerRepository
 {

@@ -1,5 +1,12 @@
 # Payer Gateway Web API: DTR Guide, Flow 1: Gateway Forms
 
+> **Not current (Nov 18, 2026).** The gateway endpoints this guide describes for DTR are removed: `GET /dtr/launch/{linkId}`,
+> `GET /dtr/saved-forms`, table `PA_DTR_LINK` and its `dtr-links` calls, `PA_PAYER.DTR_APP_LAUNCH_URL` and the settings
+> `Workflow:GatewayPublicBaseUrl`, `Workflow:DtrAppUrl` and `Workflow:DtrLinkHours`. CRD order-sign passes the payer's
+> SMART DTR app link to the EHR exactly as the payer sent it (`link.url`, `link.type`, `link.appContext`). The DTR flow is
+> not decided yet; this guide is kept for reference until it is.
+
+
 **Project:** `PayerGatewayWebAPI` (port 5200, Swagger group "DTR 1 - Forms (our questionnaire app or EHR screen)")
 **Standards:** Da Vinci DTR 2.0.1, SDC (`$questionnaire-package`, `$next-question`)
 **Controller:** `DtrFormsController`

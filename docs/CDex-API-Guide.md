@@ -522,7 +522,6 @@ Both are in the EHR's Oracle database, through the EHR data API (`docs/EHR-Data-
 | The payer id of the patient's insurance (FHIR API, `Coverage.payor.identifier`) | | `PayerId` |
 | The member id of the patient's insurance (FHIR API, `Coverage.subscriberId`) | | `MemberId` |
 | `Workflow:ClaimIdentifierSystem` | `http://provider.example.org/fhir/sid/prior-auth-request-id` | System of the tracking id of an unsolicited attachment |
-| `Workflow:GatewayPublicBaseUrl` | `http://localhost:5200` | Start of the push URL given to payers |
 
 CDex uses FHIR R4, like every other step.
 

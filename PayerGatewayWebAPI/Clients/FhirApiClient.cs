@@ -13,9 +13,8 @@ namespace PayerGatewayWebAPI.Clients;
 
 /// <summary>
 /// Talks to the FHIR API (the gateway never calls the EHR's read APIs itself).
-///   GET  {fhir}/{type}/{id}, {fhir}/{type}?...     Patient, Coverage, orders, Organization, documents, forms saved by SMART DTR apps
+///   GET  {fhir}/{type}/{id}, {fhir}/{type}?...     Patient, Coverage, orders, Organization, documents, DTR forms (QuestionnaireResponse)
 ///   POST {root}/internal/access-tokens              fhirAuthorization token for the payer (CRD)
-///   POST {root}/internal/smart-launches             SMART launch for a payer DTR app
 /// Every call sends FhirApi:ApiKey in the X-Api-Key header (when set): the FHIR API's key for this gateway.
 /// </summary>
 public class FhirApiClient
@@ -219,41 +218,6 @@ public class FhirApiClient
         body["patientId"] = patientId;
         body["minutes"] = minutes;
         return await PostInternalAsync("internal/access-tokens", body, ct);
-    }
-
-    /// <summary>
-    /// Creates a SMART launch for a payer DTR app. Returns the launch id and iss (the FHIR R4 base URL).
-    /// insurancePlanId: only that payer's registered SMART app may use the launch.
-    /// </summary>
-    public async Task<SmartLaunchResult> CreateSmartLaunchAsync(int insurancePlanId, string patientId, string? userPractitionerId,
-        string? encounterId, List<string> fhirContext, string? appContext, CancellationToken ct)
-    {
-        JsonArray contextArray = new JsonArray();
-        foreach (string reference in fhirContext)
-        {
-            contextArray.Add(reference);
-        }
-
-        JsonObject body = new JsonObject();
-        body["patientId"] = patientId;
-        body["insurancePlanId"] = insurancePlanId;
-        body["userPractitionerId"] = userPractitionerId;
-        body["encounterId"] = encounterId;
-        body["fhirContext"] = contextArray;
-        body["appContext"] = appContext;
-
-        JsonObject? result = await PostInternalAsync("internal/smart-launches", body, ct);
-        string? launchId = FhirJson.GetString(result, "launchId");
-        string? iss = FhirJson.GetString(result, "iss");
-        if (launchId == null || iss == null)
-        {
-            throw new FhirApiException("The SMART launch response has no launchId / iss.");
-        }
-
-        SmartLaunchResult launch = new SmartLaunchResult();
-        launch.LaunchId = launchId;
-        launch.Iss = iss;
-        return launch;
     }
 
     // ================================================================== plumbing

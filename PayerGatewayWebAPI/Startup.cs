@@ -8,11 +8,9 @@ using PayerGatewayWebAPI.Constants;
 using PayerGatewayWebAPI.Helpers;
 using PayerGatewayWebAPI.Middleware;
 using PayerGatewayWebAPI.Repositories.Database;
-using PayerGatewayWebAPI.Repositories.InMemory;
 using PayerGatewayWebAPI.Repositories.Interfaces;
 using PayerGatewayWebAPI.Services.Cdex;
 using PayerGatewayWebAPI.Services.Crd;
-using PayerGatewayWebAPI.Services.Dtr;
 using PayerGatewayWebAPI.Services.Pas;
 using PayerGatewayWebAPI.Services.Payers;
 using Swashbuckle.AspNetCore.SwaggerGen;
@@ -25,7 +23,7 @@ namespace PayerGatewayWebAPI;
 ///
 ///   STEP 0  Payers   GET  /payers/{insurancePlanId}, POST /payers/{insurancePlanId}/discover
 ///   STEP 1  CRD      POST /crd/order-sign
-///   STEP 2  DTR      SMART App Launch of the payer DTR app: GET /dtr/launch/{linkId}, GET /dtr/saved-forms
+///   STEP 2  DTR      not in the gateway for now: order-sign passes the payer's DTR link to the EHR as received
 ///   STEP 3  PAS      POST /pas/requests, PUT / cancel / GET / inquire (no Subscription: the client EHR's job inquires)
 ///   STEP 4  CDex     GET  /cdex/requests/{requestId}/information-requests, POST .../attachments (no payer push)
 /// </summary>
@@ -46,10 +44,6 @@ public class Startup
         services.Configure<FhirApiSettings>(_configuration.GetSection(FhirApiSettings.SectionName));
         services.Configure<EhrSettings>(_configuration.GetSection(EhrSettings.SectionName));
         services.Configure<WorkflowSettings>(_configuration.GetSection(WorkflowSettings.SectionName));
-        services.Configure<StorageSettings>(_configuration.GetSection(StorageSettings.SectionName));
-
-        StorageSettings storage = new StorageSettings();
-        _configuration.GetSection(StorageSettings.SectionName).Bind(storage);
 
         // ------------------------------------------------------------ 2. HTTP (one factory; each client sets its own timeout per call)
         // HttpClient has a built-in limit of 100 seconds. It is switched off here (ConfigureHttpClient), because every
@@ -62,31 +56,18 @@ public class Startup
         services.AddSingleton<PayerRegistry>();
         services.AddSingleton<PayerClient>();
 
-        // ------------------------------------------------------------ 4. storage: the EHR database (through the EHR data API) or in memory
-        // The gateway has no database connection of its own. "EhrApi" keeps every table (PA_*) and the payer configuration
+        // ------------------------------------------------------------ 4. storage: the EHR database (through the EHR data API)
+        // The gateway has no database connection of its own. Every table (PA_*) and the payer configuration are kept
         // in the EHR's Oracle database; the EHR team's Web API reads and saves the rows (docs/EHR-Data-API.md).
-        // Folders: Repositories\Interfaces (what the services use), Repositories\Database (EHR data API),
-        // Repositories\InMemory (local testing; data is lost when the app stops).
-        // The payer configuration is read the same way in both modes: one payer by insurance plan id, from the EHR
-        // data API (GET payers/{insurancePlanId}, table PA_PAYER).
+        // Folders: Repositories\Interfaces (what the services use), Repositories\Database (EHR data API).
+        // The payer configuration is one payer by insurance plan id (GET payers/{insurancePlanId}, table PA_PAYER).
         services.AddSingleton<IPayerRepository, EhrApiPayerRepository>();
-        if (storage.IsEhrApi())
-        {
-            services.AddSingleton<IDtrLinkRepository, EhrApiDtrLinkRepository>();
-            services.AddSingleton<IPriorAuthRepository, EhrApiPriorAuthRepository>();
-            services.AddSingleton<ICdexTaskRepository, EhrApiCdexTaskRepository>();
-        }
-        else
-        {
-            services.AddSingleton<IDtrLinkRepository, InMemoryDtrLinkRepository>();
-            services.AddSingleton<IPriorAuthRepository, InMemoryPriorAuthRepository>();
-            services.AddSingleton<ICdexTaskRepository, InMemoryCdexTaskRepository>();
-        }
+        services.AddSingleton<IPriorAuthRepository, EhrApiPriorAuthRepository>();
+        services.AddSingleton<ICdexTaskRepository, EhrApiCdexTaskRepository>();
 
         // ------------------------------------------------------------ 5. workflow services (one instance per request)
         services.AddScoped<CdsHookBuilder>();
         services.AddScoped<CrdService>();
-        services.AddScoped<DtrService>();
         services.AddScoped<PasBundleBuilder>();
         services.AddScoped<FacilityResolver>();
         services.AddScoped<PasService>();

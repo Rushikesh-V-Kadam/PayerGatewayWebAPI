@@ -24,10 +24,8 @@ Content-Type: application/json
   "userPractitionerId": "prac-1"
 }
 
-### 2. DTR (callDtr = true): open the message link of 1 (type "smart", {{gateway}}/dtr/launch/{linkId}) in a
-###    browser. The payer's SMART DTR app starts and saves its QuestionnaireResponse at the FHIR API.
-### 2b. DTR: forms the SMART app saved for the order
-GET {{gateway}}/dtr/saved-forms?patientId=pat-1&orderId=ord-1-hd
+### 2. DTR (callDtr = true): the message link of 1 (type "smart") is the payer's SMART DTR app link as the payer
+###    sent it. The gateway has no DTR endpoint for now (the DTR flow is not decided yet).
 
 ### 3. PAS: submit (completed DTR forms of ord-1-hd are attached automatically)
 POST {{gateway}}/pas/requests

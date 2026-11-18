@@ -8,11 +8,9 @@ using PayerGatewayWebAPI.Constants;
 using PayerGatewayWebAPI.Exceptions;
 using PayerGatewayWebAPI.Helpers;
 using PayerGatewayWebAPI.Models.CdsHooks;
-using PayerGatewayWebAPI.Models.Entities;
 using PayerGatewayWebAPI.Models.Fhir;
 using PayerGatewayWebAPI.Models.Requests;
 using PayerGatewayWebAPI.Models.Responses;
-using PayerGatewayWebAPI.Repositories.Interfaces;
 using PayerGatewayWebAPI.Services.Pas;
 using PayerGatewayWebAPI.Services.Payers;
 
@@ -35,19 +33,17 @@ public class CrdService
     private readonly PayerRegistry _payers;
     private readonly PayerClient _payerClient;
     private readonly CdsHookBuilder _builder;
-    private readonly IDtrLinkRepository _linkRepository;
     private readonly WorkflowSettings _workflow;
     private readonly ILogger<CrdService> _logger;
 
     /// <summary>Created by dependency injection.</summary>
     public CrdService(FhirApiClient fhir, PayerRegistry payers, PayerClient payerClient, CdsHookBuilder builder,
-        IDtrLinkRepository linkRepository, IOptions<WorkflowSettings> workflow, ILogger<CrdService> logger)
+        IOptions<WorkflowSettings> workflow, ILogger<CrdService> logger)
     {
         _fhir = fhir;
         _payers = payers;
         _payerClient = payerClient;
         _builder = builder;
-        _linkRepository = linkRepository;
         _workflow = workflow.Value;
         _logger = logger;
     }
@@ -258,7 +254,7 @@ public class CrdService
             foreach (CdsCard card in hookResponse.Cards)
             {
                 string? orderId = OrderMentionedByCard(card, orders);
-                EhrMessage message = await ToMessageAsync(card, payer, request, orders, orderId, coverage.Id, user, ct);
+                EhrMessage message = ToMessage(card);
                 CoverageDecision? owner = orderId == null ? null : FindDecision(response, orderId);
                 if (owner != null)
                 {
@@ -392,17 +388,18 @@ public class CrdService
     }
 
     /// <summary>
-    /// Card -> EHR message. A SMART link (a payer DTR app) cannot be opened by the EHR directly, so the launch details are
-    /// saved and the EHR gets a plain gateway URL: /dtr/launch/{linkId}.
+    /// Card -> EHR message. The payer's link is passed to the EHR as the payer sent it (label, url, type, appContext):
+    /// the gateway does not launch or rewrite DTR links. A "smart" link is the payer's SMART DTR app; how the EHR
+    /// launches it is not decided yet (TODO: DTR flow).
     /// </summary>
-    private async Task<EhrMessage> ToMessageAsync(CdsCard card, PayerSettings payer, OrderSignRequest request, List<JsonObject> orders,
-        string? orderId, string? coverageId, string userPractitionerId, CancellationToken ct)
+    private static EhrMessage ToMessage(CdsCard card)
     {
         EhrMessage message = new EhrMessage();
         message.Severity = card.Indicator;
         message.Summary = card.Summary;
         message.Detail = card.Detail;
 
+        // a SMART (DTR app) link is preferred; otherwise the first link of the card
         CdsLink? link = null;
         foreach (CdsLink candidate in card.Links)
         {
@@ -423,56 +420,10 @@ public class CrdService
 
         message.Link = new EhrMessageLink();
         message.Link.Label = link.Label;
-        if (link.Type != CrdCodes.LinkTypeSmart)
-        {
-            message.Link.Url = link.Url;
-            message.Link.Type = CrdCodes.LinkTypeAbsolute;
-            return message;
-        }
-
-        // SMART link: remember the launch context, give the EHR a gateway URL
-        DtrLinkRecord dtrLink = new DtrLinkRecord();
-        dtrLink.InsurancePlanId = payer.InsurancePlanId;
-        dtrLink.PatientId = request.PatientId;
-        dtrLink.EncounterId = request.EncounterId;
-        dtrLink.UserPractitionerId = userPractitionerId;
-        foreach (JsonObject raw in orders)
-        {
-            OrderResource order = OrderHelper.ReadOrder(raw);
-            if (orderId == null || order.Id == orderId)
-            {
-                dtrLink.FhirContext.Add(order.GetReference());
-            }
-        }
-        if (coverageId != null)
-        {
-            dtrLink.FhirContext.Add("Coverage/" + coverageId);
-        }
-        dtrLink.AppContext = link.AppContext;
-        dtrLink.AppUrl = ChooseDtrAppUrl(payer, link.Url);
-        dtrLink.ExpiresAt = DateTime.UtcNow.AddHours(_workflow.DtrLinkHours);
-        await _linkRepository.SaveAsync(dtrLink, ct);
-
-        message.Link.Url = _workflow.GetGatewayBaseUrl() + "/dtr/launch/" + dtrLink.LinkId;
-        message.Link.Type = CrdCodes.LinkTypeSmart;
+        message.Link.Url = link.Url;
+        message.Link.Type = link.Type;
+        message.Link.AppContext = link.AppContext;
         return message;
-    }
-
-    /// <summary>
-    /// The DTR app to open: 1) the payer's fixed launch URL (PA_PAYER.DTR_APP_LAUNCH_URL), 2) a provider-wide app
-    /// (Workflow:DtrAppUrl), 3) the URL on the payer's card (normal case for payers with their own app).
-    /// </summary>
-    private string ChooseDtrAppUrl(PayerSettings payer, string cardUrl)
-    {
-        if (!string.IsNullOrWhiteSpace(payer.DtrAppLaunchUrl))
-        {
-            return payer.DtrAppLaunchUrl;
-        }
-        if (!string.IsNullOrWhiteSpace(_workflow.DtrAppUrl))
-        {
-            return _workflow.DtrAppUrl;
-        }
-        return cardUrl;
     }
 
     // ================================================================== helpers

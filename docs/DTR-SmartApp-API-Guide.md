@@ -1,5 +1,12 @@
 # Payer Gateway Web API: DTR Guide, Flow 2: Payer SMART App
 
+> **Not current (Nov 18, 2026).** The gateway endpoints this guide describes for DTR are removed: `GET /dtr/launch/{linkId}`,
+> `GET /dtr/saved-forms`, table `PA_DTR_LINK` and its `dtr-links` calls, `PA_PAYER.DTR_APP_LAUNCH_URL` and the settings
+> `Workflow:GatewayPublicBaseUrl`, `Workflow:DtrAppUrl` and `Workflow:DtrLinkHours`. CRD order-sign passes the payer's
+> SMART DTR app link to the EHR exactly as the payer sent it (`link.url`, `link.type`, `link.appContext`). The DTR flow is
+> not decided yet; this guide is kept for reference until it is.
+
+
 **Project:** `PayerGatewayWebAPI` (port 5200, Swagger group "DTR 2 - Payer SMART app")
 **Standards:** Da Vinci DTR 2.0.1, SMART App Launch 2.x (EHR launch)
 **Controllers:** `DtrController` (launch and saved-forms)
@@ -332,7 +339,7 @@ Content-Type: application/json
   "dtrAppLaunchUrl": null
 }
 
-### 1b. check: "dtrMode": "SmartApp" (the gateway keeps the payer list for Storage:PayerCacheMinutes, so wait 5 minutes or restart the gateway)
+### 1b. check: "dtrMode": "SmartApp" (the payer is read for every request, so a change is used right away)
 GET http://localhost:5200/payers
 
 ### 2. sign an order: the DTR message link has type "smart"

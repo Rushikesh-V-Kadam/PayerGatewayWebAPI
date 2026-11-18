@@ -3,7 +3,7 @@ namespace PayerGatewayWebAPI.Models.Responses;
 /// <summary>
 /// CRD answer for one order. The gateway does not save it: the EHR stores the order-sign response on its side.
 /// What to do next:
-///   callDtr = true  -> DTR: open the SMART DTR app link of the message (/dtr/launch/{linkId})
+///   callDtr = true  -> DTR: the message link (type "smart") is the payer's SMART DTR app link, as the payer sent it
 ///   callPas = true  -> PAS: POST /pas/requests (after DTR when both are true)
 ///   both false      -> nothing more for this order (see covered / priorAuthNeeded)
 /// </summary>

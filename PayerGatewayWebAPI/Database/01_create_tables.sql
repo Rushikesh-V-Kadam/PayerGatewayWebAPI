@@ -28,7 +28,7 @@
 
 -- ------------------------------------------------------------------ PAYERS (maintained by the EHR team)
 -- One row per connected payer. The gateway only READS this table, one row at a time: GET payers/{insurancePlanId}
--- (there is no payer list), and keeps the row for a few minutes. To onboard a payer: insert a row. Nothing changes in the gateway.
+-- (there is no payer list), for every request (no cache). To onboard a payer: insert a row. Nothing changes in the gateway.
 -- INSURANCE_PLAN_ID is the EHR's insurance plan id of this payer (a whole number), the key of the table. The EHR sends it
 -- as "insurancePlanId" in every gateway request, and every gateway table below stores it to know the payer of a row.
 -- PAYER_NAME is only shown in the gateway's log lines and messages.
@@ -59,7 +59,6 @@ CREATE TABLE PA_PAYER (
     -- DTR_MODE: only SmartApp is supported now (the gateway does not read the column). Forms (the EHR shows the
     -- questions) is kept in the check so the earlier Forms code (E:\FHIR\PayerGatewayWebAPI_dtrForm) works without an ALTER.
     DTR_MODE                 VARCHAR2(10)   DEFAULT 'SmartApp' NOT NULL, -- SmartApp = payer's own SMART DTR app
-    DTR_APP_LAUNCH_URL       VARCHAR2(500),                         -- payer app launch URL; empty = the URL on the payer's CRD card
     CONSTRAINT PK_PA_PAYER PRIMARY KEY (INSURANCE_PLAN_ID),
     CONSTRAINT CK_PA_PAYER_ENABLED CHECK (ENABLED IN (0, 1)),
     CONSTRAINT CK_PA_PAYER_SIGN CHECK (SIGN_CDS_HOOKS_REQUESTS IN (0, 1)),
@@ -76,26 +75,23 @@ CREATE TABLE PA_PAYER (
 -- Example: the smallest row that works (everything else uses the defaults)
 -- INSERT INTO PA_PAYER (INSURANCE_PLAN_ID, PAYER_NAME, BASE_URL) VALUES (2001, 'AcmeHealth', 'https://api.acmehealth.example');
 
--- Example: a payer whose SMART DTR app has a fixed launch URL
--- INSERT INTO PA_PAYER (INSURANCE_PLAN_ID, PAYER_NAME, BASE_URL, DTR_APP_LAUNCH_URL)
--- VALUES (2001, 'AcmeHealth', 'https://api.acmehealth.example', 'https://dtr.acmehealth.example/launch');
-
 -- Example: the local mock payer used for testing (every column filled).
 -- INSURANCE_PLAN_ID must be the insurance plan id the EHR uses for the test patients' insurance.
 -- INSERT INTO PA_PAYER (INSURANCE_PLAN_ID, PAYER_NAME, ENABLED, BASE_URL, CDS_SERVICES_PATH, FHIR_PATH,
 --                       AUTH_TYPE, AUTH_TOKEN_URL, AUTH_CLIENT_ID, AUTH_CLIENT_SECRET, AUTH_SCOPE,
 --                       SIGN_CDS_HOOKS_REQUESTS, USE_SUBSCRIPTIONS, NOTIFICATION_SECRET,
---                       CRD_TIMEOUT_SECONDS, TIMEOUT_SECONDS, DTR_MODE, DTR_APP_LAUNCH_URL)
+--                       CRD_TIMEOUT_SECONDS, TIMEOUT_SECONDS, DTR_MODE)
 -- VALUES (1001, 'MockPayer', 1, 'http://localhost:5080', 'cds-services', 'fhir',
 --         'none', NULL, NULL, NULL, NULL,
 --         1, 0, NULL,
---         10, 30, 'SmartApp', NULL);
+--         10, 30, 'SmartApp');
 
 -- ------------------------------------------------------------------ STEP 1: CRD (order-sign)
 -- No table. The gateway does not save the order-sign decisions: the EHR stores the order-sign response on its side.
 -- PAS does not read the decisions back; the EHR sends the values it needs (insurancePlanId, coverageId) in its
 -- PAS requests.
--- The payer SMART DTR app links that order-sign creates are kept in PA_DTR_LINK (STEP 2).
+-- The payer's DTR link (SMART DTR app) on a card is passed to the EHR in the order-sign response as the payer sent it;
+-- the gateway does not store it (the DTR flow is not decided yet).
 
 -- ------------------------------------------------------------------ STEP 2: DTR
 -- The filled-in forms in FHIR format (QuestionnaireResponse), saved by the payer's SMART DTR app through the FHIR API; sent UNCHANGED to the
@@ -116,20 +112,6 @@ CREATE TABLE PA_QUESTIONNAIRE_RESPONSE (
 );
 CREATE INDEX IX_PA_QR_PATIENT ON PA_QUESTIONNAIRE_RESPONSE (PATIENT_ID, LAST_UPDATED_UTC);
 CREATE INDEX IX_PA_QR_ORDER   ON PA_QUESTIONNAIRE_RESPONSE (ORDER_ID);
-
--- Payer SMART DTR app links (future: when payers bring their own SMART apps).
-CREATE TABLE PA_DTR_LINK (
-    LINK_ID               VARCHAR2(64)   NOT NULL,
-    INSURANCE_PLAN_ID  NUMBER(10)     NOT NULL,    -- payer of the DTR app (= PA_PAYER.INSURANCE_PLAN_ID)
-    PATIENT_ID            VARCHAR2(64)   NOT NULL,
-    ENCOUNTER_ID          VARCHAR2(64),
-    USER_PRACTITIONER_ID  VARCHAR2(64),
-    FHIR_CONTEXT_JSON     CLOB,                       -- ["ServiceRequest/ord-1001","Coverage/cov-1001"]
-    APP_CONTEXT           CLOB,                       -- appContext from the payer's card (free text)
-    APP_URL               VARCHAR2(1000) NOT NULL,
-    EXPIRES_AT            TIMESTAMP      NOT NULL,    -- UTC
-    CONSTRAINT PK_PA_DTR_LINK PRIMARY KEY (LINK_ID)
-);
 
 -- ------------------------------------------------------------------ STEP 3: PAS
 -- One row per prior authorization request, updated on every update / cancel / inquiry / payer answer.
