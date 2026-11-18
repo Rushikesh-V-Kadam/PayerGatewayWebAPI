@@ -123,6 +123,8 @@ public class EhrApiPayerRepository : IPayerRepository
             payer.TimeoutSeconds = timeoutSeconds.Value;
         }
 
+        // Kept for the DTR flow (not decided yet); not used by CRD now.
+        payer.DtrAppLaunchUrl = ReadText(row, "dtrAppLaunchUrl");
         return payer;
     }
 
