@@ -7,9 +7,9 @@ public class CdsHookRequest
 {
     public string Hook { get; set; } = string.Empty;
     public string HookInstance { get; set; } = Guid.NewGuid().ToString();
-    /// <summary>FHIR API base URL the payer may query.</summary>
+    /// <summary>FHIR API base URL the payer may query. Sent empty for now (token authentication not decided).</summary>
     public string? FhirServer { get; set; }
-    /// <summary>Token for FhirServer (from the FHIR API /internal/access-tokens).</summary>
+    /// <summary>Token for FhirServer. Sent with empty values for now (token authentication not decided).</summary>
     public JsonObject? FhirAuthorization { get; set; }
     /// <summary>Hook context: patientId, userId, draftOrders ...</summary>
     public JsonObject Context { get; set; } = new();

@@ -2,9 +2,9 @@
 
 **For the EHR team.** This is what the Payer Gateway needs from the EHR so that all prior authorization data is kept in the EHR's own Oracle database.
 
-- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (8 tables, all named `PA_...`). It is the only
+- Tables to create: `PayerGatewayWebAPI/Database/01_create_tables.sql` (4 tables, all named `PA_...`). It is the only
   script: no script has been run yet, so there are no ALTER scripts.
-- Web API to build: 15 small endpoints, described below. Each one reads or saves **one row of one table**.
+- Web API to build: 8 small endpoints, described below. Each one reads or saves **one row of one table**.
 - A working example of the whole API (in memory, for testing): `MockEhr.Api/Controllers/PriorAuthDataController.cs`.
 - Swagger file of the API (every endpoint and every property, with its meaning, column, example and required mark):
   `EHR-API-swagger.json`, next to this document. Open it in Swagger Editor or import it into Postman. The same document
@@ -41,7 +41,7 @@ EHR screens ──(existing gateway API: order-sign, prior auth, CDex)───�
 | Base URL | `{EHR base URL}/api/prior-auth-data` (the path can be changed: gateway setting `Ehr:DataPath`) |
 | Security | No authentication is built into the gateway; it is added outside the gateway code. Use HTTPS. |
 | Format | JSON, UTF-8, `Content-Type: application/json`, property names in camelCase. |
-| Answer format | **Every answer** has the client's format, with HTTP `200`: `{ "<EntityName>": <row, list of rows, or null>, "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }`. The entity names per endpoint are in `EHR-Data-API-swagger.json` (`PayerDetail`, `PriorAuthDetail`, `CdexTaskDetail`, `CdexTaskList`, `QuestionnaireResponseDetail`, `QuestionnaireResponseList`, `SmartClientDetail`, `SmartLaunchDetail`, `SmartAuthCodeDetail`, `AccessTokenDetail`). The gateway and the FHIR API read the one entity property whatever its name. |
+| Answer format | **Every answer** has the client's format, with HTTP `200`: `{ "<EntityName>": <row, list of rows, or null>, "TOKEN_EXPIRED": "", "ERROR_MESSAGE": "" }`. The entity names per endpoint are in `EHR-Data-API-swagger.json` (`PayerDetail`, `PriorAuthDetail`, `CdexTaskDetail`, `CdexTaskList`, `QuestionnaireResponseDetail`, `QuestionnaireResponseList`). The gateway and the FHIR API read the one entity property whatever its name. |
 | Row = columns | A row (the entity, and the body of a PUT / POST) is a flat JSON object. **One property = one column**: `requestId` ↔ `REQUEST_ID`, `decisionJson` ↔ `DECISION_JSON`. Request bodies are the plain row, not wrapped. |
 | JSON text columns | Properties ending in `Json` or `Bundle`, and `appContext`, are **strings** that contain JSON text. Store the string unchanged in the CLOB column and return it unchanged. Do not parse or re-format it. |
 | Timestamps | UTC, ISO-8601 with `Z`: `"2026-10-07T18:36:17Z"` (fractions of a second are allowed). |
@@ -69,23 +69,10 @@ All paths are under `{EHR base URL}/api/prior-auth-data`.
 | 8 | `GET questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | One filled-in form in FHIR format (called by the FHIR API). |
 | 9 | `PUT questionnaire-responses/{id}` | `PA_QUESTIONNAIRE_RESPONSE` | Save it. |
 | 10 | `GET questionnaire-responses?patientId=X` | `PA_QUESTIONNAIRE_RESPONSE` | All FHIR forms of a patient, newest first (`ORDER BY LAST_UPDATED_UTC DESC`). |
-| 11 | `GET smart-launches/{launchId}` | `PA_SMART_LAUNCH` | One SMART launch (called by the FHIR API). |
-| 12 | `PUT smart-launches/{launchId}` | `PA_SMART_LAUNCH` | Save it. |
-| 13 | `GET smart-clients/{clientId}` | `PA_SMART_CLIENT` | One registered SMART app (a payer's DTR app). Read only: the EHR team maintains the table (called by the FHIR API). |
-| 14 | `PUT smart-auth-codes/{codeHash}` | `PA_SMART_AUTH_CODE` | Save a one-time authorization code (called by the FHIR API). |
-| 15 | `DELETE smart-auth-codes/{codeHash}` | `PA_SMART_AUTH_CODE` | **Take** the code: return the row **and** delete it in one statement (entity `null` when there is no row). |
-| 16 | `GET access-tokens/{tokenHash}` | `PA_ACCESS_TOKEN` | One access token (called by the FHIR API on every FHIR call that sends a token). |
-| 17 | `PUT access-tokens/{tokenHash}` | `PA_ACCESS_TOKEN` | Save it. |
 
-Numbers 2 and 3 are not used: the `dtr-links` endpoints were removed (Nov 18, 2026). The other numbers are kept so
-earlier references stay valid.
-
-The only DELETE is endpoint 15. Nothing else is removed by the gateway or the FHIR API; rows of
-`PA_SMART_LAUNCH`, `PA_SMART_AUTH_CODE` and `PA_ACCESS_TOKEN` past `EXPIRES_AT` can be deleted by a scheduled job (SQL at
-the end of the SMART section of `01_create_tables.sql`).
-
-`codeHash` and `tokenHash` are `base64url(SHA-256(value))` (43 characters of `A-Z a-z 0-9 - _`): the codes and tokens
-themselves are never sent to the data API and never stored.
+Numbers 2 and 3 (`dtr-links`) and 11 to 17 (SMART launches, SMART apps, authorization codes and access tokens) are
+not used: they were removed on Nov 18, 2026. The other numbers are kept so earlier references stay valid. Nothing is
+deleted by the gateway or the FHIR API.
 
 ## 4. The rows
 
@@ -238,59 +225,6 @@ The gateway reads the payer for every request (no cache), so a new or changed pa
 | **ehrSyncStatus** | text | `PENDING`, `SENT`, `FAILED` (state of that chart copy). |
 | **lastUpdatedUtc** | time | |
 
-### 4.5 `PA_SMART_LAUNCH` (endpoints 11, 12; called by the FHIR API)
-
-| Property | Type | Meaning |
-| --- | --- | --- |
-| **launchId** | text | Key. |
-| insurancePlanId | int | Only this payer's app may use the launch. |
-| **patientId** | text | |
-| encounterId | text | |
-| userPractitionerId | text | |
-| fhirContextJson | JSON text | `["ServiceRequest/ord-1001","Coverage/cov-1001"]` |
-| appContext | text | appContext from the payer's card, returned unchanged. |
-| **expiresAt** | time | 15 minutes after it was created. |
-
-### 4.6 `PA_SMART_CLIENT` (endpoint 13; maintained by the EHR team, read by the FHIR API)
-
-One row per payer SMART DTR app. To let a payer's app open: insert a row with the `client_id` given to the payer and
-the redirect URIs the payer registers. Only public apps (browser apps protected by PKCE, no client secret) for now.
-
-| Property | Type | Meaning |
-| --- | --- | --- |
-| **clientId** | text | The app's `client_id`. Key. |
-| insurancePlanId | int | Payer of the app (`PA_PAYER.INSURANCE_PLAN_ID`). The app may only use launches of that payer's DTR links. Empty = any launch. |
-| clientName | text | Shown in log lines. |
-| **enabled** | bool | `false` = the app is blocked. |
-| **redirectUrisJson** | JSON text | Array of redirect URIs, e.g. `["https://dtr.payer.example/callback"]`. The app must send one of them exactly. |
-| allowedScopes | text | Scopes the app may get, separated by a space (exact strings, e.g. `launch fhirUser patient/*.rs patient/QuestionnaireResponse.cu`). Empty = any scope it asks for. |
-
-### 4.7 `PA_SMART_AUTH_CODE` (endpoints 14, 15; called by the FHIR API)
-
-| Property | Type | Meaning |
-| --- | --- | --- |
-| **codeHash** | text | Key. |
-| **clientId** | text | |
-| **redirectUri** | text | |
-| **scope** | text | Granted scopes. |
-| **codeChallenge** | text | PKCE S256 challenge. |
-| **launchId** | text | `PA_SMART_LAUNCH.LAUNCH_ID` |
-| **expiresAt** | time | 2 minutes after it was created. |
-
-### 4.8 `PA_ACCESS_TOKEN` (endpoints 16, 17; called by the FHIR API)
-
-| Property | Type | Meaning |
-| --- | --- | --- |
-| **tokenHash** | text | Key. |
-| **subject** | text | SMART `client_id`, or the payer name for CRD `fhirAuthorization` tokens. |
-| **scope** | text | Granted scopes. |
-| patientId | text | The only patient the token reaches. |
-| **audience** | text | FHIR base URL the token is for. |
-| **expiresAt** | time | |
-
-**Speed.** Endpoint 16 runs on every FHIR call a payer or a payer app makes with a token: a primary-key read, aim for
-well under 100 ms.
-
 ## 5. What the EHR reads itself
 
 Nothing is pushed to the EHR. The EHR screens read the tables (example SQL is at the end of `01_create_tables.sql`):
@@ -379,3 +313,7 @@ row as it is). `GET dtr-links/{linkId}` is unchanged.
 (the DTR flow is not decided yet). Removed table `PA_DTR_LINK`, its endpoints 2 and 3 (`GET dtr-links/{linkId}`,
 `POST dtr-links`) and the `PA_PAYER` column `DTR_APP_LAUNCH_URL` (`dtrAppLaunchUrl`). The other endpoint numbers are
 unchanged. The gateway also reads the payer on every call now (no 5-minute cache).
+
+**Changed (Nov 18, 2026, authentication):** the FHIR API has no authentication code any more (the mechanism is not
+decided yet): no access checks, no SMART login (`auth/authorize`, `auth/token`) and no tokens. Removed tables
+`PA_SMART_CLIENT`, `PA_SMART_LAUNCH`, `PA_SMART_AUTH_CODE` and `PA_ACCESS_TOKEN` and their endpoints 11 to 17.

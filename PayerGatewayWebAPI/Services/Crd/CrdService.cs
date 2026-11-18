@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Options;
 using PayerGatewayWebAPI.Clients;
 using PayerGatewayWebAPI.Configuration;
 using PayerGatewayWebAPI.Constants;
@@ -33,18 +32,16 @@ public class CrdService
     private readonly PayerRegistry _payers;
     private readonly PayerClient _payerClient;
     private readonly CdsHookBuilder _builder;
-    private readonly WorkflowSettings _workflow;
     private readonly ILogger<CrdService> _logger;
 
     /// <summary>Created by dependency injection.</summary>
     public CrdService(FhirApiClient fhir, PayerRegistry payers, PayerClient payerClient, CdsHookBuilder builder,
-        IOptions<WorkflowSettings> workflow, ILogger<CrdService> logger)
+        ILogger<CrdService> logger)
     {
         _fhir = fhir;
         _payers = payers;
         _payerClient = payerClient;
         _builder = builder;
-        _workflow = workflow.Value;
         _logger = logger;
     }
 
@@ -217,8 +214,11 @@ public class CrdService
             CdsHookRequest hookRequest = new CdsHookRequest();
             hookRequest.Hook = CrdCodes.OrderSignHook;
             List<JsonObject> sentOrders = orders;
-            hookRequest.FhirServer = _fhir.GetBaseUrl();
-            hookRequest.FhirAuthorization = await TryGetFhirAuthorizationAsync(payer, request.PatientId, ct);
+            // TODO: the token authentication for payers is not decided yet. Until then fhirServer is sent empty and
+            // fhirAuthorization is sent with empty values, so no token is issued and the payer gets no FHIR access.
+            // The payer still receives the data it needs in prefetch.
+            hookRequest.FhirServer = string.Empty;
+            hookRequest.FhirAuthorization = EmptyFhirAuthorization();
             hookRequest.Context = _builder.BuildContext(request, sentOrders, user);
             if (service.Prefetch != null && service.Prefetch.Count > 0)
             {
@@ -305,18 +305,20 @@ public class CrdService
         return null;
     }
 
-    /// <summary>fhirAuthorization lets the payer read more data during CRD. Optional: the hook is sent without it on failure.</summary>
-    private async Task<JsonObject?> TryGetFhirAuthorizationAsync(PayerSettings payer, string patientId, CancellationToken ct)
+    /// <summary>
+    /// fhirAuthorization with the CDS Hooks property names and empty values (access_token, token_type, expires_in,
+    /// scope, subject). Sent until the token authentication for payers is decided.
+    /// TODO: replace with the real token once the authentication is decided.
+    /// </summary>
+    private static JsonObject EmptyFhirAuthorization()
     {
-        try
-        {
-            return await _fhir.IssueAccessTokenAsync(payer.PayerName, patientId, _workflow.FhirAuthorizationMinutes, ct);
-        }
-        catch (FhirApiException ex)
-        {
-            _logger.LogWarning(ex, "No fhirAuthorization for {Payer}; hook sent without it", payer.PayerName);
-            return null;
-        }
+        JsonObject authorization = new JsonObject();
+        authorization["access_token"] = string.Empty;
+        authorization["token_type"] = string.Empty;
+        authorization["expires_in"] = 0;
+        authorization["scope"] = string.Empty;
+        authorization["subject"] = string.Empty;
+        return authorization;
     }
 
     // ================================================================== cards

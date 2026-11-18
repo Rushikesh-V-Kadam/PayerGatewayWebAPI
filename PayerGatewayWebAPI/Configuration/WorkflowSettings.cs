@@ -21,9 +21,6 @@ public class WorkflowSettings
     /// </summary>
     public string BundleIdentifierSystem { get; set; } = "http://provider.example.org/fhir/sid/pas-bundle-id";
 
-    /// <summary>Lifetime of the fhirAuthorization token given to payers during CRD, in minutes.</summary>
-    public int FhirAuthorizationMinutes { get; set; } = 5;
-
     /// <summary>Decision deadline for urgent requests (CMS-0057-F: 72 hours).</summary>
     public int ExpeditedDecisionHours { get; set; } = 72;
 

@@ -14,14 +14,10 @@ namespace PayerGatewayWebAPI.Clients;
 /// <summary>
 /// Talks to the FHIR API (the gateway never calls the EHR's read APIs itself).
 ///   GET  {fhir}/{type}/{id}, {fhir}/{type}?...     Patient, Coverage, orders, Organization, documents, DTR forms (QuestionnaireResponse)
-///   POST {root}/internal/access-tokens              fhirAuthorization token for the payer (CRD)
-/// Every call sends FhirApi:ApiKey in the X-Api-Key header (when set): the FHIR API's key for this gateway.
+/// No authentication: the FHIR API has no access checks for now (the mechanism is not decided yet).
 /// </summary>
 public class FhirApiClient
 {
-    /// <summary>Header that carries FhirApi:ApiKey (the FHIR API's Security:InternalApiKey).</summary>
-    private const string ApiKeyHeader = "X-Api-Key";
-
     private readonly IHttpClientFactory _httpFactory;
     private readonly FhirApiSettings _settings;
 
@@ -205,21 +201,6 @@ public class FhirApiClient
         return document;
     }
 
-    // ================================================================== /internal
-
-    /// <summary>
-    /// Short-lived token that lets the payer read this patient's data during CRD.
-    /// Returned unchanged because it already has the CDS Hooks fhirAuthorization shape.
-    /// </summary>
-    public async Task<JsonObject?> IssueAccessTokenAsync(string payerName, string patientId, int minutes, CancellationToken ct)
-    {
-        JsonObject body = new JsonObject();
-        body["subject"] = payerName;
-        body["patientId"] = patientId;
-        body["minutes"] = minutes;
-        return await PostInternalAsync("internal/access-tokens", body, ct);
-    }
-
     // ================================================================== plumbing
 
     /// <summary>GET. 404 -> null; other errors -> FhirApiException.</summary>
@@ -243,17 +224,6 @@ public class FhirApiClient
         }
     }
 
-    /// <summary>POST to {root}/internal/...</summary>
-    private async Task<JsonObject?> PostInternalAsync(string path, JsonObject body, CancellationToken ct)
-    {
-        string url = _settings.InternalBaseUrl.TrimEnd('/') + "/" + path;
-        HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, url);
-        request.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, ApiHeaders.Json);
-
-        string text = await SendAsync(request, "POST " + path, false, ct);
-        return ParseObject(text);
-    }
-
     /// <summary>
     /// Sends with the configured timeout and returns the body text.
     /// notFoundIsEmpty = true: a 404 returns "" (resource does not exist). Other errors -> FhirApiException.
@@ -263,10 +233,6 @@ public class FhirApiClient
         using (request)
         using (CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct))
         {
-            if (!string.IsNullOrEmpty(_settings.ApiKey))
-            {
-                request.Headers.Add(ApiKeyHeader, _settings.ApiKey);
-            }
             timeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _settings.TimeoutSeconds)));
             HttpClient http = _httpFactory.CreateClient();
             try
@@ -297,23 +263,6 @@ public class FhirApiClient
             {
                 throw new FhirApiException(label + " failed: " + ex.Message, ex);
             }
-        }
-    }
-
-    /// <summary>Text -> JSON object, or null when empty / not an object.</summary>
-    private static JsonObject? ParseObject(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return null;
-        }
-        try
-        {
-            return JsonNode.Parse(text) as JsonObject;
-        }
-        catch (JsonException)
-        {
-            return null;
         }
     }
 }
